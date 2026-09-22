@@ -308,3 +308,27 @@ bus-grant delay (MoD: 2 cycles /BR to /BG) are not modelled; they wait for MoD's
 `gen_test_z80_bus` in milestone 3.
 
 **End of milestone 2.** Stopping here, as the working agreement says.
+
+## Decisions (the user, 2026-09-22), answering milestone 2's questions
+
+1. **The captures' 99.04 % is accepted for milestone 2.** The claim is stated as
+   what it is ("8,762,415 of 8,847,360 words, every difference classified"), never
+   as "sample for sample". The four anomalous dumps are worth a cheap look later;
+   the ~2,500 unexplained words do not block milestone 3.
+2. **The per-console H/V stepping tables stay**, chosen by region
+   (`Machine.hv_unit`), **labelled as an assumption**: two consoles were captured,
+   so it is not known whether the difference follows the region or the individual
+   chip. Say so where the tables are defined and in undocumented-behavior.md.
+3. **Nuked-MD is accepted as the basis for the work-RAM refresh** until a hardware
+   measurement exists, as the tier rule allows for a die-derived model where no
+   hardware source covers the question; the capture loop's rate agrees with it
+   independently. Keep it labelled.
+4. **CI reaches m68000-python with a read-only deploy key** (an SSH key whose
+   public half is a read-only deploy key on m68000-python, private half the
+   `M68000_PYTHON_KEY` secret here): narrower than a personal token, since it
+   reaches that one repository and nothing else.
+5. **The Z80's interrupt length and bus-grant delay** stay for milestone 3, judged
+   by MoD's `gen_test_z80_bus`.
+
+Also decided: z80-python's reset not clearing I and R is being proposed as a PR
+there by the reviewing session; keep the board's labelled workaround until it lands.
