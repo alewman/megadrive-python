@@ -21,6 +21,13 @@ Boards modelled so far:
   from power-on (MAME ``md_slot.cpp``: active when the ROM ends at or below it).
 - ``rom_ssf2``: the Sega mapper, eight 512 KB banks, registers at $A130F3-$A130FF
   for banks 1-7 (Plutiedev, "Going beyond 4MB"; research).
+- ``rom_titan``: Titan's Overdrive 2 board, the same mapper. MAME 0.285 gives it a
+  device of its own whose comment says so ("This is same as SSF2 mapper, merge at
+  cart slot rewrite", ``bus/megadrive/titan.cpp`` lines 8-9) and whose registers are
+  the same words of $A130F0 (``write_a13``, lines 53-66); the demo's own readme
+  calls it "SSF2-style bank switching", and it prints that sentence and stops when
+  the banks do not move. Milestone 5 needs it: Overdrive 2 is that milestone's
+  stress case.
 
 Other boards (EEPROMs, the unlicensed mappers) are milestone 7; an image on one of
 them loads as plain ROM with :attr:`Cartridge.unsupported` naming the board.
@@ -146,10 +153,10 @@ class Cartridge:
         self.sram_protected = False
         # The Sega mapper: bank n shows page banks[n] (512 KB pages).
         self.banks = list(range(8))
-        self.mapper = slot == "rom_ssf2"
+        self.mapper = slot in ("rom_ssf2", "rom_titan")
         if self.mapper:
             self.full = image + b"\xff" * (-len(image) % 0x80000)
-        if slot not in ("rom", "rom_sram", "rom_fram", "rom_ssf2"):
+        if slot not in ("rom", "rom_sram", "rom_fram", "rom_ssf2", "rom_titan"):
             self.unsupported = slot
 
     @classmethod

@@ -35,6 +35,7 @@ from __future__ import annotations
 from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
 
+from .arbiter import busack_grant
 from .audio import AudioPath
 from .board import Board
 from .cartridge import Cartridge
@@ -59,6 +60,7 @@ class System:
         self.z80 = Z80CPU(board.z80_read, board.z80_write)
         board.m68k = self.m68k
         board.catch_up_z80 = self.catch_up_z80
+        board.z80_busack = self.z80_busack
         board.on_z80_reset = self._z80_reset_line
         self.vdp = board.vdp
         #: The analogue path the two sound chips meet in (docs: audio.py).
@@ -133,7 +135,8 @@ class System:
                 else:
                     z80.clear_maskable_interrupt()
                 board.step_start = self.z80_mclk
-                self.z80_mclk += z80.step() * Z80_DIVIDER
+                board.z80_stall = 0
+                self.z80_mclk += z80.step() * Z80_DIVIDER + board.z80_stall
                 self.z80_instructions += 1
         finally:
             self._in_z80 = False
@@ -143,7 +146,34 @@ class System:
         """The T-state offsets of :meth:`z80_probe`."""
         return self.z80_probe()[0]
 
-    def z80_probe(self) -> tuple[list[int], dict[int, int]]:
+    def z80_busack(self, mclk: int) -> int:
+        """The master clock the Z80 lets go of its bus, for a request made at ``mclk``.
+
+        BUSREQ "is sampled by the CPU with the rising edge of the last clock period of
+        any machine cycle" and the bus is released after it (Zilog UM0080,
+        specification tier), so the grant falls at the end of the machine cycle in
+        progress. The Z80 is first run up to the request, leaving at most one
+        instruction -- the one the request falls inside -- unrun; its machine-cycle
+        boundaries are the probe's (:meth:`z80_machine_cycle_ends`), and that
+        instruction is executed when the bus comes back, as before.
+        """
+        self.catch_up_z80(mclk, stopping=True)
+        if self.z80_mclk >= mclk or not self.board.z80_running:
+            return max(mclk, self.z80_mclk)
+        return busack_grant(
+            mclk, [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()]
+        )
+
+    def z80_machine_cycle_ends(self) -> list[int]:
+        """Where the next Z80 step's machine cycles end, in T-states from its start.
+
+        The probe places each fetch and data access (:meth:`z80_probe`); a machine
+        cycle ends where the next begins, and the step's own total ends the last one,
+        so trailing internal T-states belong to the cycle before them.
+        """
+        return self.z80_probe()[2]
+
+    def z80_probe(self) -> tuple[list[int], dict[int, int], list[int]]:
         """When the Z80's next step would start each of its data accesses, in T-states
         from the step's start: an estimate, with no effect on the machine.
 
@@ -155,12 +185,15 @@ class System:
         T-states are not placed (the core does not say where they fall), so each
         estimate is the earliest the access can start. Reads of devices return $FF
         on the probe bus: only RAM and ROM are read, so a probe has no side effects.
-        Returns the offsets and the writes the step would make ({address: value}).
+        Returns the offsets, the writes the step would make ({address: value}), and
+        where each machine cycle ends (every fetch's and access's end, and the step's
+        own total, so that trailing internal T-states belong to the cycle before them).
         """
         z80, board = self.z80, self.board
         state = z80.capture_state()
         read, write = z80.read_byte, z80.write_byte
         offsets: list[int] = []
+        ends: list[int] = []
         written: dict[int, int] = {}
         clock = 0
         fetching = True
@@ -185,6 +218,7 @@ class System:
                 fetching = False
                 offsets.append(clock)
                 clock += 3
+            ends.append(clock)
             return value
 
         def probe_write(address: int, value: int) -> None:
@@ -193,21 +227,32 @@ class System:
             written[address] = value
             offsets.append(clock)
             clock += 3
+            ends.append(clock)
 
         z80.read_byte, z80.write_byte = probe_read, probe_write
         try:
-            z80.step()
+            total = z80.step()
         finally:
             z80.read_byte, z80.write_byte = read, write
             z80.restore_state(state)
-        return offsets, written
+        return offsets, written, sorted({*(e for e in ends if e < total), total})
 
     def step(self) -> int:
         """One 68000 instruction, then the Z80 up to the same time; returns MCLK."""
         board, cpu, vdp = self.board, self.m68k, self.vdp
+        owed = board.m68k_pending_stall
+        if owed:
+            # What the arbiter charged the 68000 for Z80 bank accesses made in the wake
+            # of its last instruction: the Z80 runs behind it, so the delay is added
+            # here rather than inside the instruction it really fell in (arbiter.py).
+            board.m68k_pending_stall = 0
+            self.mclk += owed
+            cpu.clock += owed // M68K_DIVIDER  # keeps the E-clock phase in step
         start = self.mclk
         board.step_start = start
         board.stall = 0
+        if board.m68k_accesses:
+            board.m68k_accesses.clear()
         vdp.sync(start)
         cpu.set_ipl(vdp.ipl)
         clocks = cpu.step()

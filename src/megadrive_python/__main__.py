@@ -52,7 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
-    system = System(MACHINES[args.machine], Cartridge(load_image(args.cartridge)))
+    # from_image, not Cartridge(...): the board (a mapper, battery RAM) comes from
+    # MAME's software list, which is what makes a banked cartridge work.
+    system = System(MACHINES[args.machine], Cartridge.from_image(load_image(args.cartridge)))
     system.audio.sample_rate = args.rate
     if args.no_sound:
         system.board.fm.enabled = False

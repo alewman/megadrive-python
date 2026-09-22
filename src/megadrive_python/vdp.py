@@ -255,20 +255,32 @@ _ACTIVE_SLOTS = {
     "H40": (0x002, 0x012, 0x022, 0x042, 0x052, 0x062, 0x082, 0x092, 0x0A2, 0x0C2, 0x0D2,
             0x0E2, 0x102, 0x112, 0x122, 0x140, 0x142, 0x1CE),
 }  # fmt: skip
-#: The refresh slots of an idle line: from the first H counter value of each block the
-#: next slot is six pixels on (Exodus Timing.cpp 1463-1520).
+#: The refresh slots of an idle line, by H counter, from Exodus's own tables
+#: ("Refresh cycle slots (H32)"/"(H40)", Timing.cpp 1463-1520): five in H32 and six in
+#: H40, "one more than there is during an active line", which is where the fifth (H32)
+#: and sixth (H40) fall -- in the horizontal blank.
 _REFRESH = {"H32": (0x035, 0x075, 0x0B5, 0x0F5, 0x1F5),
-            "H40": (0x030, 0x070, 0x0B0, 0x0F0, 0x130, 0x1F0)}  # fmt: skip
+            "H40": (0x032, 0x072, 0x0B2, 0x0F2, 0x132, 0x1F2)}  # fmt: skip
 
 
 def _idle_slots(mode: HMode) -> list[int]:
-    """Slots on an idle line: every odd (H32) or even (H40) H counter value, with the
-    two slots after each refresh block's start skipped."""
+    """Slots on an idle line: every odd (H32) or even (H40) H counter value except the
+    refresh slots -- "When display is disabled the VDP still does those refresh cycles
+    and uses all other cycles as access slots" (Kabuto, "Memory access pattern").
+
+    So an idle line has 171 - 5 = 166 slots in H32 and 210 - 6 = 204 in H40. **Exodus
+    skips two slots per refresh** (its ``GetPixelClockTicksUntilNextAccessSlot`` jumps
+    from a refresh block's start to six pixels past it), which would give 161 and 198;
+    two hardware sources say otherwise and the board follows them (milestone 5,
+    docs/undocumented-behavior.md): Kabuto's access pattern has one ``r`` per group,
+    four in H32 and five in H40 per active line, and the Manual's DMA transfer capacity
+    table (PDF page 44) gives 167 and 205 bytes a line in blanking, which is one slot
+    lost per refresh. The board's 166 and 204 are those figures less the extra
+    blanking refresh Exodus measured, which Sega's table does not account for.
+    """
     parity = 1 if mode.name == "H32" else 0
-    skipped = set()
-    for lo in _REFRESH[mode.name]:
-        skipped.update(h for h in range(lo + 1, lo + 6) if h % 2 == parity)
-    return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in skipped)
+    refresh = set(_REFRESH[mode.name])
+    return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in refresh)
 
 
 for _mode in (H32, H40, H40_VSYNC, H40_LONG, H40_SHORT):
@@ -1049,7 +1061,9 @@ class VDP:
         TestDMATransferBusLock); returns how long the 68000's next bus cycle waits."""
         self.transfer_active = True
         self.transfer_cached = False
-        self.transfer_next_read = mclk
+        # The first word is fetched once the write that started the transfer is over,
+        # not from where it began: "the VDP takes the bus once the write ... is over".
+        self.transfer_next_read = mclk + WRITE_CYCLE_MCLK - DMA_READ_MCLK
         self._advance(mclk, lambda: not self.transfer_active)
         return max(0, self.mclk - (mclk + WRITE_CYCLE_MCLK))
 

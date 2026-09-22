@@ -105,6 +105,15 @@ class Lockstep:
         self.system = System(MACHINES[machine_name], Cartridge.from_image(image))
         self.board = board = self.system.board
         board.refresh_enabled = False  # MAME models neither refresh (docs/worklog.md)
+        # MAME models no arbiter either: it grants the Z80's bus the instant the
+        # request is written and charges nothing for a Z80 access to the 68000's bus
+        # (it adds one 68000 clock to the 68000's own $A00000-$A0FFFF accesses
+        # instead, which is sorted as a named difference below). With the board's
+        # arbiter on, the two CPUs interleave differently and this replay is not
+        # instruction-exact, so it is turned off here for the same reason the refresh
+        # is -- milestone 5 judges it by its own measurements
+        # (``scripts/run_bus_arbiter.py``; docs/worklog.md, milestone 5).
+        board.arbiter_enabled = False
         self.m68k = cpu = self.system.m68k
         self.z80 = z80 = self.system.z80
         self.patch = patch
@@ -192,7 +201,7 @@ class Lockstep:
             offset = address & 0x7FFF
             if 0x4000 <= offset < 0x6000:
                 self.note("YM2612 status replayed (the YM2612 is a stub until milestone 4)", where)
-            elif not board.m68k_has_z80_bus:
+            elif not board.m68k_has_z80_bus():
                 self.note(
                     "Z80 space read without the bus: MAME returns rand(); the board the "
                     "next opcode's MSB (CMD gen-hw.txt 2.2)", where)  # fmt: skip
@@ -242,7 +251,7 @@ class Lockstep:
             if written & 0x1FFF == where and old == byte:
                 return True
         if not self.zrec_ran and self.zrec is not None and self.zrec.registers:
-            _, writes = self.system.z80_probe()
+            _, writes, _ = self.system.z80_probe()
             return any(a & 0x1FFF == where and v == byte for a, v in writes.items())
         return False
 
@@ -269,7 +278,7 @@ class Lockstep:
     def note_68k_ram_write(self, address: int, value: int) -> None:
         inflight = self.inflight
         if (inflight is not None and not inflight.closed and address & 0x7FFF < 0x4000
-                and self.board.m68k_has_z80_bus):  # fmt: skip
+                and self.board.m68k_has_z80_bus()):  # fmt: skip
             inflight.events.append((address & 0x1FFF, value))
 
     def note_68k_reset_write(self, address: int, value: int) -> None:
