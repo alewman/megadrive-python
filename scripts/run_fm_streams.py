@@ -64,11 +64,13 @@ CARTS = Path("/data/emu/roms/megadrive")
 #: The five cartridges the earlier milestones are measured on, with the buttons and
 #: length each needs to get its sound driver going.
 GAMES = [
-    ("Sonic The Hedgehog (USA, Europe).zip", "start", 120, 720),
-    ("Streets of Rage 2 (USA).zip", "start", 240, 720),
-    ("Gunstar Heroes (USA).zip", "start", 240, 720),
-    ("Castlevania - Bloodlines (USA).zip", "start", 240, 720),
-    ("Phantasy Star IV (USA).zip", "start", 240, 720),
+    ("Sonic The Hedgehog (USA, Europe).zip", "start", (120,), 720),
+    ("Streets of Rage 2 (USA).zip", "start", (240,), 720),
+    # Gunstar Heroes wants Start twice -- title, then mode select -- and does not
+    # reach its music inside 720 frames (docs/worklog.md, milestone 4).
+    ("Gunstar Heroes (USA).zip", "start", (200, 400, 600), 1200),
+    ("Castlevania - Bloodlines (USA).zip", "start", (240,), 720),
+    ("Phantasy Star IV (USA).zip", "start", (240,), 720),
 ]
 
 #: Nemesis's YM2612 test ROMs (docs/validation.md, "Sound").

@@ -185,6 +185,31 @@ def block_levels(samples, first: int, last: int) -> list[tuple[str, float]]:
     return out
 
 
+def response(hardware: list[tuple[str, float]], board: list[tuple[str, float]], group: str) -> None:
+    """The board's level minus the hardware's, block by block through one group,
+    each normalised by its own group mean.
+
+    The FM group's 96 blocks climb through the chip's range, so this is a frequency
+    response: a low-pass that is too low shows as a fall to the right.
+    """
+    ours = [level for name, level in board if name == group]
+    theirs = [level for name, level in hardware if name == group]
+    if len(ours) != len(theirs) or not ours:
+        print(f"  {group}: {len(theirs)} hardware blocks against {len(ours)}; not compared")
+        return
+    ours_mean = sum(ours) / len(ours)
+    theirs_mean = sum(theirs) / len(theirs)
+    points = [round(i * (len(ours) - 1) / 11) for i in range(12)]
+
+    def difference(index: int) -> float:
+        mine = max(ours[index] / ours_mean, 1e-9)
+        theirs_here = max(theirs[index] / theirs_mean, 1e-9)
+        return 20 * math.log10(mine / theirs_here)
+
+    shown = " ".join(f"{difference(index):6.1f}" for index in points)
+    print(f"  {group} blocks {points[0]}..{points[-1]}, board minus hardware: {shown}")
+
+
 def summarise(label: str, levels: list[tuple[str, float]]) -> dict[str, float]:
     groups: dict[str, list[float]] = {}
     for name, level in levels:
@@ -218,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"board:                           {len(board) / args.rate:.1f} s")
 
     results = {}
+    blocks = {}
     for label, samples in (("hardware", recorded), ("board", board)):
         regions = loud_regions(samples, args.rate)
         if len(regions) < 2:
@@ -230,7 +256,8 @@ def main(argv: list[str] | None = None) -> int:
             f"({(last - first) / args.rate:.2f} s apart; the signal is "
             f"{SIGNAL_FRAMES / 59.92:.2f} s at 59.92 Hz)"
         )
-        results[label] = summarise(label, block_levels(samples, first, last))
+        blocks[label] = block_levels(samples, first, last)
+        results[label] = summarise(label, blocks[label])
 
     print("\n  board minus hardware, per group (dB relative to each one's own FM mean):")
     for name in results["hardware"]:
@@ -239,6 +266,9 @@ def main(argv: list[str] | None = None) -> int:
                 max(results["board"][name], 1e-9) / max(results["hardware"][name], 1e-9)
             )
             print(f"    {name:9s} {difference:+7.2f} dB")
+    print("\n  the shape of each group, which is where the low-pass shows:")
+    for group in ("FM", "PSG", "noise"):
+        response(blocks["hardware"], blocks["board"], group)
     return 0
 
 

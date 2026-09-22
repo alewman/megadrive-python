@@ -38,11 +38,11 @@ from megadrive_python.psg import PSG
 CARTS = Path("/data/emu/roms/megadrive")
 
 GAMES = [
-    ("Sonic The Hedgehog (USA, Europe).zip", 120, 400),
-    ("Streets of Rage 2 (USA).zip", 200, 400),
-    ("Gunstar Heroes (USA).zip", 200, 400),
-    ("Castlevania - Bloodlines (USA).zip", 200, 400),
-    ("Phantasy Star IV (USA).zip", 200, 400),
+    ("Sonic The Hedgehog (USA, Europe).zip", (120,), 400),
+    ("Streets of Rage 2 (USA).zip", (200,), 400),
+    ("Gunstar Heroes (USA).zip", (200, 400, 600), 800),
+    ("Castlevania - Bloodlines (USA).zip", (200,), 400),
+    ("Phantasy Star IV (USA).zip", (200,), 400),
 ]
 
 

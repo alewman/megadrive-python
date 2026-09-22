@@ -1,4 +1,4 @@
-"""Running milestone 4's three audio referees, and writing WAV files.
+"""Running milestone 4's three audio referees, and capturing the board's own streams.
 
 The referees are C programs built from the pinned die-derived sources by
 ``sh validation/build_referees.sh`` into ``reference/build-referees/`` (ignored):
@@ -10,7 +10,8 @@ The referees are C programs built from the pinned die-derived sources by
 Each takes a binary event file of ``{u64 clock; u8 port; u8 data}`` records and
 writes a binary output file; the clock unit differs per referee and is documented
 in the corresponding ``validation/*.c``.  This module builds those files, runs the
-program and decodes the result, so the run scripts stay short.
+program and decodes the result, so the run scripts stay short, and it captures a
+cartridge's register streams off the board in the units the referees take.
 """
 
 from __future__ import annotations
@@ -130,7 +131,8 @@ def capture_streams(
     *,
     machine_name: str = "genesis",
     press: int = 0,
-    press_at: int = 0,
+    press_at: int | tuple[int, ...] = 0,
+    hold: int = 8,
 ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int]], int, int]:
     """Run a cartridge and record every write that reaches either sound chip.
 
@@ -140,6 +142,11 @@ def capture_streams(
     take, and the units the board's own chips were at when each write arrived, so a
     replay of the stream into a fresh chip sees each write on the cycle the board's
     did.  Writes made while /RESET is held never reach the chip and are not recorded.
+
+    ``press_at`` is the frame the buttons are pressed at, or several frames -- some
+    games need a button more than once to reach the music (Gunstar Heroes wants one
+    at its title and another at its mode select).  Each press is held for ``hold``
+    frames so that a game reading edges sees one.
 
     The generator is turned off for the capture: the register stream does not depend
     on it, and it is most of the time.
@@ -170,9 +177,9 @@ def capture_streams(
     fm.write = spy_fm  # type: ignore[method-assign]
     psg.write = spy_psg  # type: ignore[method-assign]
     pad = board.io.ports[0].device
+    presses = (press_at,) if isinstance(press_at, int) else tuple(press_at)
     for frame in range(frames):
-        if press and frame == press_at:
-            pad.pressed = press
+        pad.pressed = press if press and any(at <= frame < at + hold for at in presses) else 0
         system.run_frame()
         fm.take_samples()
         psg.take_samples()
