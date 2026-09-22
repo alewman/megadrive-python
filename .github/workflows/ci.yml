@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is the newest Python PyPy supports (docs/handoff-brief.md).
+        python-version: ["3.11", "3.14", "pypy3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # m68000-python is a private repository, pinned by revision in pyproject.toml:
+      # a token with read access to it is needed (docs/worklog.md, QUESTION).
+      - name: Give git access to m68000-python
+        env:
+          TOKEN: ${{ secrets.M68000_PYTHON_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/alewman/m68000-python".insteadOf "https://github.com/alewman/m68000-python"
+          fi
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      # Milestone 2's judges: Nemesis's captures and VDPFIFOTesting, fetched at their
+      # pinned SHA-256 (never committed). Milestone 1 needs MAME and the commercial
+      # romset and runs locally (pytest -m slow).
+      - run: python scripts/fetch_references.py --no-repos --only tests/test_roms/nemesis/
+      - run: python -m pytest -q
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .

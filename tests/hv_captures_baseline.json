@@ -1,0 +1,162 @@
+{
+ "HV noint PAL H32V28": {
+  "dumps": 9,
+  "equal": 276452,
+  "not_at_a_step": 1
+ },
+ "HV noint PAL H32V30": {
+  "dumps": 9,
+  "equal": 276468,
+  "not_at_a_step": 0
+ },
+ "HV noint PAL H40V28": {
+  "dumps": 9,
+  "equal": 275773,
+  "not_at_a_step": 0
+ },
+ "HV noint PAL H40V30": {
+  "dumps": 9,
+  "equal": 276062,
+  "not_at_a_step": 1
+ },
+ "HV noint intdub NTSCJ H32V28": {
+  "dumps": 9,
+  "equal": 275805,
+  "not_at_a_step": 2
+ },
+ "HV noint intdub NTSCJ H32V30": {
+  "dumps": 9,
+  "equal": 275224,
+  "not_at_a_step": 166
+ },
+ "HV noint intdub NTSCJ H40V28": {
+  "dumps": 9,
+  "equal": 245712,
+  "not_at_a_step": 30721
+ },
+ "HV noint intdub NTSCJ H40V30": {
+  "dumps": 9,
+  "equal": 276406,
+  "not_at_a_step": 1
+ },
+ "HV noint intdub PAL H32V28": {
+  "dumps": 9,
+  "equal": 276427,
+  "not_at_a_step": 1
+ },
+ "HV noint intdub PAL H32V30": {
+  "dumps": 9,
+  "equal": 276403,
+  "not_at_a_step": 21
+ },
+ "HV noint intdub PAL H40V28": {
+  "dumps": 9,
+  "equal": 276393,
+  "not_at_a_step": 0
+ },
+ "HV noint intdub PAL H40V30": {
+  "dumps": 9,
+  "equal": 276269,
+  "not_at_a_step": 3
+ },
+ "HV noint intinv PAL H32V28": {
+  "dumps": 9,
+  "equal": 276120,
+  "not_at_a_step": 32
+ },
+ "HV noint intinv PAL H32V30": {
+  "dumps": 9,
+  "equal": 276439,
+  "not_at_a_step": 3
+ },
+ "HV noint intinv PAL H40V28": {
+  "dumps": 9,
+  "equal": 265228,
+  "not_at_a_step": 6575
+ },
+ "HV noint intinv PAL H40V30": {
+  "dumps": 9,
+  "equal": 245544,
+  "not_at_a_step": 30722
+ },
+ "HV noint intnorm NTSCJ H32V28": {
+  "dumps": 9,
+  "equal": 275135,
+  "not_at_a_step": 526
+ },
+ "HV noint intnorm NTSCJ H32V30": {
+  "dumps": 9,
+  "equal": 275189,
+  "not_at_a_step": 180
+ },
+ "HV noint intnorm NTSCJ H40V28": {
+  "dumps": 9,
+  "equal": 276203,
+  "not_at_a_step": 142
+ },
+ "HV noint intnorm NTSCJ H40V30": {
+  "dumps": 9,
+  "equal": 276404,
+  "not_at_a_step": 1
+ },
+ "HV noint intnorm PAL H32V28": {
+  "dumps": 9,
+  "equal": 276427,
+  "not_at_a_step": 1
+ },
+ "HV noint intnorm PAL H32V30": {
+  "dumps": 9,
+  "equal": 274448,
+  "not_at_a_step": 1292
+ },
+ "HV noint intnorm PAL H40V28": {
+  "dumps": 9,
+  "equal": 276292,
+  "not_at_a_step": 1
+ },
+ "HV noint intnorm PAL H40V30": {
+  "dumps": 9,
+  "equal": 276322,
+  "not_at_a_step": 3
+ },
+ "SR noint NTSCJ H32V28": {
+  "dumps": 9,
+  "equal": 275792,
+  "not_at_a_step": 36
+ },
+ "SR noint NTSCJ H32V30": {
+  "dumps": 9,
+  "equal": 275914,
+  "not_at_a_step": 0
+ },
+ "SR noint NTSCJ H40V28": {
+  "dumps": 9,
+  "equal": 276373,
+  "not_at_a_step": 1
+ },
+ "SR noint NTSCJ H40V30": {
+  "dumps": 9,
+  "equal": 276402,
+  "not_at_a_step": 1
+ },
+ "SR noint PAL H32V28": {
+  "dumps": 9,
+  "equal": 276427,
+  "not_at_a_step": 15
+ },
+ "SR noint PAL H32V30": {
+  "dumps": 9,
+  "equal": 276341,
+  "not_at_a_step": 86
+ },
+ "SR noint PAL H40V28": {
+  "dumps": 9,
+  "equal": 276212,
+  "not_at_a_step": 3
+ },
+ "SR noint PAL H40V30": {
+  "dumps": 9,
+  "equal": 275809,
+  "not_at_a_step": 1
+ }
+}

@@ -26,9 +26,6 @@ dev = [
     "ruff==0.16.8",
 ]
 
-[project.scripts]
-megadrive-python = "megadrive_python.__main__:main"
-
 [tool.hatch.metadata]
 allow-direct-references = true
 

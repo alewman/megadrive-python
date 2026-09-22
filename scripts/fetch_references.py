@@ -24,6 +24,7 @@ Forum threads are also converted to plain text next to their HTML.
     python scripts/fetch_references.py --verify   # hash what is present, fetch nothing
     python scripts/fetch_references.py --no-repos # files only
     python scripts/fetch_references.py --large    # also the large recordings and bundles
+    python scripts/fetch_references.py --no-repos --only tests/test_roms/nemesis/  # CI
 """
 
 from __future__ import annotations
@@ -63,9 +64,11 @@ def forum_text(raw: str) -> str:
     return re.sub(r"(\s*\n\s*){2,}", "\n\n", text)
 
 
-def fetch_files(verify_only: bool, large: bool) -> int:
+def fetch_files(verify_only: bool, large: bool, only: str | None = None) -> int:
     problems = 0
     for entry in json.loads(FILES.read_text(encoding="utf-8")):
+        if only and not entry["path"].startswith(only):
+            continue
         path = ROOT / entry["path"]
         if entry.get("large") and not large and not path.exists():
             continue
@@ -151,8 +154,9 @@ def main() -> int:
     )
     parser.add_argument("--no-repos", action="store_true", help="skip the git repositories")
     parser.add_argument("--large", action="store_true", help="also the entries over 50 MB")
+    parser.add_argument("--only", help="only the files whose path starts with this")
     args = parser.parse_args()
-    problems = fetch_files(args.verify, args.large)
+    problems = fetch_files(args.verify, args.large, args.only)
     if not args.no_repos:
         problems += fetch_repos(args.verify)
     print("all pins satisfied" if not problems else f"{problems} problem(s)")
