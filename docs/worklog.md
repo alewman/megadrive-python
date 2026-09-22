@@ -1163,4 +1163,25 @@ The machine was shared through the session: the "silent" column here (138 to 205
 frames a second) is not directly comparable with milestone 3's table (148 to 294),
 which is why all four columns are measured in the same run.
 
+### Milestones 1 to 3, unchanged by all of this
+
+`.venv-pypy/bin/python -m pytest -q` at commit `23e10d0`: **32 passed, 1 deselected**
+in 146 s (the deselected one is milestone 1's replay, which needs MAME logs that are
+not kept). That covers milestone 2's 288 HV/status capture dumps against
+`tests/hv_captures_baseline.json` and VDPFIFOTesting, and milestone 3's sprite
+masking ROM against Nemesis's MD1600 photographs and MoD's `gen_test_z80_bus`,
+all with the two sound chips now on the board. Nothing moved.
+
+The same suite on CPython 3.14.4 with the capture dumps deselected: 29 passed.
+
+### One test failure that did not reproduce
+
+`tests/test_milestone4.py::test_ym2612_matches_nuked_opn2` failed once, while another
+comparison was running, and passed on both interpreters every other time (three runs
+after it). The subprocess it runs writes the referee's event and output files into
+`--tmp`, which defaults to `/tmp`, so two of them at once overwrite each other's --
+the only explanation that fits. Those names now carry the process id
+(`scripts/audio_refs.py`). Recorded rather than left as a shrug: it is a real race
+whether or not it was this one.
+
 **End of milestone 4.** Stopping here, as the working agreement says.
