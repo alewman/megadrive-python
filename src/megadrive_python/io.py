@@ -25,6 +25,10 @@ from __future__ import annotations
 # Button bits of the pad's own word (active high here; the pins are active low).
 UP, DOWN, LEFT, RIGHT, B, C, A, START = (1 << i for i in range(8))
 
+#: The buttons by name, for tools that take them as text.
+BUTTONS = {"up": UP, "down": DOWN, "left": LEFT, "right": RIGHT,
+           "b": B, "c": C, "a": A, "start": START}  # fmt: skip
+
 
 class Pad3:
     """A 3-button control pad (CMD ``gen-hw.txt`` 3.2).

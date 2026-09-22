@@ -52,6 +52,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .machine import MCLK_PER_LINE, Machine
+from .render import Renderer
 
 if TYPE_CHECKING:
     from .board import Board
@@ -391,6 +392,14 @@ class VDP:
         self.frame = 0
         self.z80_irq_start = -1
         self.z80_irq_end = -1
+        #: The debug register $C0001C (Kabuto, "The mighty debug register"): only its
+        #: plane-forcing bits 8-6 are modelled (:mod:`megadrive_python.render`).
+        self.debug_register = 0
+        #: The picture (milestone 3). Rendering can be turned off for speed where only
+        #: the ports and counters matter; the status register's sprite flags then stay
+        #: clear, so a harness that reads them must leave it on.
+        self.renderer = Renderer(self)
+        self.rendering = True
         #: MCLK the last 68000 port access held the 68000.
         self.hold = 0
         # Timing: the latched modes, the current line and how far the VDP has run.
@@ -451,6 +460,14 @@ class VDP:
         vint_line = self.v == self.vmode.vblank_set
         self.vint_at = start + mode.offset_of[0x001] if vint_line else -1
         self.odd_at = start + mode.offset_of[0x002] if vint_line else -1
+        # The picture of a line is drawn where its active display begins (the HBlank
+        # flag clearing), so that an H interrupt handler's register writes -- made in
+        # the horizontal blank that precedes the same line -- are already in place.
+        self.render_at = (
+            start + mode.offset_of[mode.hblank_clear]
+            if self.rendering and self.v <= self.vmode.active_last
+            else -1
+        )
         self._choose_slots()
 
     def _work_pending(self) -> bool:
@@ -476,13 +493,15 @@ class VDP:
             return
         while True:
             next_event = self.line_end
-            kind = 0  # 0 line, 1 hblank, 2 vint, 3 odd, 4 slot
+            kind = 0  # 0 line, 1 hblank, 2 vint, 3 odd, 4 slot, 5 render
             if self.mclk <= self.hblank_at < next_event:
                 next_event, kind = self.hblank_at, 1
             if not self._vint_done and self.mclk <= self.vint_at < next_event:
                 next_event, kind = self.vint_at, 2
             if not self._odd_done and self.mclk <= self.odd_at < next_event:
                 next_event, kind = self.odd_at, 3
+            if self.mclk <= self.render_at < next_event:
+                next_event, kind = self.render_at, 5
             if self._work_pending() and self.slot_index < len(self.slots):
                 slot_at = self.line_start + self.slots[self.slot_index]
                 if slot_at < self.mclk:
@@ -512,6 +531,9 @@ class VDP:
                 self.f_flag = True
                 self.z80_irq_start = self.mclk
                 self.z80_irq_end = self.mclk + MCLK_PER_LINE
+            elif kind == 5:
+                self.render_at = -1
+                self.renderer.render_line(self.v)
             else:
                 self._odd_done = True
                 if self.interlace:
@@ -527,6 +549,7 @@ class VDP:
         self.v = new_v
         if new_v == 0:
             self.frame += 1
+            self.renderer.start_frame()
         if self.hmode.name == "H40":
             self.hmode = vmode.h40_line(new_v, self.interlace, self.odd)
         # The HINT counter at the V increment point (Exodus General.cpp 2268-2289).
@@ -628,15 +651,25 @@ class VDP:
         return self._hv_word(v, h)
 
     def status(self) -> int:
-        """The 10-bit status register (the Manual; Exodus's status bits)."""
+        """The 10-bit status register (the Manual; Exodus's status bits).
+
+        Bit 6 is set when a line has more sprites than it has slots or runs out of
+        sprite tiles, bit 5 when two sprite pixels overlap (CMD ``genvdp.txt`` 6, which
+        says only that both are "most likely cleared at the end of the frame"); this
+        board clears them when the status is read, as Genesis Plus GX does
+        (``vdp_ctrl.c``, emulator-derived: no hardware source pinned here settles it).
+        """
         h = self.hcounter()
         v = self.v
         vblank = (self.vmode.vblank_set <= v < 0x1FF) or not self.display_enabled
         hblank = h >= self.hmode.hblank_set or h < self.hmode.hblank_clear
+        renderer = self.renderer
         return (
             (0 if self.fifo[self.fifo_read][4] else 0x200)
             | (0x100 if self._fifo_full() else 0)
             | (0x80 if self.f_flag else 0)
+            | (0x40 if renderer.overflow else 0)
+            | (0x20 if renderer.collision else 0)
             | (0x10 if self.odd and self.interlace else 0)
             | (0x08 if vblank else 0)
             | (0x04 if hblank else 0)
@@ -716,6 +749,10 @@ class VDP:
         # the word (Exodus M5WriteVRAM8Bit, General.cpp 3104-3140). Stored here
         # un-swapped: the XOR puts the byte where a word read expects it.
         self.vram[(address ^ 1) & 0xFFFF] = value & 0xFF
+        # The sprite cache is written through by every VRAM write that lands in the
+        # sprite table, over the whole 128 KB address range (Kabuto). It is checked
+        # against the address as the program gives it, which is this one un-swapped.
+        self.renderer.sprite_cache_write((address ^ 1) & 0x1FFFF, value & 0xFF)
 
     def _fifo_write(self) -> None:
         """Commit the oldest FIFO entry, a byte at a time for VRAM (Exodus
@@ -878,7 +915,10 @@ class VDP:
             self.pending = False
             # The upper six lines float: the next opcode word (CMD 1.1 note 1).
             self.sample_point(mclk)
-            return (self.board.open_bus() & 0xFC00) | self.status()
+            value = (self.board.open_bus() & 0xFC00) | self.status()
+            self.renderer.overflow = False
+            self.renderer.collision = False
+            return value
         return self.read_hv(mclk)
 
     def read_byte(self, offset: int, mclk: int) -> int:
@@ -889,6 +929,11 @@ class VDP:
         """A word write; returns (and leaves in :attr:`hold`) the MCLK the 68000 is held."""
         self.hold = 0
         port = (offset >> 2) & 7
+        if port == 7:
+            # $C0001C, the debug register (Kabuto, "The mighty debug register"; CMD
+            # ``newreg.txt``). Only the plane-forcing bits are modelled.
+            self.debug_register = value & 0xFFFF
+            return 0
         if port >= 4:
             return 0  # the PSG (milestone 4), the unused and test registers
         self.sync(mclk)
@@ -900,6 +945,8 @@ class VDP:
 
     def write_byte(self, offset: int, value: int, mclk: int) -> int:
         if offset >= 0x10:
+            if (offset >> 2) & 7 == 7:  # the debug register takes a byte as a word
+                return self.write_word(offset & 0x1E, (value << 8) | value, mclk)
             self.hold = 0
             return 0
         return self.write_word(offset & 0x1E, (value << 8) | value, mclk)
