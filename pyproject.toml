@@ -1,4 +1,40 @@
-# Tooling only for now: there is no package yet (see docs/handoff-brief.md).
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "megadrive-python"
+version = "0.1.0.dev0"
+description = "Readable, pure-Python Sega Mega Drive / Genesis emulator built on m68000-python and z80-python"
+readme = "README.md"
+# The floor is the newest Python PyPy supports (3.11 as of PyPy 7.3.23); raise it when PyPy does.
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "alewman" }]
+dependencies = [
+    # Not on PyPI: pinned by git revision (docs/handoff-brief.md). For development,
+    # install the local clone at this revision first (docs/worklog.md, "Environment").
+    "m68000-python @ git+https://github.com/alewman/m68000-python@51ee1a5a1ac9be2a773476d264e859adb2fb6c94",
+    # 0.4.0 introduced the callables contract the board is built for.
+    "z80-python>=0.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    # Pinned: `ruff format --check` in CI must see the formatter the tree was formatted with.
+    "ruff==0.16.8",
+]
+
+[project.scripts]
+megadrive-python = "megadrive_python.__main__:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/megadrive_python"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -6,3 +42,12 @@ extend-exclude = ["reference", "tests/test_roms", "tests/mame_traces"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "PERF", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["megadrive_python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -ra -m 'not slow'"
+pythonpath = ["src", "tests"]
+markers = ["slow: long-running replays against MAME logs (pytest -m slow)"]
