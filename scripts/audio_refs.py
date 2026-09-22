@@ -16,6 +16,7 @@ cartridge's register streams off the board in the units the referees take.
 
 from __future__ import annotations
 
+import os
 import struct
 import subprocess
 import sys
@@ -33,6 +34,12 @@ MCLK_PER_CHIP_CLOCK = 7
 MCLK_PER_PSG_CLOCK = 15
 
 EVENT = struct.Struct("<QBB")
+
+#: Two of these running at once in the same directory -- two pytest workers, a run
+#: beside a test -- must not write each other's event and output files, so every
+#: name carries the process id.  (One run of the test suite failed exactly once, on
+#: 2026-09-22, while another comparison was running; nothing else explained it.)
+_PID = os.getpid()
 
 
 def referee(name: str) -> Path:
@@ -68,7 +75,7 @@ def run_opn2(
     every: int = 1,
 ) -> tuple[array, array, array]:
     """Nuked-OPN2 over ``cycles`` internal cycles; returns (mol, mor, status)."""
-    event_file, out_file = tmp / "opn2-events.bin", tmp / "opn2-out.bin"
+    event_file, out_file = tmp / f"opn2-events-{_PID}.bin", tmp / f"opn2-out-{_PID}.bin"
     write_events(event_file, events)
     _run(referee("opn2_ref"), [str(event_file), str(out_file), str(cycles), variant, str(every)])
     triples = array("h")
@@ -84,7 +91,7 @@ def run_lle(
     events: list[tuple[int, int, int]], clocks: int, tmp: Path, *, every: int = 1
 ) -> tuple[array, array]:
     """YM2608-LLE's YM2612 over ``clocks`` chip clocks; returns (o_mol, o_mor)."""
-    event_file, out_file = tmp / "lle-events.bin", tmp / "lle-out.bin"
+    event_file, out_file = tmp / f"lle-events-{_PID}.bin", tmp / f"lle-out-{_PID}.bin"
     write_events(event_file, events)
     _run(referee("lle2612_ref"), [str(event_file), str(out_file), str(clocks), str(every)])
     raw = out_file.read_bytes()
@@ -105,7 +112,7 @@ def run_psg(
     Returns the four attenuations each channel drives at each sampled clock and
     Nuked's own analogue level (its measured volume curve times 8192).
     """
-    event_file, out_file = tmp / "psg-events.bin", tmp / "psg-out.bin"
+    event_file, out_file = tmp / f"psg-events-{_PID}.bin", tmp / f"psg-out-{_PID}.bin"
     # psg_ref's record is {u64 clock; u8 data; u8 pad}: the one port takes no number.
     write_events(event_file, [(clock, data, 0) for clock, data in events])
     _run(referee("psg_ref"), [str(event_file), str(out_file), str(clocks), str(every)])

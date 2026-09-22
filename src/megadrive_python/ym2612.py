@@ -42,9 +42,11 @@ Cost
 
 24 internal cycles a sample at 53 kHz is 1.28 million cycles of Python per emulated
 second, each touching 24 slots' worth of state.  That is the dominant cost of this
-board and is measured in docs/worklog.md.  :attr:`YM2612.enabled` turns the
-generator off (the registers, timers and BUSY still work) for runs that do not need
-the sound.
+board and is measured in docs/worklog.md.  :attr:`YM2612.enabled` turns the whole
+generator off -- the phase generator, the envelope generator, the LFO, the operators
+and the DAC -- leaving the bus, the register file, the timers and BUSY, which is what
+a run that does not want the sound needs and costs a fraction as much
+(:meth:`YM2612._quiet_cycle`).
 """
 
 from __future__ import annotations
@@ -196,8 +198,9 @@ class YM2612:
     """One YM2612 or its ASIC successor, told apart by a :class:`FMVariant`.
 
     ``enabled``: run the generator.  With it off the registers, the timers, BUSY and
-    the DAC latch still work and :attr:`mol`/:attr:`mor` stay at 0, which is what the
-    milestones before this one had and what a run that only wants the picture wants.
+    key-on still work, :attr:`mol` and :attr:`mor` stay at 0, and the samples are
+    silent -- which is what a run that only wants the picture wants.  See
+    :meth:`_quiet_cycle` for what that costs and what it gives up.
     """
 
     def __init__(self, variant: FMVariant, *, enabled: bool = True) -> None:
@@ -462,6 +465,9 @@ class YM2612:
     def cycle(self) -> None:
         """One internal cycle: the whole chip, in the order the die runs it
         (``ym3438.c`` ``OPN2_Clock``, lines 1209-1341)."""
+        if not self.enabled:
+            self._quiet_cycle()
+            return
         cycles = self.cycles
         self.lfo_inc = self.mode_test_21[1]
         self.pg_read >>= 1
@@ -510,11 +516,10 @@ class YM2612:
         self._timer_a()
         self._timer_b()
         self._key_on()
-        if self.enabled:
-            self._ch_output()
-            self._ch_generate()
-            self._fm_prepare()
-            self._fm_generate()
+        self._ch_output()
+        self._ch_generate()
+        self._fm_prepare()
+        self._fm_generate()
         self._phase_generate()
         self._phase_increment()
         self._envelope_adsr()
@@ -539,6 +544,33 @@ class YM2612:
         if self._acc_n == CYCLES_PER_SAMPLE:
             self.samples.append((self._acc_l, self._acc_r))
             self._acc_l = self._acc_r = self._acc_n = 0
+
+    def _quiet_cycle(self) -> None:
+        """One internal cycle with :attr:`enabled` off: the bus, the timers, key-on
+        and the register file, and nothing else.
+
+        Everything skipped -- the phase generator, the envelope generator, the LFO,
+        the operators and the DAC -- is state only the sound depends on, so a caller
+        that never wants the sound (a compatibility sweep, ``--no-sound``, capturing
+        a register stream) pays for none of it, while a game that polls BUSY or the
+        timers still sees what it would. The cost of that is that the generator's
+        state stops: turning :attr:`enabled` back on part way through a run resumes
+        from stale envelopes and phases, so it is a switch to set once.
+        """
+        self._do_io()
+        self._timer_a()
+        self._timer_b()
+        self._key_on()
+        self._register_write()
+        cycles = (self.cycles + 1) % 24
+        self.cycles = cycles
+        self.channel = cycles % 6
+        if self.status_time:
+            self.status_time -= 1
+        self._acc_n += 1
+        if self._acc_n == CYCLES_PER_SAMPLE:
+            self.samples.append((0, 0))
+            self._acc_n = 0
 
     # -- the bus interface --------------------------------------------------------
 
