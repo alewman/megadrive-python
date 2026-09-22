@@ -35,10 +35,16 @@ jobs:
           fi
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      # Milestone 2's judges: Nemesis's captures and VDPFIFOTesting, fetched at their
-      # pinned SHA-256 (never committed). Milestone 1 needs MAME and the commercial
-      # romset and runs locally (pytest -m slow).
-      - run: python scripts/fetch_references.py --no-repos --only tests/test_roms/nemesis/
+      # The judges of milestones 2 and 3: Nemesis's captures, VDPFIFOTesting, his
+      # sprite masking ROM and the two photographs of his MD1600 running it, and MoD's
+      # gen_test_z80_bus, all fetched at their pinned SHA-256 (never committed).
+      # Milestone 1 needs MAME and the commercial romset and runs locally
+      # (pytest -m slow).
+      - run: |
+          python scripts/fetch_references.py --no-repos \
+            --only tests/test_roms/nemesis/ \
+            --only tests/test_roms/mask-of-destiny/ \
+            --only reference/images/
       - run: python -m pytest -q
       - run: python -m ruff check .
       - run: python -m ruff format --check .

@@ -532,6 +532,8 @@ class Renderer:
         that is the frame just finished; called part way through one, what it has drawn.
         """
         height = self.rows or self.height
+        if self.vdp.interlace_double:
+            height = (height + 1) & ~1  # both fields make up the picture
         width = max(self.widths[:height], default=self.width) or self.width
         return width, height, [self.pixels[row] for row in range(height)]
 
