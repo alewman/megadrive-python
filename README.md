@@ -21,8 +21,12 @@ in both widths, and matches MAME's frame pixel for pixel on every static screen 
 six lockstep games. Sound is there too: the PSG and the YM2612 -- all six channels,
 channel 3's special mode, CSM, SSG-EG, the LFO, both timers, BUSY, the DAC and the
 ladder effect -- run the chips' own pipelines and are compared against the die-derived
-models cycle by cycle. `--wav` writes what a console would have played. Around the
-code, the groundwork it was built from, in the shape that built
+models cycle by cycle: 524 million values of the YM2612's two DAC pins and its status
+byte over eighteen register streams, and 80 million input clocks of the PSG's, none
+different. `--wav` writes what a console would have played; the FM costs about three
+seconds of wall time per emulated second on PyPy, which is most of why the board runs
+at 17 to 21 frames a second with sound and 138 to 205 without. Around the code, the
+groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
 - a primer on the machine;
