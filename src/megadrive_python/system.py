@@ -1,0 +1,223 @@
+"""A whole console: m68000-python's 68000 and z80-python's Z80 on a :class:`Board`.
+
+One scheduler, in master clocks (MCLK)
+--------------------------------------
+
+Every device's time is a count of master clocks from power-on (docs/timing.md): the
+68000 ticks every 7, the Z80 every 15, the VDP by its slot table. The scheduler is
+the 68000's loop, because the 68000 owns the main bus and makes almost every
+access that matters to the VDP:
+
+1. before a 68000 step, the VDP is brought up to the step's start and its interrupt
+   level is placed on the 68000's IPL lines;
+2. the 68000 runs one instruction (or exception entry); each of its bus accesses is
+   placed at its own clock inside the instruction (``Board.m68k_access_clock``), so
+   the VDP, when touched, catches up to that exact clock;
+3. any stall a device imposes (a full FIFO, a DMA holding the bus) is added, in
+   MCLK, to that step, which is how the CPU that suffers it is delayed;
+4. the Z80 then runs until it has caught up with the 68000. It also catches up
+   *before* the 68000 changes anything the Z80 can observe -- its RAM, its bus
+   request and reset lines, the YM2612, the bank register -- so a bus request
+   stops the Z80 at the right instruction.
+
+Why this shape: the 68000 is the CPU whose accesses have to land on the right clock
+(the FIFO and slot timing of milestones 2 and 5), and m68000-python reports the
+clock of each access as it makes it; the Z80's accesses matter mostly by order, and
+z80-python reports only instruction totals, so it runs in the 68000's wake, at most
+one 68000 instruction behind, with the catch-up points above keeping every shared
+state change in order. The VDP is lazy (it runs only when read, written, or at the
+start of a 68000 step) because it has nothing to do between those points that the
+CPUs could see. When the sound chips are modelled they catch up the same way.
+"""
+
+from __future__ import annotations
+
+from m68000_python import AUTOVECTOR, M68000CPU
+from z80_python import Z80CPU
+
+from .board import Board
+from .cartridge import Cartridge
+from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
+
+#: The longest Z80 step in T-states (an interrupt entry in IM 2 is 19, the longest
+#: instruction 23): an instruction that starts this long before a bus request
+#: has finished before it.
+MAX_Z80_T = 23
+
+
+class System:
+    """Machine + cartridge, ready to run."""
+
+    def __init__(self, machine: Machine, cartridge: Cartridge | None) -> None:
+        self.machine = machine
+        board = self.board = Board(machine, cartridge)
+        self.m68k = M68000CPU(
+            board.read_byte, board.read_word, board.write_byte, board.write_word,
+            tas_write=board.tas_write, acknowledge=self._acknowledge,
+        )  # fmt: skip
+        self.z80 = Z80CPU(board.z80_read, board.z80_write)
+        board.m68k = self.m68k
+        board.catch_up_z80 = self.catch_up_z80
+        board.on_z80_reset = self._z80_reset_line
+        self.vdp = board.vdp
+        #: The 68000's time (MCLK) at the start of its next step.
+        self.mclk = 0
+        #: The Z80's time (MCLK) at the start of its next step.
+        self.z80_mclk = 0
+        self._in_z80 = False
+        self.m68k_instructions = 0
+        self.z80_instructions = 0
+        #: Instructions the Z80 left for later because the 68000 took its bus in the
+        #: middle of them (catch_up_z80).
+        self.z80_deferred = 0
+        # Power-on: the 68000 takes its reset vector; the Z80 is held in reset.
+        self.mclk = self.m68k.reset() * M68K_DIVIDER
+        self._z80_reset_line(True)
+
+    # -- the CPUs' interrupt lines ------------------------------------------------
+
+    def _acknowledge(self, level: int) -> int:
+        """The 68000's interrupt-acknowledge cycle: the VDP clears the request it
+        answers; every level is autovectored (MAME's ``cpu_space_map`` as a
+        detector; the Manual, PDF page 19, gives the levels)."""
+        self.vdp.acknowledge(level)
+        return AUTOVECTOR
+
+    def _z80_reset_line(self, held: bool) -> None:
+        if held:
+            # The reset state is applied at once; the Z80 is not stepped while held.
+            self.z80.request_reset()
+            self.z80.step()
+            self.z80.clear_reset()
+
+    # -- running --------------------------------------------------------------------
+
+    def catch_up_z80(self, mclk: int, stopping: bool = False) -> None:
+        """Run the Z80 until its time reaches ``mclk`` (no-op inside a Z80 step).
+
+        ``stopping``: the caller is about to take the bus from the Z80 or reset it
+        at ``mclk``. The Z80 samples BUSREQ "with the rising edge of the last clock
+        period of any machine cycle" and lets go of the bus after it (Zilog UM0080,
+        "Bus Request/Acknowledge Cycle"; specification tier, and MAME 0.285 agrees:
+        Sonic's handshake reads the Z80 RAM byte the interrupted instruction had not
+        yet written, docs/worklog.md). So an instruction under way at ``mclk`` whose
+        memory accesses are not all started by then does not run now: it is left for
+        when the Z80 has the bus again (:meth:`z80_access_offsets` estimates where
+        the accesses fall).
+        """
+        if self._in_z80:
+            return
+        board, z80, vdp = self.board, self.z80, self.vdp
+        self._in_z80 = True
+        try:
+            while self.z80_mclk < mclk:
+                if not board.z80_running:
+                    self.z80_mclk = mclk
+                    break
+                if stopping and self.z80_mclk + MAX_Z80_T * Z80_DIVIDER >= mclk:
+                    offsets = self.z80_access_offsets()
+                    if any(self.z80_mclk + t * Z80_DIVIDER >= mclk for t in offsets):
+                        self.z80_deferred += 1
+                        break
+                if vdp.z80_irq_at(self.z80_mclk):
+                    z80.request_maskable_interrupt(0xFF)
+                else:
+                    z80.clear_maskable_interrupt()
+                board.step_start = self.z80_mclk
+                self.z80_mclk += z80.step() * Z80_DIVIDER
+                self.z80_instructions += 1
+        finally:
+            self._in_z80 = False
+            board.step_start = self.mclk
+
+    def z80_access_offsets(self) -> list[int]:
+        """The T-state offsets of :meth:`z80_probe`."""
+        return self.z80_probe()[0]
+
+    def z80_probe(self) -> tuple[list[int], dict[int, int]]:
+        """When the Z80's next step would start each of its data accesses, in T-states
+        from the step's start: an estimate, with no effect on the machine.
+
+        z80-python reports only an instruction's total, so the step is run once on a
+        probe bus that records its accesses, and the CPU's state is then restored.
+        The leading reads at PC, PC+1, ... are the fetches: 4 T-states for the first
+        opcode byte and for an opcode after a DD/ED/FD/CB prefix, 3 for other bytes
+        (UM0080's M1 and memory-read cycles); each data access takes 3. Internal
+        T-states are not placed (the core does not say where they fall), so each
+        estimate is the earliest the access can start. Reads of devices return $FF
+        on the probe bus: only RAM and ROM are read, so a probe has no side effects.
+        Returns the offsets and the writes the step would make ({address: value}).
+        """
+        z80, board = self.z80, self.board
+        state = z80.capture_state()
+        read, write = z80.read_byte, z80.write_byte
+        offsets: list[int] = []
+        written: dict[int, int] = {}
+        clock = 0
+        fetching = True
+        next_fetch = z80.pc
+        after_prefix = True  # the first byte is an M1 fetch
+
+        def probe_read(address: int) -> int:
+            nonlocal clock, fetching, next_fetch, after_prefix
+            if address in written:
+                value = written[address]
+            elif address < 0x4000:
+                value = board.z80_ram[address & 0x1FFF]
+            elif address >= 0x8000 and (board.bank | (address & 0x7FFF)) < 0x400000:
+                value = board.cartridge.read_byte(board.bank | (address & 0x7FFF))
+            else:
+                value = 0xFF
+            if fetching and address == next_fetch:
+                clock += 4 if after_prefix else 3
+                after_prefix = value in (0xCB, 0xDD, 0xED, 0xFD) and after_prefix
+                next_fetch = (address + 1) & 0xFFFF
+            else:
+                fetching = False
+                offsets.append(clock)
+                clock += 3
+            return value
+
+        def probe_write(address: int, value: int) -> None:
+            nonlocal clock, fetching
+            fetching = False
+            written[address] = value
+            offsets.append(clock)
+            clock += 3
+
+        z80.read_byte, z80.write_byte = probe_read, probe_write
+        try:
+            z80.step()
+        finally:
+            z80.read_byte, z80.write_byte = read, write
+            z80.restore_state(state)
+        return offsets, written
+
+    def step(self) -> int:
+        """One 68000 instruction, then the Z80 up to the same time; returns MCLK."""
+        board, cpu, vdp = self.board, self.m68k, self.vdp
+        start = self.mclk
+        board.step_start = start
+        board.stall = 0
+        vdp.sync(start)
+        cpu.set_ipl(vdp.ipl)
+        clocks = cpu.step()
+        stall = board.stall
+        elapsed = clocks * M68K_DIVIDER + stall
+        if stall:
+            cpu.clock += stall // M68K_DIVIDER  # keeps the E-clock phase in step
+        self.mclk = start + elapsed
+        self.m68k_instructions += 1
+        self.catch_up_z80(self.mclk)
+        return elapsed
+
+    def run_frame(self) -> None:
+        """Run until the VDP starts its next frame."""
+        frame = self.vdp.frame
+        while self.vdp.frame == frame:
+            self.step()
+
+    def run_mclk(self, mclk: int) -> None:
+        target = self.mclk + mclk
+        while self.mclk < target:
+            self.step()
