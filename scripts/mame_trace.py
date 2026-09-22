@@ -24,12 +24,15 @@ with the first run's exit snapshot under ``snap/``.
 
 ``z80.log`` holds:
 
-- ``Z pc af bc de hl ix iy sp af' bc' de' hl' totalcycles``: one line per Z80
-  instruction (13 values: under MAME's 14-value ``logerror`` limit, trap 2);
+- ``Z pc af bc de hl ix iy sp af' bc' de' hl' r totalcycles``: one line per Z80
+  instruction (14 values, which MAME 0.285 logs: the limit is above 14, trap 3);
 - ``YR|YW address data totalcycles`` for each Z80 access to $4000-$7FFF (YM2612,
   the bank register at $6000, the VDP and PSG at $7F00-$7F1F);
 - ``KR|KW address data totalcycles`` for each access to the banked 68000 window
-  ($8000-$FFFF).
+  ($8000-$FFFF);
+- ``MR|MW address data totalcycles``: each *68000* access to $A00000-$A0FFFF, $A11100
+  and $A11200, stamped with the Z80's totalcycles at the moment MAME made it, so that
+  the lockstep can interleave the two runs exactly as MAME did.
 
 ``totalcycles`` counts each CPU's own clocks (68000: master / 7; Z80: master / 15).
 """
@@ -60,12 +63,21 @@ M68K_WATCHES = [
 Z80_WATCHES = [
     ("YR", "4000", "4000", "r"), ("YW", "4000", "4000", "w"),
     ("KR", "8000", "8000", "r"), ("KW", "8000", "8000", "w"),
+    # Markers: the 68000's accesses to the Z80's space and to the bus request and
+    # reset registers, logged in the Z80's run with the Z80's own totalcycles. They
+    # place each of those 68000 accesses in the Z80's instruction stream in the order
+    # MAME ran them (docs/mame-oracle.md, "Interleaving"), which the two runs'
+    # totalcycles cannot do: the Z80's count stops in reset and MAME runs each CPU a
+    # timeslice at a time.
+    ("MR", "a00000:maincpu", "10000", "r"), ("MW", "a00000:maincpu", "10000", "w"),
+    ("MR", "a11100:maincpu", "2", "r"), ("MW", "a11100:maincpu", "2", "w"),
+    ("MW", "a11200:maincpu", "2", "w"),
 ]  # fmt: skip
 M68K_FIELDS = (
     "curpc,sr,d0,d1,d2,d3,d4,d5,d6,d7,a0,a1,a2,a3,a4,a5,a6,usp,sp",
     "totalcycles,beamy,beamx",
 )
-Z80_FIELDS = ("pc,af,bc,de,hl,ix,iy,sp,af2,bc2,de2,hl2", "totalcycles")
+Z80_FIELDS = ("pc,af,bc,de,hl,ix,iy,sp,af2,bc2,de2,hl2,r", "totalcycles")
 
 
 def lua_script(cpu: str, kind: str, fields: tuple[str, str], watches: list, size: bool) -> str:
