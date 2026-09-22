@@ -9,6 +9,7 @@ Read in this order.
 | [undocumented-behavior.md](undocumented-behavior.md) | Model and revision differences, bus and VDP quirks, the YM2612 against the YM3438, known-wrong sources, open items |
 | [validation.md](validation.md) | Every oracle found, ranked by tier (hardware-captured, hardware-corrected, die-derived, specification, research, emulator-derived), with pins and licences; what is not available |
 | [mame-oracle.md](mame-oracle.md) | The verified MAME 0.285 two-run trace recipe for both CPUs, its measured output, and nine traps |
+| [polish.md](polish.md) | Changes deferred to one pass at the end: core pins and workarounds waiting on a release, and the documents to restate against the final runs |
 | [handoff-brief.md](handoff-brief.md) | The task for the session that builds the board: prerequisites, requirements, ten milestones with acceptance tests, constraints, size and speed |
 
 ## Findings made while gathering (2026-09-22)
