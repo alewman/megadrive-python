@@ -135,8 +135,10 @@ class PSG:
     def write_test(self, value: int) -> None:
         """The VDP debug register's PSG bits ($C0001C bits 11-9), which Nuked-PSG
         takes as ``YMPSG_Test`` (ympsg.c line 333).  Bit 0 forces every channel's
-        sign high, which is the "louder PSG" Kabuto describes; the other bits select
-        a single channel for its analogue test output and are not modelled."""
+        sign high there; the other two select one channel for an analogue test
+        output, which this model has no counterpart for and ignores.  Whether these
+        are the bits Kabuto means by "the PSG can be made louder" ("The mighty debug
+        register") is not established here."""
         self.test = (value >> 9) & 7
 
     # -- time --------------------------------------------------------------------
