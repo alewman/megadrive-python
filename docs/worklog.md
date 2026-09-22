@@ -1185,3 +1185,27 @@ the only explanation that fits. Those names now carry the process id
 whether or not it was this one.
 
 **End of milestone 4.** Stopping here, as the working agreement says.
+
+## Decisions (the user, 2026-09-22), answering milestone 4's questions
+
+1. **The YM2608-LLE difference is accepted as characterised**, not chased: the
+   differences are transient, measured, and the cycle-exact anchor is Nuked-OPN2.
+   Aligning its harness's write strobe is optional work, not a requirement.
+2. **The DAC's multiplexing order stays Nuked-OPN2's**, with YM2608-LLE's
+   disagreement recorded beside it (the cycle-exact comparison anchors there).
+3. **The analogue path is fitted to two consoles, one Model 1 and one Model 2**,
+   matching the machine variants the board models, not to all 21 recordings.
+4. **The SSG-EG recording's 1.0-1.2 % rate difference is accepted** as that
+   recording's clock (the MDFourier recordings show no such drift).
+5. **Confirm `ym2612csmmode.wav`'s provenance** in the forum snapshot we already
+   have (`reference/forum/spritesmind-t386*.html`); if it is from hardware, use it
+   as a judge for CSM, otherwise leave CSM to the die-derived models.
+6. **A discrete YM2612's ports 1-3 read Genesis Plus GX's `0`**, labelled
+   emulator-derived until something better exists.
+7. **The noise channel's 1.72 dB is accepted** as the analogue model's looseness:
+   the digital output matches Nuked-PSG exactly, so the difference is in the
+   analogue path or in that console.
+
+Also decided: **the FM's speed is its own milestone after the board is complete**.
+This pipeline stays as the reference implementation; any faster path is measured
+against it, and the cycle-exact comparison is the gate it must pass.
