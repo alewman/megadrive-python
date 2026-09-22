@@ -192,3 +192,119 @@ is an estimate), the arbiter's delays, the VDP, the YM2612, and anything the stu
 replay.
 
 **End of milestone 1.** Carrying on with milestone 2.
+
+### Milestone 2: the VDP's ports, FIFO, DMA, counters and interrupts
+
+#### Decisions
+
+- **The VDP is Exodus's model, written anew.** Exodus (MIT, by Nemesis, the author
+  of both judges) is the documented source for the port, FIFO, read-cache, DMA and
+  slot rules; `vdp.py` cites file and line for each (`S315-5313_Ports.cpp`,
+  `S315-5313_General.cpp`, `S315-5313_Timing.cpp`). No code is copied (Exodus is MIT,
+  but the rule is to write our own); GPL emulators were not read for this.
+- **The refresh stalls** (`board.py`). Kabuto describes the cartridge-side one
+  ("every time 128 cycles have passed the next bus access is slowed down by 2
+  cycles") and says work RAM has its own. To place both to the MCLK I built
+  Nuked-MD (die-derived, GPL-2.0, `reference/src/Nuked-MD` @ 594ca2a) headless in
+  `reference/build-nuked-md/` (ignored: `headless.c` replaces its SDL audio/video,
+  logs the 68000 bus, `-DTMSS_ENABLE=0`, and the capture ROMs patched with a
+  `move.l #'SEGA',$A14000` stub at $1F000; `gcc -O2 -w
+  -Wno-incompatible-pointer-types`), ran probe loops and the capture ROMs, and fitted
+  the rules to its bus logs: a fixed 896-MCLK grid whose tick the next bus cycle
+  absorbs, +14 MCLK only if that cycle is a cartridge access (670 of 670 ticks in
+  four probe loops); the next work-RAM access once due +21 MCLK, due again ~805 MCLK
+  after (the capture loop allows 743-826). On Nuked-MD's own run of the capture ROM
+  the rules reproduce every one of its 76,800 bus cycles' stretches (log of one run,
+  2.2 M MCLK). Nuked-MD is a detector here; the judge is the captures, whose loop
+  rate (143.588 MCLK an instruction) the rules give. Nuked-MD shows other RAM-stretch
+  lengths (7/35 MCLK) in other loops, not modelled.
+- **What a capture fit may set, and nothing else**: where in its line the VDP is,
+  the 9-bit V and ODD, a pending H mode, the two refresh phases. Everything else is
+  the board's, the same for every dump. The fit first missed on some dumps with
+  cartridge stalls every few ticks: running Nuked-MD on the capture ROM at 16 button
+  times reproduced the misses, the board's rules matched Nuked-MD's bus to the
+  cycle, and the fault was the fitter's coordinate descent; it is now a search over
+  all phase pairs.
+- **HV sampling.** A read samples at the first pixel-clock edge at or after 3 MCLK
+  into its bus cycle (`HV_SAMPLE_DELAY`); fitted, as no document gives it. The reads
+  that disagreed then all fell at one phase each (the counter stepping as sampled)
+  and showed ripple-counter values; the two consoles differ there, so the board
+  carries both measured units (`HV_UNITS`) and picks one by region
+  (`Machine.hv_unit`). Where the hardware's own reads at a phase vary, the majority
+  is taken and the rest counted apart. This is fitting the judge's data to the
+  judge; it is stated so wherever it appears.
+- **Later runs.** Nemesis's ROM runs the loop, sends RAM, waits for C and jumps back
+  to the loop, so dumps 2-9 of a capture start from the first run's state: F set, V
+  mode and interlace latched (`later_run`). Dump 1 is the only one after power-on:
+  there F reads clear until the first VBlank, in 27 of the 28 SR-type captures.
+  Nuked-MD probes showed why: in mode 4 (power-on) any register write clears F; in
+  mode 5 none does. Modelled in `VDP._control_write`.
+- **VDPFIFOTesting is read from VRAM**, page by page with Start, each result byte's
+  palette giving match or mismatch, as sms-python's `run_vdptest.py`.
+
+#### Runs and results (2026-09-22)
+
+- `.venv-pypy/bin/python scripts/run_hv_captures.py` (commit 4743f9f; 288 dumps,
+  PyPy 7.3.23 / Python 3.11.15, 16 processes, 76-78 s): **8,762,415 of 8,847,360
+  words equal (99.04 %)**. The rest: 61,440 in two unplaced dumps ("HV noint intdub
+  NTSCJ H40V28" 1, whose H low nibble reads 3 in every sample and whose status shows
+  DMA busy; "HV noint intinv PAL H40V30" 1); 11,103 in "HV noint intinv PAL H40V28"
+  6 (H one step behind in every second read); 9,869 reads at a stepping phase; 1,288
+  the F flag in "HV noint intnorm PAL H32V30" 1 (set from the start: the one first
+  run that is); 705 VBlank (668 in the first runs of "intnorm NTSCJ H32V28" and
+  "H40V28", set before the first VBlank); 228 HBlank at its edges; 302 H/V reads,
+  mostly interlaced NTSC V30 H32; 10 sprite overflow. Per capture in
+  `tests/hv_captures_baseline.json`.
+- `.venv-pypy/bin/python scripts/run_vdpfifotesting.py --machine M` (commit 4743f9f;
+  ROM `VDPFIFOTesting/VDPFIFOTesting.bin` SHA-256 8b0ed3944893d679…, 3-4 s): 122 of 122
+  on genesis, genesis-tmss, genesis2, megadrive, megadrive-tmss, megadrive2,
+  megadrive-japan, megadrive2-japan; genesis3 114 of 122 (the eight DMA Fill to VSRAM
+  tests). The four intermittent tests pass. On the way: 110 of 122 as first written;
+  the VSRAM-past-the-end read (+8), the transfer's start address (+3), and the
+  transfer holding the 68000's next bus cycle rather than the write that started it
+  (+1, FIFO Wait States, which Exodus fails) fixed it.
+- Lockstep sanity with the new VDP (commit f2055a5): Sonic The Hedgehog (USA,
+  Europe) and Gunstar Heroes (USA) re-recorded (MAME 0.285, 30 s) and replayed:
+  23,286,815 / 20,854,523 68000 and 12,728,465 / 15,425,681 Z80 instructions, 0
+  unexplained each, 44 s / 47 s. Traces deleted.
+- `pytest` (commit 8babd34): 14 passed on PyPy (84 s) and CPython 3.14.4 (178 s),
+  the milestone-1 replay skipped (no logs kept).
+- A standalone check: Sonic The Hedgehog runs 300 frames with the Z80 driving the
+  YM2612 (27,032 FM writes by frame 300), 686,617 68000 steps a second of emulated
+  time; 60 NTSC frames in 0.36 s on PyPy.
+
+#### Milestone 2 acceptance: what passes and what does not
+
+- **VDPFIFOTesting: passes** as the brief states it: every test Nemesis reports
+  passing on hardware passes; the intermittent ones are listed (they pass); the
+  Genesis 3 variant fails VSRAM tests. Which VSRAM tests a Genesis 3 fails is not
+  published, so only "some, and only VSRAM ones" is checked.
+- **The captures: does not pass as stated** ("equal the captures sample for sample
+  in every mode captured"): 99.04 % of words. Most of the rest is not deterministic
+  on the hardware (the same console reads differently at the same phase, between and
+  within runs) or is in four anomalous dumps; about 2,500 differences remain
+  unexplained, listed above and in docs/timing.md. The per-mode tables the brief
+  asked for are in docs/timing.md, "What the captures say".
+
+QUESTION: The capture acceptance cannot be met literally; the board takes the
+majority reading at the phases where the hardware's own reads vary. Is 99.04 % with
+every remaining difference classified acceptable, or should the unexplained ~2,500
+(HBlank edges, first-run VBlank, NTSC interlaced V30) be pursued before milestone 3?
+
+QUESTION: Two captured consoles read the counters differently where they step. The
+board picks the PAL unit's rules for PAL machines and the NTSC-J unit's for NTSC
+ones (`Machine.hv_unit`). Keep that, or make one the default for all?
+
+QUESTION: The work-RAM refresh interval (805 MCLK) and stretch (21 MCLK) come from
+Nuked-MD, judged only by the capture loop's rate. Accept Nuked-MD as the basis for
+the work-RAM refresh until a hardware measurement exists?
+
+QUESTION: CI needs read access to the private m68000-python repository: add a
+secret `M68000_PYTHON_TOKEN` (a fine-grained token with read access to it), or
+make m68000-python public, or vendor a wheel?
+
+QUESTION (from milestone 1, still open): the Z80's interrupt length and the Z80
+bus-grant delay (MoD: 2 cycles /BR to /BG) are not modelled; they wait for MoD's
+`gen_test_z80_bus` in milestone 3.
+
+**End of milestone 2.** Stopping here, as the working agreement says.

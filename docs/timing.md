@@ -79,14 +79,15 @@ scored on H and V; the board then runs the loop from each best placement. Nothin
 else is fitted per dump. Result at the commit that adds this section (PyPy 7.3.23 /
 Python 3.11.15, 78 s on 16 processes):
 
-- **8,762,415 of 8,847,360 words equal (99.04 %).** Of the 84,945 others, 61,440
-  are two dumps the search could not place at all (below), 14,407 are reads at a
-  sampling phase where a counter steps (next paragraph), and 9,098 are other
-  differences, of which 6,436 are one dump (below).
+- **8,762,415 of 8,847,360 words equal (99.04 %).** Of the 84,945 others,
+  61,440 are two dumps the search could not place at all, 11,103 one dump
+  (below), 9,869 reads at a sampling phase where a counter steps (next
+  paragraphs), and 2,533 the differences listed under "Not explained".
 - Per capture: the non-interlaced HV and SR captures agree on 99.74-99.99 % of
-  words, with at most a few non-phase differences each; the interlaced ones on
-  99.5-99.99 % except the four listed below. Per-capture counts come from the
-  script (`--verbose` gives every dump).
+  words, with at most a few differences away from the stepping phases each; the
+  interlaced ones on 99.5-99.99 % except the four with the dumps below.
+  Per-capture counts come from the script (`--verbose` gives every dump) and are
+  kept in `tests/hv_captures_baseline.json`, which the tests hold the board to.
 
 **Line timing.** Measured from the V counter's increment point (internal H $10A
 in H32, $14A in H40), a pixel lasts:
@@ -130,23 +131,24 @@ even within one. The board copies each console's majority (`vdp.HV_UNITS`):
 | V (H32), step carrying into bit 1 | old (13 of 22; old OR new otherwise) | old OR new |
 
 A step that carries changes its low bits first: bits that clear have cleared and
-the bit that sets has not (a ripple counter). 14,407 reads at these phases differ
-from the board anyway; they are counted apart from the rest.
+the bit that sets has not (a ripple counter). 9,869 reads at these phases differ
+from the board anyway (outside the one dump below); they are counted apart.
 
 **Not explained, and not claimed:**
 - Two dumps are not placed: "HV noint intdub NTSCJ H40V28" 1, whose H low nibble
   reads 3 in every sample and whose status shows DMA busy (not the counters at
   all, as far as the board can tell), and "HV noint intinv PAL H40V30" 1.
-- "HV noint intinv PAL H40V28" 6: 6,436 H reads one step behind the board's,
-  every second sample; the other eight dumps of that capture agree.
+- "HV noint intinv PAL H40V28" 6: 11,103 differences, H reads one step behind
+  the board's in every second sample; the other eight dumps of that capture
+  agree.
 - "HV noint intnorm PAL H32V30" 1 reads F set from its first sample; the first
   run of every other capture reads it clear until its first VBlank.
 - The first runs of "intnorm NTSCJ H32V28" and "H40V28" read VBlank set on the
-  lines before the first VBlank (668 samples).
-- The HBlank flag differs on about 300 status reads over all captures, a pixel
-  from its edges; the sprite overflow flag (bit 6) on 12 (no sprites are drawn).
-- The captures of interlaced NTSC V30 in H32 have about 200 other differences
-  each.
+  lines before the first VBlank (668 samples; 37 more VBlank reads elsewhere).
+- The HBlank flag differs on 228 status reads over all captures, a pixel from its
+  edges; the sprite overflow flag (bit 6) on 10 (no sprites are drawn).
+- 302 H or V reads away from the stepping phases, most of them in the interlaced
+  NTSC V30 H32 captures.
 
 The HV counter can be latched (mode register 1 bit 1; used by light guns via
 the external interrupt). Jorge Nuno's 2022 captures with a "fake 68000" give

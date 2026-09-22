@@ -161,5 +161,43 @@ Teradrive TMSS BIOS among them); a sweep reports them as missing.
 
 ## Certification record
 
-Empty: there is no code yet. The milestones in [handoff-brief.md](handoff-brief.md)
-fill it, each with its pins, counts and wall time.
+Each milestone's acceptance as run, with its pins. Code at the commit named;
+m68000-python 51ee1a5 (pinned in `pyproject.toml`), z80-python 0.4.0; PyPy
+7.3.23 (Python 3.11.15) unless said.
+
+### Milestone 1: the two-CPU lockstep against MAME (detector) — passes
+
+MAME 0.285 `genesis`, six games, 30 emulated seconds each: 119,755,782 68000 and
+73,002,958 Z80 instructions with every register equal before every logged
+instruction and every device access matched; 0 unexplained differences, every
+named one listed in [worklog.md](worklog.md) (commit 80e2850). Rerun with the
+milestone-2 VDP (commit f2055a5) for Sonic The Hedgehog (USA, Europe) and Gunstar
+Heroes (USA): the same instruction counts, 0 unexplained. Local only (MAME,
+commercial images); `pytest -m slow` replays recorded logs.
+
+### Milestone 2: the VDP's ports, FIFO, DMA, counters and interrupts
+
+**Nemesis's HV/status captures** (hardware-captured; `sr logic analyser results.zip`
+SHA-256 in `pinned_files.json`), `python scripts/run_hv_captures.py`, commit
+4743f9f, 78 s on 16 processes: all 288 dumps of the 32 captures run on the board;
+**8,762,415 of 8,847,360 words equal (99.04 %)**. Of the 84,945 others: 61,440
+are two dumps the fit cannot place; 11,103 are one dump whose H reads trail the
+board's by a step in every second sample; 9,869 are reads at a sampling phase
+where a counter steps (analogue: the two consoles differ there and each varies
+between runs); 1,288 are the F flag in one dump that starts with it set; 705 the
+VBlank flag (668 of them in two first runs); 228 the HBlank flag at its edges; 302
+H or V reads, mostly in the interlaced NTSC V30 H32 captures; 10 the sprite
+overflow flag (no sprites are drawn yet). Details in [timing.md](timing.md). **Not passed as
+the brief states it**: "equal sample for sample in every mode captured" does not
+hold, for the reasons above; what the board reproduces exactly is every counter
+sequence, every line's pixel timing (H40's VSYNC lines newly found), the flags'
+positions, and the sampling rule; per-capture numbers are the script's output and
+`tests/hv_captures_baseline.json`.
+
+**VDPFIFOTesting** (hardware-corrected; `VDPFIFOTesting.zip`, ROM SHA-256
+8b0ed394…), `python scripts/run_vdpfifotesting.py --machine M`, commit 4743f9f,
+3-4 s each: **122 of 122 on all nine machines** except genesis3; the four tests
+Nemesis reports intermittent on hardware (DMA Fill FIFO Usage; DP Writes During
+DMA Fill VRAM, CRAM, VSRAM) pass. **genesis3** (0x80-byte VSRAM): 114 of 122,
+the eight failures the DMA Fill to VSRAM tests, as a Genesis 3 fails VSRAM tests
+on hardware (Nemesis gives no list, so which ones is not checked).

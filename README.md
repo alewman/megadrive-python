@@ -9,8 +9,13 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: documents and oracles only.** There is no emulator code yet. What is
-here is the groundwork a later session builds from, in the shape that built
+**Status: milestones 1 and 2 of ten** ([docs/validation.md](docs/validation.md),
+"Certification record"): both CPUs run in lockstep with MAME over six games
+(119.8 M 68000 and 73.0 M Z80 instructions, every difference named), and the VDP's
+ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
+fails VSRAM tests as the hardware does) and reproduce 99.04 % of the words of
+Nemesis's 288 HV/status capture dumps. No picture, no sound yet. Around the code,
+the groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
 - a primer on the machine;
@@ -46,6 +51,11 @@ See [docs/README.md](docs/README.md).
 | `scripts/pinned_files.json` | 92 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
 | `scripts/pinned_repos.json` | 14 git repositories at pinned revisions (sparse where large) | yes |
 | `scripts/mame_trace.py` | The MAME 0.285 two-run trace recipe for both CPUs and the device buses, verified | yes |
+| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP (no picture yet), the system clock | yes |
+| `scripts/lockstep_mame.py` | Milestone 1: both CPUs against MAME's logs | yes |
+| `scripts/run_hv_captures.py` | Milestone 2: Nemesis's HV/status captures, word for word | yes |
+| `scripts/run_vdpfifotesting.py` | Milestone 2: VDPFIFOTesting, read back from VRAM | yes |
+| `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
 | `tests/mame_traces/` | MAME runs | no |

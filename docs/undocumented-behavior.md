@@ -91,6 +91,26 @@ source, the way sms-python does.
     consoles and power-ons (Kabuto, "Plane masking instability").
 12. **The window plane's column-fetch bug** at its left edge (CMD's capture
     photos in `md_tech.zip`, `mdpic.htm`; `wbug.bin` in `md_test.zip`).
+13. **H40's long pixels move around VSYNC** (found in Nemesis's captures,
+    milestone 2): on the nine lines ending on V = jump + 5 the second run of
+    long sync pixels ($1DE-$1ED) lasts 8 MCLK and $09F-$0AE take the long
+    lengths instead; in an interlaced odd field the two sets of lines are
+    offset by one, making one line 30 MCLK longer and one 30 MCLK shorter.
+    No emulator table has it ([timing.md](timing.md), "What the captures say").
+14. **A read that lands as a counter steps** sees a mid-change value, and the
+    two captured consoles differ there (a ripple counter caught part-way; the
+    PAL Model 1 and the NTSC-J Model 1 at slightly different phases, and each
+    varying between runs). Details and the board's choice in
+    [timing.md](timing.md).
+15. **In mode 4 a register write clears the F flag**: every capture's first run
+    after power-on (the VDP still in mode 4) reads F clear until its first
+    VBlank, every later run reads it set; Nuked-MD shows the mechanism (any
+    register written in mode 4 clears F; written in mode 5, not).
+16. **A VSRAM read past its 40th word** returns the last word the renderer read
+    from VSRAM, which follows the H counter (the column's entry, or the first two
+    in full-screen vertical scroll; entries $26 AND $27 past the end): Exodus's
+    model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
+    with 64 words, returns the words themselves and fails those tests.
 
 ## The YM2612
 
@@ -134,18 +154,23 @@ source, the way sms-python does.
    missed if disabled; Genesis Plus GX holds it to the end of that line. No
    hardware measurement is pinned. A test that enables interrupts at a
    measured delay after the line starts would settle it.
-2. **The H counter's position in MCLK** and the H40 slow-down's position: in
-   Nemesis's raw captures, not yet decoded (milestone 2).
+2. ~~The H counter's position in MCLK~~: decoded from Nemesis's captures in
+   milestone 2 ([timing.md](timing.md), "What the captures say"). Left open
+   there: a few hundred status reads near the HBlank edges, four dumps.
 3. **The delay from the F flag to the 68000's interrupt**: VDPTEST probes it
    without published hardware values.
 4. **TMSS on Japanese consoles**: Nicole Express (2026) reports that a Japanese
    Model 2 enforces only the header check and a header-modified Hellfire failed
    on it and on a Genesis 3 while running on a VA3; one tester, not in Sega
    Retro. A lead to confirm, not a rule.
-5. **The work-RAM slow-down** Kabuto saw but did not measure.
+5. **The work-RAM slow-down** Kabuto saw but did not measure. The board's model
+   (21 MCLK on the next work-RAM access once due, due again about 805 MCLK after)
+   is Nuked-MD's, and reproduces the capture loop's rate; the interval is fixed
+   only to 743-826 MCLK by that loop, and Nuked-MD varies the stretch (7/21/35
+   MCLK) in other loops, which the board does not model.
 6. **VDPFIFOTesting's intermittent tests**: data-port writes during a DMA fill,
-   and the fill's FIFO byte order, vary on real hardware (Nemesis). A board
-   should pass them one way and say which.
+   and the fill's FIFO byte order, vary on real hardware (Nemesis). The board
+   passes all four (milestone 2).
 7. **The YM2612's DAC sampling point** within its cycle, which differs between
    the Model 1 and Model 2 and which Kabuto did not publish.
 8. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
