@@ -60,11 +60,93 @@ VC8 when in interlace mode 2", CMD `genvdp.txt` citing the Manual). From Nemesis
 | F (vertical interrupt) flag set | H $00 → $01 on V $E0 | same | H $00 → $01 on V $F0 | same |
 
 The H counter counts every other pixel (it is the internal 9-bit counter
-shifted; Eke confirms the internal sequence in forum t=768). Its relation to
-MCLK within the line, and where the H40 clock slow-down falls in it, have to
-be read out of the raw captures: this is milestone 2's first job
-([handoff-brief.md](handoff-brief.md)). CMD's `m5hvc.txt` has the same ranges
-but calls itself "probably off by one or two"; do not use it for positions.
+shifted; Eke confirms the internal sequence in forum t=768). CMD's `m5hvc.txt`
+has the same ranges but calls itself "probably off by one or two"; do not use it
+for positions. Where each value falls in MCLK, read out of the raw captures, is
+the next section.
+
+## What the captures say, sample by sample (milestone 2)
+
+`scripts/run_hv_captures.py` runs each of Nemesis's 288 dumps (32 captures: "HV"
+and "SR" ROMs, PAL Model 1 and NTSC-J Model 1, H32/H40 x V28/V30, no interlace
+and the three interlace settings; each ROM stores 15,360 pairs of reads in 30,720
+words) on the board and compares every word. What the board cannot know is
+fitted per dump: where in its line the VDP is, the 9-bit V and ODD flag, whether
+the H mode written before the loop has latched, and the phases of the two refresh
+stalls. The fit is a search over every phase pair (7-MCLK steps) and every line
+position the first sample allows, scored on the H counter alone; the survivors are
+scored on H and V; the board then runs the loop from each best placement. Nothing
+else is fitted per dump. Result at the commit that adds this section (PyPy 7.3.23 /
+Python 3.11.15, 78 s on 16 processes):
+
+- **8,762,415 of 8,847,360 words equal (99.04 %).** Of the 84,945 others, 61,440
+  are two dumps the search could not place at all (below), 14,407 are reads at a
+  sampling phase where a counter steps (next paragraph), and 9,098 are other
+  differences, of which 6,436 are one dump (below).
+- Per capture: the non-interlaced HV and SR captures agree on 99.74-99.99 % of
+  words, with at most a few non-phase differences each; the interlaced ones on
+  99.5-99.99 % except the four listed below. Per-capture counts come from the
+  script (`--verbose` gives every dump).
+
+**Line timing.** Measured from the V counter's increment point (internal H $10A
+in H32, $14A in H40), a pixel lasts:
+
+| Line | Pixels (internal H) and MCLK each | Total |
+| --- | --- | ---: |
+| H32 | $10A-$127, $1D2-$1FF, $000-$109: 10 | 3,420 |
+| H40 | $14A-$16C, $1C9-$1CC: 8; $1CD-$1D3: 10; $1D4-$1D5: 9; $1D6-$1DC: 10; $1DD: 8; $1DE-$1E4: 10; $1E5-$1E6: 9; $1E7-$1ED: 10; $1EE-$1FF, $000-$149: 8 | 3,420 |
+| H40, VSYNC lines | as H40 but $1DE-$1ED: 8, and $09F-$0A5: 10, $0A6-$0A7: 9, $0A8-$0AE: 10 | 3,420 |
+| H40, interlaced odd field, first VSYNC line | as H40 plus the moved run at $09F-$0AE | 3,450 |
+| H40, interlaced odd field, last VSYNC line | as H40 but $1DE-$1ED: 8 | 3,390 |
+
+The H32 and ordinary H40 lines are Exodus's tables (Nemesis's), confirmed. The
+VSYNC lines are new: on the nine lines ending on V = jump + 5 (PAL V28 $100-$102
+and $1CA-$1CF, PAL V30 $108-$10A and $1D2-$1D7, NTSC V28 $0E8-$0EA and
+$1E5-$1EA; none in NTSC V30, which has no VSYNC) H40's second run of long pixels
+is at $09F-$0AE instead of $1DE-$1ED (7,681 of 7,724 PAL V28 samples on those
+lines agree, 4,043 with the ordinary line). In an interlaced odd field the lines
+with the moved run end one line earlier than those with the short $1DE-$1ED, so
+the first is 30 MCLK long and the last 30 short. The V sequences, the HBlank and
+VBlank flags and F are as in the tables above, at internal H $126/$166 (HBlank
+set), $00A/$00B (cleared) and $001 (F); in interlace the port shows V bits 7-1
+and 8 (doubled: 6-0 and 7), and an odd field adds line jump - 1.
+
+**Sampling.** A read of the HV counter or the status register sees the counters
+at the first pixel-clock edge at or after 3 MCLK into its bus cycle. At three
+phases the read lands as a counter steps: the pixel before that edge began 1
+MCLK (*edge*) or 2 MCLK (*late*) before the sampling point, or the sampled pixel
+begins exactly at it (*next*). What a read there shows is analogue: the two
+consoles differ, and one console's reads at the same phase vary between runs and
+even within one. The board copies each console's majority (`vdp.HV_UNITS`):
+
+| | PAL Model 1 | NTSC-J Model 1 |
+| --- | --- | --- |
+| H32, edge | old AND new if the step changes bit 2 or above, else new | the same from bit 3 |
+| H32, next | clean | the three low bits read clear if the coming step carries past them |
+| H32 jump $127 → $1D2, edge | $1C2 (54 of 67 reads; $1E2 otherwise) | $1C2 |
+| H40 8-MCLK pixels, edge | new | old AND new from bit 2; jump $16C → $1C9 reads $148 |
+| H40 long pixels, edge | old | old |
+| H40 long pixels, late | new | old AND new from bit 2 |
+| V (H32), step carrying into bit 1 | old (13 of 22; old OR new otherwise) | old OR new |
+
+A step that carries changes its low bits first: bits that clear have cleared and
+the bit that sets has not (a ripple counter). 14,407 reads at these phases differ
+from the board anyway; they are counted apart from the rest.
+
+**Not explained, and not claimed:**
+- Two dumps are not placed: "HV noint intdub NTSCJ H40V28" 1, whose H low nibble
+  reads 3 in every sample and whose status shows DMA busy (not the counters at
+  all, as far as the board can tell), and "HV noint intinv PAL H40V30" 1.
+- "HV noint intinv PAL H40V28" 6: 6,436 H reads one step behind the board's,
+  every second sample; the other eight dumps of that capture agree.
+- "HV noint intnorm PAL H32V30" 1 reads F set from its first sample; the first
+  run of every other capture reads it clear until its first VBlank.
+- The first runs of "intnorm NTSCJ H32V28" and "H40V28" read VBlank set on the
+  lines before the first VBlank (668 samples).
+- The HBlank flag differs on about 300 status reads over all captures, a pixel
+  from its edges; the sprite overflow flag (bit 6) on 12 (no sprites are drawn).
+- The captures of interlaced NTSC V30 in H32 have about 200 other differences
+  each.
 
 The HV counter can be latched (mode register 1 bit 1; used by light guns via
 the external interrupt). Jorge Nuno's 2022 captures with a "fake 68000" give
@@ -150,7 +232,14 @@ every line.
   when the 68000 is writing to the VDP. After all slow-downs "the 68K seems to be
   running at roughly 480 cycles per raster line instead of the theoretical
   488+4/7". Work RAM accesses have their own further slow-down he did not
-  measure.
+  measure. The board's model (`board.py`), made exact against Nuked-MD
+  (die-derived; a detector) and judged by the captures, whose sampling loop it
+  reproduces to the MCLK: a fixed 896-MCLK grid; the first 68000 bus cycle to
+  start at or after each tick absorbs it, and takes 14 MCLK longer only if it is
+  a cartridge access. Separately, the next work-RAM access once one is due waits
+  21 MCLK, and the next falls due 805 MCLK after that access started (Nuked-MD
+  allows 743-826 for the capture loop; which is right is open). In the capture
+  loop that gives 143.588 MCLK per `MOVE.L (A0),(A1)+`, as the hardware.
 - **VDP stalls**: a 68000 write to a full FIFO, or a read of VRAM/CRAM/VSRAM,
   holds the 68000 until the VDP's next external slot; a 68000-memory DMA holds
   it for the transfer. A Z80 bank access during either waits too (Kabuto).
