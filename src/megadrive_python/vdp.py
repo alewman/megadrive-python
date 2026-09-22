@@ -341,6 +341,8 @@ READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
 #: MCLK a DMA transfer takes to read one word from the 68000's bus (Exodus
 #: ``dmaTransferReadTimeInMclkCycles``, ``S315_5313.h`` line 919).
 DMA_READ_MCLK = 16
+#: A 68000 bus cycle without wait states: 4 clocks.
+WRITE_CYCLE_MCLK = 28
 #: A read of the HV counter (or the status register) sees the counters as they stand at
 #: the first pixel-clock edge at or after this many MCLK into the 68000's bus cycle.
 #: Fitted to Nemesis's logic-analyser captures (docs/timing.md, "HV counter
@@ -359,7 +361,6 @@ class VDP:
         self.vsram_words = machine.vdp.vsram_bytes // 2
         self.hv_unit = HV_UNITS[machine.hv_reads]
         self.vsram = [0] * 64
-        self.vsram_last_render = 0  # the renderer's last VSRAM read (for $50-$7F)
         # Command state (Exodus _commandCode, _commandAddress, _originalCommandAddress).
         self.code = 0
         self.address = 0
@@ -763,7 +764,7 @@ class VDP:
             self.read_available = True
         elif target == READ_VSRAM:
             index = (address & 0x7E) >> 1
-            value = self.vsram[index] if index < self.vsram_words else self.vsram_last_render
+            value = self.vsram[index] if index < self.vsram_words else self._vsram_last_render()
             self.read_buffer = (self.read_buffer & 0xF800) | (value & 0x07FF)
             self.read_available = True
         elif target == READ_CRAM:
@@ -776,6 +777,19 @@ class VDP:
         else:
             return
         self.address = (self.address + self.registers[15]) & 0xFFFF
+
+    def _vsram_last_render(self) -> int:
+        """What a read of VSRAM past its end gives: the last word the renderer read from
+        VSRAM, which follows the H counter (the column's entry; in full-screen vertical
+        scroll mode the first two entries), or where that index is past the end too,
+        entries $26 AND $27 (Exodus ``UpdateInternalState``, General.cpp 2114-2129;
+        VDPFIFOTesting's DMA Fill to VSRAM tests, which read back $50-$7F)."""
+        index = (self.hcounter() >> 2) & 0x7E
+        if not self.registers[11] & 0x04:
+            index &= 0x03
+        if index < 0x50:
+            return self.vsram[index >> 1]
+        return self.vsram[0x26] & self.vsram[0x27]
 
     def _fill(self) -> None:
         """One DMA fill write (Exodus ``PerformDMAFillOperation``, General.cpp 2680-2825):
@@ -901,7 +915,7 @@ class VDP:
         return held
 
     def _control_write(self, value: int, mclk: int) -> int:
-        held = 0
+        transfer = False
         if not self.pending:
             self.pending = True
             self.code = (self.code & 0x3C) | (value >> 14)
@@ -924,22 +938,23 @@ class VDP:
             bits = 0x3C if self.dma_enabled else 0x1C  # CD5 only with DMA enabled
             self.code = (self.code & ~bits & 0x3F) | ((value >> 2) & bits)
             self.original_address = (self.original_address & 0x3FFF) | ((value & 3) << 14)
-            if self.code & 0x20 and self.dmd < 2:
-                held = self._run_transfer(mclk)
+            transfer = bool(self.code & 0x20) and self.dmd < 2
         self.address = self.original_address
         self.modified = True
         self.read_available = False
         self.read_half = False
-        return held
+        # A 68000-to-VDP transfer starts once the whole command word is in place.
+        return self._run_transfer(mclk) if transfer else 0
 
     def _run_transfer(self, mclk: int) -> int:
-        """A 68000-to-VDP transfer: the VDP takes the bus and holds it until the last word
-        is read (Nemesis's TestDMATransferBusLock); returns the hold."""
+        """A 68000-to-VDP transfer: the VDP takes the bus once the write that started it
+        is over and holds it until the last word is read (Nemesis's
+        TestDMATransferBusLock); returns how long the 68000's next bus cycle waits."""
         self.transfer_active = True
         self.transfer_cached = False
         self.transfer_next_read = mclk
         self._advance(mclk, lambda: not self.transfer_active)
-        return max(0, self.mclk - mclk)
+        return max(0, self.mclk - (mclk + WRITE_CYCLE_MCLK))
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------
 
