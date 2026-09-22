@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING
 
 from .cartridge import Cartridge
 from .io import IOChip
-from .machine import M68K_DIVIDER, Machine
+from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
+from .psg import PSG
 from .vdp import VDP
-from .ym2612 import YM2612Stub
+from .ym2612 import YM2612
 
 if TYPE_CHECKING:
     from m68000_python import M68000CPU
@@ -69,7 +70,17 @@ class Board:
         self.z80_ram = bytearray(0x2000)
         self.io = IOChip(machine.version_register)
         self.vdp = VDP(machine, self)
-        self.fm = YM2612Stub()
+        #: The two sound chips.  Both are lazy: they catch up to the master clock of
+        #: an access before it, and to the board's own clock when a caller drains
+        #: their samples (:meth:`sound_sync`).  The FM shares /RESET with the Z80,
+        #: which is held at power-on ("For as long as the Z80 is reset, the YM2612
+        #: cannot be used", CMD ``gen-hw.txt`` 2.2).
+        self.fm = YM2612(machine.fm)
+        self.fm.reset_line(True)
+        #: The PSG lives inside the VDP and is written at $C00011 or $7F11; reading
+        #: its port locks up a real console (CMD).  It is not held by the Z80's reset.
+        self.psg = PSG()
+        self.psg_mclk = 0
         #: 68000 address bits 23-15 of the Z80's bank window; power-on 0 (unknown on
         #: hardware; MAME 0.285 ``machine_reset`` clears it).
         self.bank = 0
@@ -141,6 +152,37 @@ class Board:
         if address >= 0xE00000 and t >= self.ram_refresh_due:
             self.stall += RAM_REFRESH_STALL
             self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
+
+    # -- the sound chips -----------------------------------------------------
+
+    def sound_sync(self, mclk: int) -> None:
+        """Run both sound chips up to ``mclk``.
+
+        Called before every access to either chip, so that a register write lands on
+        the internal cycle it would land on, and by the system at each frame so that
+        the sample queues fill evenly rather than in bursts at the next write.
+        """
+        self.fm.run(mclk)
+        clocks = (mclk - self.psg_mclk) // Z80_DIVIDER
+        if clocks > 0:
+            self.psg_mclk += clocks * Z80_DIVIDER
+            self.psg.run(clocks)
+
+    def _fm_read(self, port: int, mclk: int | None = None) -> int:
+        """The YM2612's status byte at $A04000-$A04003 (or $4000-$4003).
+
+        The discrete YM2612 answers on port 0 only; the ASIC answers on all four
+        (Eke's counting program on a VA4 Model 1 and a VA0 Model 2, forum t=386
+        start=810; hardware-captured, and why Hellfire's music runs slow on a Model
+        2).  What a *discrete* chip's other three ports read is not in any pinned
+        source: Genesis Plus GX returns 0 (``core/sound/sound.c`` line 152, "invalid
+        FM status address"), which is what the board does, labelled emulator-derived
+        (docs/undocumented-behavior.md, "The YM2612").
+        """
+        self.sound_sync(self.m68k_access_clock() if mclk is None else mclk)
+        if port and not self.machine.fm.busy_on_all_ports:
+            return 0x00
+        return self.fm.read(port)
 
     # -- open bus ------------------------------------------------------------
 
@@ -307,7 +349,7 @@ class Board:
             # the word paths above duplicate.
             return self.z80_ram[offset & 0x1FFF]
         if offset < 0x6000:
-            return self.fm.read(offset & 3)
+            return self._fm_read(offset & 3)
         if offset >= 0x7F00:
             raise Lockup(f"68000 access to ${address:06X}: the VDP through the Z80's space")
         return 0xFF  # the bank register and $6100-$7EFF read $FF (CMD 2.1)
@@ -320,6 +362,7 @@ class Board:
         if offset < 0x4000:
             self.z80_ram[offset & 0x1FFF] = value
         elif offset < 0x6000:
+            self.sound_sync(self.m68k_access_clock())
             self.fm.write(offset & 3, value)
         elif offset < 0x6100:
             self.write_bank(value)
@@ -364,6 +407,7 @@ class Board:
             self.catch_up_z80(self.m68k_access_clock(), stopping=held and self.z80_running)
             if held != self.z80_reset:
                 self.z80_reset = held
+                self.sound_sync(self.m68k_access_clock())
                 self.fm.reset_line(held)
                 self.on_z80_reset(held)
         elif offset & 0xFF00 == 0x3000:
@@ -386,7 +430,7 @@ class Board:
         if address >= 0x8000:
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
-            return self.fm.read(address & 3)
+            return self._fm_read(address & 3, self.step_start)
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
@@ -399,6 +443,7 @@ class Board:
         elif address >= 0x8000:
             self._z80_bank_write(self.bank | (address & 0x7FFF), value)
         elif address < 0x6000:
+            self.sound_sync(self.step_start)
             self.fm.write(address & 3, value)
         elif address < 0x6100:
             self.write_bank(value)

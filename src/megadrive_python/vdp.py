@@ -967,11 +967,19 @@ class VDP:
         port = (offset >> 2) & 7
         if port == 7:
             # $C0001C, the debug register (Kabuto, "The mighty debug register"; CMD
-            # ``newreg.txt``). Only the plane-forcing bits are modelled.
+            # ``newreg.txt``). Only the plane-forcing bits are modelled, plus the
+            # PSG's three test bits, which Nuked-PSG takes at the same place.
             self.debug_register = value & 0xFFFF
+            self.board.psg.write_test(value & 0xFFFF)
+            return 0
+        if port in (4, 5):
+            # $C00011-$C00017: the PSG.  "If you want to write to the PSG via
+            # word-wide writes, the data must be in the LSB" (CMD 1 note 3).
+            self.board.sound_sync(mclk)
+            self.board.psg.write(value & 0xFF)
             return 0
         if port >= 4:
-            return 0  # the PSG (milestone 4), the unused and test registers
+            return 0  # the unused addresses and the test register
         self.sync(mclk)
         if port == 0:
             self.hold = self._data_write(value, mclk)
@@ -981,9 +989,15 @@ class VDP:
 
     def write_byte(self, offset: int, value: int, mclk: int) -> int:
         if offset >= 0x10:
-            if (offset >> 2) & 7 == 7:  # the debug register takes a byte as a word
+            port = (offset >> 2) & 7
+            if port == 7:  # the debug register takes a byte as a word
                 return self.write_word(offset & 0x1E, (value << 8) | value, mclk)
             self.hold = 0
+            if port in (4, 5) and offset & 1:
+                # "Doing byte-wide writes to even PSG addresses has no effect"
+                # (CMD 1 note 3), so only the odd half reaches the chip.
+                self.board.sound_sync(mclk)
+                self.board.psg.write(value)
             return 0
         return self.write_word(offset & 0x1E, (value << 8) | value, mclk)
 

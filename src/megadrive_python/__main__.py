@@ -1,7 +1,5 @@
-"""Run a cartridge: ``python -m megadrive_python CART --frames N --png out.png``.
-
-Sound (``--wav``) arrives with milestone 4.
-"""
+"""Run a cartridge: ``python -m megadrive_python CART --frames N --png out.png
+--wav out.wav``."""
 
 from __future__ import annotations
 
@@ -16,6 +14,7 @@ from .io import BUTTONS
 from .machine import MACHINES
 from .png import write_png
 from .system import System
+from .wav import write_wav
 
 IMAGE_SUFFIXES = (".md", ".gen", ".bin", ".smd")
 
@@ -37,6 +36,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--machine", default="genesis", choices=sorted(MACHINES))
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument("--png", type=Path, help="write the last frame here")
+    parser.add_argument("--wav", type=Path, help="write the sound here (16-bit stereo)")
+    parser.add_argument(
+        "--rate", type=int, default=44_100, help="sample rate of --wav (default 44100)"
+    )
+    parser.add_argument(
+        "--no-sound",
+        action="store_true",
+        help="do not run the YM2612's generator (it dominates the time)",
+    )
     parser.add_argument(
         "--press", default="", help="buttons held from --press-at on (e.g. start,a)"
     )
@@ -45,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     system = System(MACHINES[args.machine], Cartridge(load_image(args.cartridge)))
+    system.audio.sample_rate = args.rate
+    if args.no_sound:
+        system.board.fm.enabled = False
     pad = system.board.io.ports[0].device
     pressed = 0
     for name in (button.strip().lower() for button in args.press.split(",") if button.strip()):
@@ -52,11 +63,20 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"unknown button {name!r}: one of {', '.join(sorted(BUTTONS))}")
         pressed |= BUTTONS[name]
     started = time.perf_counter()
+    audio: list[tuple[int, int]] = []
     for frame in range(args.frames):
         if pressed and frame == args.press_at:
             pad.pressed = pressed
         system.run_frame()
+        if args.wav:
+            audio.extend(system.take_audio())
+        else:
+            # Keep the sample queues from growing over a long run.
+            system.board.fm.take_samples()
+            system.board.psg.take_samples()
     seconds = time.perf_counter() - started
+    if args.wav:
+        write_wav(args.wav, audio, args.rate)
     if args.png:
         write_png(args.png, system.vdp.renderer.frame_rgb())
     if not args.quiet:
@@ -66,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{system.m68k_instructions:,} 68000 and {system.z80_instructions:,} Z80 "
             f"instructions in {seconds:.2f} s ({args.frames / seconds:.1f} fps, "
             f"{sys.implementation.name} {sys.version.split()[0]})"
+            + (f"; {len(audio):,} samples at {args.rate} Hz" if args.wav else "")
         )
     return 0
 

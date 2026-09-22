@@ -35,6 +35,7 @@ from __future__ import annotations
 from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
 
+from .audio import AudioPath
 from .board import Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
@@ -60,6 +61,8 @@ class System:
         board.catch_up_z80 = self.catch_up_z80
         board.on_z80_reset = self._z80_reset_line
         self.vdp = board.vdp
+        #: The analogue path the two sound chips meet in (docs: audio.py).
+        self.audio = AudioPath(machine)
         #: The 68000's time (MCLK) at the start of its next step.
         self.mclk = 0
         #: The Z80's time (MCLK) at the start of its next step.
@@ -218,10 +221,21 @@ class System:
         return elapsed
 
     def run_frame(self) -> None:
-        """Run until the VDP starts its next frame."""
+        """Run until the VDP starts its next frame, then bring the sound chips up
+        to the same clock so their sample queues fill a frame at a time."""
         frame = self.vdp.frame
         while self.vdp.frame == frame:
             self.step()
+        self.board.sound_sync(self.mclk)
+
+    def take_audio(self) -> list[tuple[int, int]]:
+        """The stereo samples finished since the last call, at the host rate.
+
+        Both chips are brought up to the 68000's clock first, so a caller that only
+        drains at long intervals still gets every sample.
+        """
+        self.board.sound_sync(self.mclk)
+        return self.audio.mix(self.board.fm.take_samples(), self.board.psg.take_samples())
 
     def run_mclk(self, mclk: int) -> None:
         target = self.mclk + mclk
