@@ -943,7 +943,9 @@ slow would give exactly this) and the console's crystal against the nominal
 All at commit `383992c` unless said; m68000-python 51ee1a5, z80-python 0.4.0, PyPy
 7.3.23 (Python 3.11.15), referees built as above with gcc 15.2.0. The machine was
 shared, so the wall times vary by up to a factor of three between runs of the same
-comparison.
+comparison. The MDFourier numbers below are from `46528e7`, which is `383992c` plus
+the two changes that run itself produced (the DC blocker and the fitted `PSG_GAIN`);
+nothing else in the sound path differs between the two.
 
 #### The PSG against Nuked-PSG (die-derived, the judge): passes
 
@@ -1039,8 +1041,8 @@ whatever that was, it is not the board's frame rate.)
 **The mixing ratio, measured.** On the Model 1 VA3 the 40 PSG tone blocks sit
 **6.70 dB below** the 96 FM blocks. That is the one number `audio.PSG_GAIN` sets, and
 it was fitted here: at the gain the board started with (1,400) its PSG sat 3.72 dB
-*above* its FM, 10.42 dB too loud; at **422** it sits 6.66 dB below, **0.04 dB** from
-the hardware. This is the only parameter of the analogue path that a pinned source
+*above* its FM, 10.42 dB too loud; at **422** (commit `46528e7`) it sits 6.66 dB
+below, **0.04 dB** from the hardware. This is the only parameter of the analogue path that a pinned source
 measures, and it is now measured rather than guessed.
 
 | group | hardware, relative to its own FM | board | board minus hardware |
@@ -1113,3 +1115,52 @@ QUESTION: **The noise channel is 1.72 dB quiet relative to the FM** against the
 MDFourier recording, while the PSG's tones are 0.04 dB out and its digital output is
 identical to Nuked-PSG's at every clock. Worth running down, or accepted as part of
 the analogue model's known looseness?
+
+### What the sound costs on PyPy (the brief's speed section)
+
+`.venv-pypy/bin/python`, 600 frames after 120 of warm-up (Start at frame 110), one
+process, NTSC, at commit `2b113e5`. Four runs per game: the board as it ships; with
+`YM2612.enabled` off (the bus, the register file, the timers, BUSY and the PSG, no
+generator); with the YM2612 not advanced at all; and with neither chip advanced,
+which is the milestone-3 board measured in the same run for comparison. The last
+three columns are seconds of wall time per **emulated** second.
+
+| Game | fps, all | fps, no FM | fps, PSG only | fps, silent | sound s/s | FM s/s | PSG s/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 18.2 | 49.9 | 139.5 | 185.9 | 2.97 | **2.86** | 0.11 |
+| Streets of Rage 2 (USA) | 21.4 | 57.3 | 177.0 | 205.4 | 2.51 | **2.46** | 0.05 |
+| Gunstar Heroes (USA) | 17.7 | 53.9 | 160.1 | 192.0 | 3.08 | **3.01** | 0.06 |
+| Castlevania - Bloodlines (USA) | 18.3 | 35.6 | 87.1 | 138.2 | 2.84 | **2.59** | 0.25 |
+| Sonic The Hedgehog 3 (USA) | 17.1 | 49.2 | 122.8 | 180.0 | 3.17 | **3.01** | 0.16 |
+| Phantasy Star IV (USA) | 17.5 | 40.8 | 124.3 | 152.7 | 3.03 | **2.94** | 0.09 |
+
+**The FM dominates, as the brief said it might: 2.5 to 3.0 seconds of wall time per
+emulated second**, against the PSG's 0.05 to 0.25 and the whole rest of the board's
+0.32 (Sonic: 600 frames in 3.23 s silent). The board goes from 3.1 times real time to
+0.29 times: with sound it is **17 to 21 frames a second on PyPy**, about a third of
+real time.
+
+Why, and what was done about it: the chip's grid is 1,278,409 internal cycles a
+second and each one runs seventeen stages of the pipeline over 24 slots' worth of
+state, so about 22 million method calls and a few hundred million integer operations
+per emulated second. The number is what modelling the pipeline costs, and the
+pipeline is what the acceptance above needs. One thing was cheap and is done:
+`YM2612.enabled` used to skip only the four operator stages, leaving the phase
+generator, the envelope generator, the LFO and the register decode running -- Sonic
+at 23.6 frames a second. It now skips the whole generator and keeps only the bus, the
+register file, the timers and BUSY, which is all a run without sound needs: 49.9
+frames a second, and it is what `--no-sound`, the register-stream captures and a
+later compatibility sweep will use.
+
+What was *not* done, deliberately: flattening the seventeen stages into one method
+would likely buy something on PyPy, and it would touch every line the cycle-exact
+comparison rests on. Since that comparison is the whole evidence for this milestone
+and the tests would be the only net, it is left for a session that can re-run all
+eighteen streams afterwards, and recorded here rather than attempted at the end of
+this one.
+
+The machine was shared through the session: the "silent" column here (138 to 205
+frames a second) is not directly comparable with milestone 3's table (148 to 294),
+which is why all four columns are measured in the same run.
+
+**End of milestone 4.** Stopping here, as the working agreement says.

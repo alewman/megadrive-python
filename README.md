@@ -44,7 +44,7 @@ See [docs/README.md](docs/README.md).
 | Main CPU | Motorola 68000, 7.67 MHz (7.60 PAL) |
 | Sound CPU | Zilog Z80 (NMOS), 3.58 MHz, 8 KB RAM, a 32 KB window onto the 68000's space |
 | Video | 315-5313 / YM7101: two planes, a window, 80 sprites, 64 KB VRAM, 9-bit colour from 64 CRAM entries, DMA, H32/H40, V28/V30, interlace; Mode 4 for the Master System |
-| Sound | YM2612 (OPN2): six 4-operator FM channels, one of them a DAC; the Sega PSG inside the VDP |
+| Sound | YM2612 (OPN2): six 4-operator FM channels, one of them a DAC, and a YM3438-like ASIC on later models; the Sega PSG inside the VDP |
 | Memory | 64 KB work RAM; cartridge ROM up to 4 MB (more with the SSF2 mapper), battery SRAM or EEPROM |
 | I/O | three ports (two pads and an expansion port), the version register, TMSS on later models |
 | Models | Model 1 (VA0–VA7), Model 2, Genesis 3, Nomad; NTSC, PAL, Japanese |
@@ -58,7 +58,7 @@ See [docs/README.md](docs/README.md).
 | `scripts/pinned_files.json` | 94 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
 | `scripts/pinned_repos.json` | 14 git repositories at pinned revisions (sparse where large) | yes |
 | `scripts/mame_trace.py` | The MAME 0.285 two-run trace recipe for both CPUs and the device buses, verified | yes |
-| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the system clock | yes |
+| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the YM2612 and the PSG, the analogue path, the system clock | yes |
 | `scripts/lockstep_mame.py` | Milestone 1: both CPUs against MAME's logs | yes |
 | `scripts/run_hv_captures.py` | Milestone 2: Nemesis's HV/status captures, word for word | yes |
 | `scripts/run_vdpfifotesting.py` | Milestone 2: VDPFIFOTesting, read back from VRAM | yes |
