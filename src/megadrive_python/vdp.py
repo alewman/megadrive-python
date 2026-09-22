@@ -754,6 +754,36 @@ class VDP:
         # against the address as the program gives it, which is this one un-swapped.
         self.renderer.sprite_cache_write((address ^ 1) & 0x1FFFF, value & 0xFF)
 
+    def _vram_write_128k(self, address: int, data: int) -> None:
+        """One VRAM write in 128 KB mode (register 1 bit 7), on a console with the
+        usual single 64 KB chip.
+
+        "each VRAM chip just stores one byte from each 16-bit word", so with only one
+        chip fitted "just the lower byte of each word written to VRAM will get stored,
+        the upper byte will get sent to the non-existing 2nd VRAM chip and get lost";
+        the address bits are rearranged, "Writes to address a in 128K mode end up in the
+        68k VRAM address (((a & 2) >> 1) ^ 1) | ((a & $400) >> 9) | a & $3FC |
+        ((a & $1F800) >> 1)"; "writing to odd addresses does not seem to have an effect
+        (as if the lowmost address bit was just ignored)"; and the write takes one slot
+        rather than two, which is why "write/DMA speed to VRAM increases to that of CRAM
+        and VSRAM" (Kabuto, "128 KB mode abuse"; hardware-measured research, but no test
+        ROM pinned here exercises it -- Overdrive 2 in milestone 5 is the judge).
+
+        What 128 KB mode does to the *picture* is not modelled: the renderer keeps
+        reading VRAM as in 64 KB mode, where the hardware would show "garbled display
+        contents" (Kabuto).
+        """
+        if address & 1:
+            return
+        target = (
+            (((address & 2) >> 1) ^ 1)
+            | ((address & 0x400) >> 9)
+            | (address & 0x3FC)
+            | ((address & 0x1F800) >> 1)
+        )
+        self.vram[target & 0xFFFF] = data & 0xFF
+        self.renderer.sprite_cache_write(target & 0x1FFFF, data & 0xFF)
+
     def _fifo_write(self) -> None:
         """Commit the oldest FIFO entry, a byte at a time for VRAM (Exodus
         ``PerformFIFOWriteOperation``, General.cpp 2479-2627)."""
@@ -761,12 +791,17 @@ class VDP:
         code, address, data, half = entry[0], entry[1], entry[2], entry[3]
         target = code & 0x0F
         if target == WRITE_VRAM:
-            byte = (data >> 8) if ((address & 1) ^ half) else data & 0xFF
-            self._vram_write_byte((address & 0xFFFE) | half, byte)
-            entry[3] = not half
-            entry[4] = entry[3]
+            if self.registers[1] & 0x80:
+                self._vram_write_128k(address, data)
+                entry[4] = False
+            else:
+                byte = (data >> 8) if ((address & 1) ^ half) else data & 0xFF
+                self._vram_write_byte((address & 0xFFFE) | half, byte)
+                entry[3] = not half
+                entry[4] = entry[3]
         elif target == WRITE_CRAM:
             self.cram[(address & 0x7E) >> 1] = data & 0x0EEE
+            self.renderer.cram_dirty = True
             entry[4] = False
         elif target == WRITE_VSRAM:
             index = (address & 0x7E) >> 1
@@ -840,6 +875,7 @@ class VDP:
             self._vram_write_byte(last[1], last[2] >> 8)
         elif target == WRITE_CRAM:
             self.cram[(last[1] & 0x7E) >> 1] = fifo[self.fifo_read][2] & 0x0EEE
+            self.renderer.cram_dirty = True
         elif target == WRITE_VSRAM:
             index = (last[1] & 0x7E) >> 1
             if index < self.vsram_words:

@@ -56,10 +56,25 @@ SHADE_SHIFT = 6
 #: width (Nemesis, forum t=541 start=30, checked on an MD1600; Kabuto, phases 1 and 3).
 SPRITE_LIMITS = {256: (64, 16, 32), 320: (80, 20, 40)}
 
-#: Cells of a plane by the two bits of register 16: 32, 64, invalid, 128. "If the HSZ
-#: bits are set to 10b (invalid), then the first row of the name table is shown for
-#: every line of the display" (CMD ``genvdp.txt``), which a 32-cell wrap gives here.
+#: A plane's size by the two bits of register 16 (00 = 32 cells, 01 = 64, 10 invalid,
+#: 11 = 128; CMD ``genvdp.txt``, register $10), as the VDP addresses it:
+#:
+#: - ``PLANE_CELLS``: cells across, which is the column number's wrap.
+#: - ``PLANE_ROW_SHIFT``: how far the tile row number is shifted to give the name
+#:   table row's offset in bytes. The invalid width shifts by nothing, so with the
+#:   0x1FC0 mask every line of a screen takes its names from the table's first row --
+#:   "If the HSZ bits are set to 10b (invalid), then the first row of the name table is
+#:   shown for every line of the display" (CMD).
+#: - ``PLANE_ROW_MASK``: the vertical wrap, in pixels and applied as a mask, so that
+#:   the invalid height (0x2FF) wraps as oddly as the hardware does.
+#:
+#: The shift and the masks are Genesis Plus GX's tables (``core/vdp_ctrl.c``
+#: ``shift_table``/``col_mask_table``/``row_mask_table``; emulator-derived, read and
+#: rewritten, never copied), which is the only statement of the invalid sizes' shape
+#: beyond CMD's sentence; CMD's sentence and this agree where they overlap.
 PLANE_CELLS = (32, 64, 32, 128)
+PLANE_ROW_SHIFT = (6, 7, 0, 8)
+PLANE_ROW_MASK = (0x0FF, 0x1FF, 0x2FF, 0x3FF)
 
 
 class Renderer:
@@ -70,8 +85,11 @@ class Renderer:
         #: The frame being drawn: ``pixels[row][x]`` is a CRAM index and a shade
         #: (:data:`SHADE_SHIFT`). 480 rows are kept so that double interlace fits.
         self.pixels = [bytearray(320) for _ in range(480)]
-        #: The picture's size once a frame is done.
+        #: The picture's size once a frame is done, and the width each row was drawn
+        #: at: a game that switches H32 and H40 part way down a frame (CMD photographed
+        #: one) draws rows of both widths, and the frame is as wide as its widest.
         self.width = 320
+        self.widths = [0] * 480
         self.height = 0
         self.rows = 0
         #: Sprite state that outlives a line (Kabuto, phase 3): whether the sprite read
@@ -84,6 +102,13 @@ class Renderer:
         #: Decoded tile rows, keyed by the four pattern bytes and the attribute: the key
         #: holds the data, so an entry can never go stale when VRAM changes.
         self._tiles: dict[int, tuple] = {}
+        #: The palette each row was drawn with (normal, shadow and highlight RGB for
+        #: every CRAM entry). A game that rewrites CRAM part way down the frame -- as
+        #: CMD's shadow/highlight tests do, a band at a time -- gets a row of its own.
+        self._palettes: list[tuple | None] = [None] * 480
+        self._palette: tuple = ()
+        #: Set by the VDP on a CRAM write: the next row drawn takes a fresh palette.
+        self.cram_dirty = True
         #: The sprite cache: the Y and size/link words of each of the 80 sprites,
         #: written through by VRAM writes that land in the sprite table (Kabuto,
         #: "General"). Moving the table does not fill it, as on the hardware.
@@ -136,22 +161,23 @@ class Renderer:
 
     # -- the planes ---------------------------------------------------------------
 
-    def _plane_columns(self, line: list[int], base: int, row: int, columns: int, rows: int,
-                       scroll: int, im2: bool, window_bug: int, first: int,
-                       last: int) -> None:  # fmt: skip
+    def _plane_columns(self, line: list[int], base: int, row: int, size: int, scroll: int,
+                       im2: bool, window_bug: int, first: int, last: int) -> None:  # fmt: skip
         """One scrolling plane, over the screen pixels ``first``..``last`` - 1.
 
-        ``row`` is the plane row in pixels, ``columns``/``rows`` its size in cells,
-        ``scroll`` its horizontal scroll (the plane moves right by it), ``window_bug``
-        the screen pixel where CMD's window bug starts (two cells fetched from two
-        cells further on), or -1.
+        ``row`` is the plane row in pixels before its vertical wrap, ``size`` register
+        16, ``scroll`` the plane's horizontal scroll (the plane moves right by it), and
+        ``window_bug`` the screen pixel where CMD's window bug starts (two cells
+        fetched from two cells further on), or -1.
         """
         vram = self.vdp.vram
         tile_rows = 16 if im2 else 8
-        row %= rows * tile_rows
-        name_row = base + (row // tile_rows) * columns * 2
+        pattern_mask, pattern_bytes = (0x3FF, 64) if im2 else (0x7FF, 32)
+        row_mask = PLANE_ROW_MASK[(size >> 4) & 3]
+        row &= (row_mask << 1) | 1 if im2 else row_mask
+        name_row = base + (((row // tile_rows) << PLANE_ROW_SHIFT[size & 3]) & 0x1FC0)
         pattern_row = row & (tile_rows - 1)
-        column_mask = columns - 1
+        column_mask = PLANE_CELLS[size & 3] - 1
         x = first - ((first - scroll) & 7)
         while x < last:
             cell = ((x - scroll) >> 3) & column_mask
@@ -160,8 +186,7 @@ class Renderer:
             entry = (name_row + cell * 2) & 0xFFFF
             name = (vram[entry] << 8) | vram[entry + 1]
             pattern_line = (tile_rows - 1 - pattern_row) if name & 0x1000 else pattern_row
-            pattern = (name & 0x7FE) if im2 else (name & 0x7FF)
-            address = (pattern * 32 + pattern_line * 4) & 0xFFFF
+            address = ((name & pattern_mask) * pattern_bytes + pattern_line * 4) & 0xFFFF
             row_pixels = self._tile_row(address, (name >> 9) & 0x70, bool(name & 0x0800))
             if first <= x and x + 8 <= last:
                 line[x : x + 8] = row_pixels
@@ -177,23 +202,23 @@ class Renderer:
         """The window's cells ``first``..``last``, unscrolled.
 
         Its name table is 32 cells wide in H32 and 64 in H40 ("The name table for plane
-        W is 32x32 in 32-cell mode, and 64x32 in 40-cell mode", CMD ``genvdp.txt``),
-        and in H40 bit 10 of the base address is ignored (the Manual).
+        W is 32x32 in 32-cell mode, and 64x32 in 40-cell mode", CMD ``genvdp.txt``).
+        Register 3's "Bits 5-1 ... correspond to bits A15-A11 ... In 40-cell mode, A11
+        is always forced to zero" (CMD), so the base is masked to 0xF800, or 0xF000 in
+        H40 (the same masks as Genesis Plus GX's ``ntwb``).
         """
         vram = self.vdp.vram
         columns = 64 if width == 320 else 32
-        base = (self.vdp.registers[3] << 10) & 0xFFFF
-        if width == 320:
-            base &= ~0x400
+        base = (self.vdp.registers[3] << 10) & (0xF000 if width == 320 else 0xF800)
         tile_rows = 16 if im2 else 8
+        pattern_mask, pattern_bytes = (0x3FF, 64) if im2 else (0x7FF, 32)
         name_row = base + (row // tile_rows) * columns * 2
         pattern_row = row & (tile_rows - 1)
         for cell in range(first, last + 1):
             entry = (name_row + cell * 2) & 0xFFFF
             name = (vram[entry] << 8) | vram[entry + 1]
             pattern_line = (tile_rows - 1 - pattern_row) if name & 0x1000 else pattern_row
-            pattern = (name & 0x7FE) if im2 else (name & 0x7FF)
-            address = (pattern * 32 + pattern_line * 4) & 0xFFFF
+            address = ((name & pattern_mask) * pattern_bytes + pattern_line * 4) & 0xFFFF
             x = cell * 8
             line[x : x + 8] = self._tile_row(address, (name >> 9) & 0x70, bool(name & 0x0800))
 
@@ -221,12 +246,16 @@ class Renderer:
         # line (CMD ``genvdp.txt``, register $0B bits 1-0, with his pseudocode; mode 01
         # "will only read the first sixteen entries in the scroll table").
         mask = (0, 7, 0xFFF8, 0xFFFF)[registers[11] & 3]
-        table = (registers[13] << 10) & 0xFFFF
-        entry = (table + (screen_row & mask) * 4) & 0xFFFF
+        # Register 13 bits 5-0 are A15-A10 of the scroll table (CMD ``genvdp.txt``).
+        table = (registers[13] << 10) & 0xFC00
+        # The scroll table is read with the V counter's line, not the doubled one, in
+        # interlace mode 2 (Genesis Plus GX ``render_bg_m5_im2``, which computes the
+        # index before doubling; Kabuto says only "the lowmost 8 bits of the raster
+        # line are used for HScroll lookup").
+        entry = (table + (v & mask) * 4) & 0xFFFF
         scroll_a = ((vram[entry] << 8) | vram[entry + 1]) & 0x3FF
         scroll_b = ((vram[entry + 2] << 8) | vram[entry + 3]) & 0x3FF
-        columns = PLANE_CELLS[registers[16] & 3]
-        rows = PLANE_CELLS[(registers[16] >> 4) & 3]
+        size = registers[16]
         window_first, window_last = self._window_columns(cells, v)
 
         window_bug = -1
@@ -238,14 +267,21 @@ class Renderer:
             # horizontal scroll value for the current scan line are nonzero, the name
             # table attribute data are fetched from next column" (CMD ``genvdp.txt``;
             # his capture photos ``cv-win-00.gif`` and ``cv-win-01.gif``).
-            window_bug = (window_last + 1) * 8
+            #
+            # The column it hits is the *partial* one the fine scroll puts before plane
+            # A's first whole 2-cell column, so its 16 pixels end at the window's edge
+            # plus the fine scroll; its two cells then repeat in the column after it,
+            # which is CMD's "1 column that has identical patterns as the next column".
+            window_bug = (window_last + 1) * 8 - 16 + (scroll_a & 0x0F)
 
         two_cell = bool(registers[11] & 4)
         vsram = vdp.vsram
         words = vdp.vsram_words
+        # Register 2 bits 5-3 are plane A's A15-A13 and register 4 bits 2-0 plane B's
+        # (CMD ``genvdp.txt``), so both bases mask to 0xE000.
         for line, base, scroll, plane in (
-            (line_a, (registers[2] << 10) & 0xFFFF, scroll_a, 0),
-            (line_b, (registers[4] << 13) & 0xFFFF, scroll_b, 1),
+            (line_a, (registers[2] << 10) & 0xE000, scroll_a, 0),
+            (line_b, (registers[4] << 13) & 0xE000, scroll_b, 1),
         ):
             if two_cell:
                 # Two-cell column vertical scroll: each 16-pixel column of the display
@@ -254,12 +290,12 @@ class Renderer:
                 while x < width:
                     index = (x >> 4) * 2 + plane
                     vscroll = vsram[index] if index < words else 0
-                    self._plane_columns(line, base, screen_row + vscroll, columns, rows,
-                                        scroll, im2, window_bug, x, min(x + 16, width))  # fmt: skip
+                    self._plane_columns(line, base, screen_row + vscroll, size, scroll,
+                                        im2, window_bug, x, min(x + 16, width))  # fmt: skip
                     x += 16
             else:
-                self._plane_columns(line, base, screen_row + vsram[plane], columns, rows,
-                                    scroll, im2, window_bug, 0, width)  # fmt: skip
+                self._plane_columns(line, base, screen_row + vsram[plane], size, scroll,
+                                    im2, window_bug, 0, width)  # fmt: skip
         if window_last >= window_first:
             # "Plane A is not shown in any column where plane W is shown" (CMD).
             self._window_line(line_a, width, screen_row, window_first, window_last, im2)
@@ -304,7 +340,7 @@ class Renderer:
         base = (vdp.registers[5] << 9) & 0xFFFF
         if width == 320:
             base &= ~0x200
-        step = 2 if im2 else 1
+        pattern_mask, pattern_bytes = (0x3FF, 64) if im2 else (0x7FF, 32)
         tiles_left = max_tiles
         rendering = True
         last_x_nonzero = self.last_x_nonzero
@@ -333,7 +369,7 @@ class Renderer:
             row = (screen_row - y) & (0x3F if im2 else 0x1F)
             if name & 0x1000:
                 row = cells_y * tile_rows - 1 - row
-            pattern = (name & 0x7FE) if im2 else (name & 0x7FF)
+            pattern = name & pattern_mask
             cell_row = row // tile_rows
             pattern_line = row & (tile_rows - 1)
             out_of_tiles = False
@@ -345,8 +381,8 @@ class Renderer:
                 if not rendering:
                     continue
                 column = (cells_x - 1 - cell) if flip_x else cell
-                tile = pattern + (column * cells_y + cell_row) * step
-                address = ((tile & 0x7FF) * 32 + pattern_line * 4) & 0xFFFF
+                tile = pattern + column * cells_y + cell_row
+                address = (tile * pattern_bytes + pattern_line * 4) & 0xFFFF
                 left = x + cell * 8
                 if left <= -8 or left >= width:
                     continue
@@ -381,10 +417,18 @@ class Renderer:
         if row >= 480:
             return
         out = self.pixels[row]
+        if self.cram_dirty or not self._palette:
+            self._palette = self._make_palette()
+            self.cram_dirty = False
+        self._palettes[row] = self._palette
         self.width = width
         if row + 1 > self.rows:
             self.rows = row + 1
         backdrop = vdp.registers[7] & 0x3F
+        self.widths[row] = width
+        if width < 320:
+            for x in range(width, 320):
+                out[x] = backdrop
         if not vdp.display_enabled:
             # The backdrop colour. On the hardware the planes keep showing whatever is
             # on the bus (Kabuto, "Effects of 'disable display'"), which is not modelled.
@@ -488,21 +532,30 @@ class Renderer:
         that is the frame just finished; called part way through one, what it has drawn.
         """
         height = self.rows or self.height
-        return self.width, height, [self.pixels[row] for row in range(height)]
+        width = max(self.widths[:height], default=self.width) or self.width
+        return width, height, [self.pixels[row] for row in range(height)]
 
-    def frame_rgb(self) -> list[list[int]]:
-        """The picture as rows of RGB888, through the VDP's measured colour ramp."""
-        width, _height, rows = self.frame()
+    def _make_palette(self) -> tuple:
+        """CRAM as RGB888: normal, shadowed and highlighted."""
         cram = self.vdp.cram
-        palette = []
-        for shade in range(3):
-            levels = LEVELS[shade]
-            palette.append([
+        return tuple(
+            [
                 (levels[(colour >> 1) & 7] << 16)
                 | (levels[(colour >> 5) & 7] << 8)
                 | levels[(colour >> 9) & 7]
                 for colour in cram
-            ])  # fmt: skip
-        return [
-            [palette[value >> SHADE_SHIFT][value & 0x3F] for value in row[:width]] for row in rows
-        ]
+            ]
+            for levels in LEVELS
+        )
+
+    def frame_rgb(self) -> list[list[int]]:
+        """The picture as rows of RGB888, each row through the palette it was drawn
+        with: a game that rewrites CRAM part way down a frame (CMD's shadow/highlight
+        tests do, a band at a time) keeps each band's colours."""
+        width, _height, rows = self.frame()
+        current = self._palette or self._make_palette()
+        out = []
+        for index, row in enumerate(rows):
+            palette = self._palettes[index] or current
+            out.append([palette[value >> SHADE_SHIFT][value & 0x3F] for value in row[:width]])
+        return out
