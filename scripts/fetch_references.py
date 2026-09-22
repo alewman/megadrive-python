@@ -26,6 +26,8 @@ Forum threads are also converted to plain text next to their HTML.
     python scripts/fetch_references.py --large    # also the large recordings and bundles
     python scripts/fetch_references.py --no-repos --only tests/test_roms/nemesis/ \
         --only reference/images/                  # what CI needs, and nothing else
+    python scripts/fetch_references.py --no-repos --repo Nuked-OPN2
+                                                  # one source tree, no files
 """
 
 from __future__ import annotations
@@ -109,9 +111,11 @@ def fetch_files(verify_only: bool, large: bool, only: list[str] | None = None) -
     return problems
 
 
-def fetch_repos(verify_only: bool) -> int:
+def fetch_repos(verify_only: bool, only: list[str] | None = None) -> int:
     problems = 0
     for entry in json.loads(REPOS.read_text(encoding="utf-8")):
+        if only and not any(entry["path"].endswith("/" + name) for name in only):
+            continue
         path = ROOT / entry["path"]
         if path.exists():
             head = subprocess.run(
@@ -157,10 +161,12 @@ def main() -> int:
     parser.add_argument("--large", action="store_true", help="also the entries over 50 MB")
     parser.add_argument("--only", action="append",
                         help="only the files whose path starts with this (repeatable)")  # fmt: skip
+    parser.add_argument("--repo", action="append",
+                        help="only these repositories, by name (repeatable)")  # fmt: skip
     args = parser.parse_args()
     problems = fetch_files(args.verify, args.large, args.only)
-    if not args.no_repos:
-        problems += fetch_repos(args.verify)
+    if not args.no_repos or args.repo:
+        problems += fetch_repos(args.verify, args.repo)
     print("all pins satisfied" if not problems else f"{problems} problem(s)")
     return 1 if problems else 0
 
