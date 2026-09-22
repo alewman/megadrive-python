@@ -1,0 +1,8 @@
+# Tooling only for now: there is no package yet (see docs/handoff-brief.md).
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["reference", "tests/test_roms", "tests/mame_traces"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "PERF", "RUF"]

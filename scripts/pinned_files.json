@@ -1,0 +1,925 @@
+[
+  {
+    "path": "reference/docs/blastem/gen_test_hv.s68",
+    "url": "https://www.retrodev.com/repos/blastem/raw-file/0c61d0d95463/gen_test_hv.s68",
+    "sha256": "631caaff8849972a6df7fd1559575c14349da060f38121017d87cac54b5f0506",
+    "size": 10443,
+    "kind": "document",
+    "tier": "unverified",
+    "date": "2026-09-22",
+    "why": "BlastEm's HV-counter test source"
+  },
+  {
+    "path": "reference/docs/cmd/gen-eeprom.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/gen-eeprom.txt",
+    "sha256": "f285eff424d4b7f1475b491fd330bc1f4f037d753be4b56215bc0f763cb7a7ff",
+    "size": 1160,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "EEPROM games (X24C01)"
+  },
+  {
+    "path": "reference/docs/cmd/gen-hw.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/gen-hw.txt",
+    "sha256": "4fc6cad38d5d845b9a4296ac0c75a1a579204f3b2f2affb2d3286d90612bbc36",
+    "size": 24434,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "memory map, Z80 bus, bank register, I/O, version register"
+  },
+  {
+    "path": "reference/docs/cmd/genhw.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/genhw.txt",
+    "sha256": "a42a6c62ccb2d0fde6304735fe9a3cb4ef5b769dd4c5b75f1e7ae7370cd67c21",
+    "size": 16182,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Rick McTeague 1993: early, superseded"
+  },
+  {
+    "path": "reference/docs/cmd/genvdp.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/genvdp.txt",
+    "sha256": "70d3053a8fef40fe1daa488ee60e9d604596adf08acbb371306f74095f3931b9",
+    "size": 59756,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Charles MacDonald's VDP document v1.5f (2000): preliminary; timing superseded"
+  },
+  {
+    "path": "reference/docs/cmd/m5hvc.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/m5hvc.txt",
+    "sha256": "e5075bf3ba3f214c1d6361980e13cbc6e865fe0beb97a8034e1fc7ab74678574",
+    "size": 1438,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Mode 5 HV ranges, 'probably off by one or two': superseded by the logic-analyser captures"
+  },
+  {
+    "path": "reference/docs/cmd/newreg.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/newreg.txt",
+    "sha256": "688f155dd36716a2609741fcb7e92c4d92d31a5ab8804db7483792bcd94ed39d",
+    "size": 4644,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "the debug register"
+  },
+  {
+    "path": "reference/docs/cmd/segasix.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/segasix.txt",
+    "sha256": "b7668658879f8b5f1d85d6196ec5ef1e34ffff01506f241657b1a22fa977e4af",
+    "size": 10457,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Rosenberg 1996 6-button: incomplete, superseded by Terakawa"
+  },
+  {
+    "path": "reference/docs/cmd/vdpint.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/vdpint.txt",
+    "sha256": "5a7d218b3fe4a2813938b65b94529f71a874bbb7cff1b90188a8ab24e5dd11b4",
+    "size": 2469,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Mode 4 interrupts on the MD VDP"
+  },
+  {
+    "path": "reference/docs/cmd/vdppin.txt",
+    "url": "http://dreamjam.co.uk/emuviews/txt/vdppin.txt",
+    "sha256": "e6292c4dc58a562ddb83547907b400e4739bf63bee950cc1e5672d62e8e74546",
+    "size": 10264,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "315-5313 pinout"
+  },
+  {
+    "path": "reference/docs/eke/gen_lightgun.pdf",
+    "url": "https://gendev.spritesmind.net/mirrors/eke/gen_lightgun.pdf",
+    "sha256": "0a103846c007a35542e08da767dfb82df155e1a9b7c224b47d97f34fef83561a",
+    "size": 48327,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Eke: light guns"
+  },
+  {
+    "path": "reference/docs/kabuto-hardware-notes.html",
+    "url": "https://plutiedev.com/mirror/kabuto-hardware-notes",
+    "sha256": "977ddfe554b97aeb30be4e51525bee5313683ace93abe59cb0b97facbc0d67a7",
+    "size": 104635,
+    "kind": "live-wiki",
+    "tier": "hardware-measured research",
+    "date": "2026-09-22",
+    "why": "Kabuto's MD hardware notes v1.5 (Overdrive 2 research, oscilloscope and audio measurements)"
+  },
+  {
+    "path": "reference/docs/md_tech.zip",
+    "url": "https://bitbucket.org/eke/genesis-plus-gx/downloads/md_tech.zip",
+    "sha256": "22e7d442ba9e92cc9dd37231c483687d7f1efc442c2b8c09eaf1b6864063d5ac",
+    "size": 3718763,
+    "kind": "document",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Eke's document bundle (genvdp, gen-hw, ste, mdpic captures, ssf2tnc, EEPROM, SVP...)"
+  },
+  {
+    "path": "reference/forum/mddc-md-vdp-research-thread.html",
+    "url": "https://board.mddc.dev/threads/md-vdp-research-thread.76/",
+    "sha256": "647f79421f93bb55a8a716da8e57f3b976867890d34b2a181d2e3dcafa423272",
+    "size": 88351,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Jorge Nuno 2022: HV/status trip points with a fake 68000"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1203.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1203",
+    "sha256": "56a0af953fb6d03f222213f059b5b1b24fcabd597fe73881fbdbb135141def33",
+    "size": 77528,
+    "kind": "live-forum",
+    "tier": "stress case",
+    "date": "2026-09-22",
+    "why": "Direct Color DMA"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1262.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1262",
+    "sha256": "85908af2ae49bc394d6d896cf13c6d4399a1275bb943dbc5a1d85c1c735a5548",
+    "size": 62865,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "reset signals"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1291-30.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1291&start=30",
+    "sha256": "67d7cc8119f4ab4200f7988f5cdadccb9ba5c2f00390cec23082fe11f8c475b1",
+    "size": 76308,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "VDPFIFOTesting results on hardware"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1291.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1291",
+    "sha256": "b0b3c275e62199cc239f23bb1156592eadd95622e7dac742cb892ae9f0dcf9f7",
+    "size": 83325,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Mask of Destiny et al.: VDP internals"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1585.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1585",
+    "sha256": "5c1e9586c89a023a27a7855761e4aad7b826fc2a21c74d5f2581f99bda2ebec9",
+    "size": 68507,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "r57shell VDP tests on an MD2"
+  },
+  {
+    "path": "reference/forum/spritesmind-t1661.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=1661",
+    "sha256": "25bbef3e4c27d5c82dd9e99bd192d8696a2751683aed9391520706af36b00a5b",
+    "size": 75085,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Mask of Destiny: Z80 bank-access wait states"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2188.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2188",
+    "sha256": "30a58b5ccd15150cbaf7feea0563dec6a4c9464e2cb384e9df363058d2193c6e",
+    "size": 54062,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "colour levels"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2227.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2227",
+    "sha256": "37c44657ef383c2f3030801a52d26e0ea1e2eabbdb6c2e9dbf4d18166a4fd110",
+    "size": 61822,
+    "kind": "live-forum",
+    "tier": "index",
+    "date": "2026-09-22",
+    "why": "aggregating community research"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2308.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2308",
+    "sha256": "9054d4c92d154dc9c803de4a2d3d51c60f4e9f1363f6bc3f261561116fc4af1f",
+    "size": 47001,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "joypad timings"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2557.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2557",
+    "sha256": "d23f8151321495a94de6d2d6df21700703eaf3ff4dae951e3e51041c3c9357a9",
+    "size": 34229,
+    "kind": "live-forum",
+    "tier": "hardware-observed",
+    "date": "2026-09-22",
+    "why": "Mode 4 VRAM timing"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2565.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2565",
+    "sha256": "4eeaf2f021babba841580a2cf18aedd7dba46add6f200a12d2b560e20c48fabe",
+    "size": 49016,
+    "kind": "live-forum",
+    "tier": "index",
+    "date": "2026-09-22",
+    "why": "MD test ROM list"
+  },
+  {
+    "path": "reference/forum/spritesmind-t2604.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=2604",
+    "sha256": "d8dce8bb0fd82b7609f3f97f517b3f38cdc89d85aba3621bc1f1a56edfc7e270",
+    "size": 73327,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Titan: debug register"
+  },
+  {
+    "path": "reference/forum/spritesmind-t3021.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=3021",
+    "sha256": "73b5a059ddd43121da227c60b6316daa7de2fc15abace7c5ae77199437fcae9a",
+    "size": 57792,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "Z80 bus test ROM"
+  },
+  {
+    "path": "reference/forum/spritesmind-t3197.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=3197",
+    "sha256": "0b3ac7038b96b129df80f15a009c3ca3c23a927133fcac54fbfe6bb4cc5846ef",
+    "size": 35170,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "TMSS dumps"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-165.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=165",
+    "sha256": "c3dca091479aa7a667fac0a38ba64b557444aa9a10affd11b6dde33848d44f7b",
+    "size": 95518,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "YM2612: phase generator corrections"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-405.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=405",
+    "sha256": "4d887ed45ae2d03d84b1474a9cf595b90ffc54e0718aa01c4cce67c7f7f5f3db",
+    "size": 110443,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "YM2612: envelope generator corrections"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-585.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=585",
+    "sha256": "4edf7a72e10dce1359d5715c3ffc73edccd677e922a39efdf4788fb477d5575f",
+    "size": 66044,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "YM2612: die analysis"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-675.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=675",
+    "sha256": "1283ddc0d592d65c34964de4418eb06caf8f733fade1a42019e0eaa07163dd37",
+    "size": 74750,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "YM3438 die"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-705.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=705",
+    "sha256": "47aadea24201ca8562b687a28f2b901d9aa391b27c2009c22a89e8e29d77ac8c",
+    "size": 93497,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "test register"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-795.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=795",
+    "sha256": "4f416960aca09295c0f5be8b986be0c435c119b7bc215cb563f620d286e865f3",
+    "size": 91517,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "test register (cont.)"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386-810.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386&start=810",
+    "sha256": "bf28f4b1ec211e581055249e6142c4409f007c9e05b8287e557cc78187e79005",
+    "size": 108002,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "Eke 2017: BUSY flag measurements"
+  },
+  {
+    "path": "reference/forum/spritesmind-t386.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=386",
+    "sha256": "09d8db7d3d2792d3a0c79fc79b5545fd29376c0d27f7e3dce1d1837408ef797e",
+    "size": 74832,
+    "kind": "live-forum",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "YM2612 authoritative reference, page 1"
+  },
+  {
+    "path": "reference/forum/spritesmind-t519.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=519",
+    "sha256": "80906e561d04985c61838ac331e5ba7a60b56ae4e64c40931348fcc0c8c33c72",
+    "size": 65922,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Jorge Nuno: video timings, oscilloscope"
+  },
+  {
+    "path": "reference/forum/spritesmind-t541-30.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=541&start=30",
+    "sha256": "83888e5765354f4a07ade2dca1b826bfff7929053261d32a143cb78bf419df46",
+    "size": 74826,
+    "kind": "live-forum",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "sprite masking ROM results chart"
+  },
+  {
+    "path": "reference/forum/spritesmind-t768.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=768",
+    "sha256": "68c730b0ea22384250eb95cc59efd480dacf77865ccf563d144100bc17fb949e",
+    "size": 66113,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis: sr logic analyser thread"
+  },
+  {
+    "path": "reference/forum/spritesmind-t851.html",
+    "url": "https://gendev.spritesmind.net/forum/viewtopic.php?t=851",
+    "sha256": "6ea8c29f94bd8ecda1bbbbbecb3e85f8d5a3644c306f916c50a08c72ac1205df",
+    "size": 85176,
+    "kind": "live-forum",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis: VRAM access slots"
+  },
+  {
+    "path": "reference/manuals/FMDocs.7z",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/FMDocs.7z",
+    "sha256": "74d195e5741868a5f8f64b4b73c0a060c257f09af40e8031df041567251f5581",
+    "size": 143038156,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "Nemesis's FM bundle incl. the YM3438 application manual (large)",
+    "large": true
+  },
+  {
+    "path": "reference/manuals/GenesisSoftwareManual-150p.pdf",
+    "url": "https://segaretro.org/images/9/95/GenesisSoftwareManual.pdf",
+    "sha256": "5406a8a721aa3071accd45118153f0e5ad49f1380c6f2bb4aec452010603ae4c",
+    "size": 10266231,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "a second scan with a text layer, 150 pages"
+  },
+  {
+    "path": "reference/manuals/GenesisSoftwareManual-183p.pdf",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/GenesisSoftwareManual.pdf",
+    "sha256": "92e0b832b1f54ba17c6f0fc2d04f90285e1c2d4f50ab3e0acd4d9e4999285355",
+    "size": 32104731,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "Sega's Genesis Software Manual, 183-page image scan"
+  },
+  {
+    "path": "reference/manuals/GenesisTechnicalBulletins.pdf",
+    "url": "https://segaretro.org/images/2/27/GenesisTechnicalBulletins.pdf",
+    "sha256": "a5b9c86e5ed149a976e228c2faffdb9abf9219648231369d7c57ca2b57ee7255",
+    "size": 2187077,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "SoA bulletins: errata to the manual; they win where they differ"
+  },
+  {
+    "path": "reference/manuals/GenesisTechnicalOverview.pdf",
+    "url": "https://segaretro.org/images/1/18/GenesisTechnicalOverview.pdf",
+    "sha256": "2a34c6b54bd9f4da170c7329c0f8d83bb266f7324d01dc3ba234cb273cae9a9e",
+    "size": 292381,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "Technical Overview v1.00 (1991)"
+  },
+  {
+    "path": "reference/manuals/SegaGenesisReferenceSheets_1992-11-05.pdf",
+    "url": "https://segaretro.org/images/c/cf/SegaGenesisReferenceSheets_1992-11-05.pdf",
+    "sha256": "b83c77ae42972958864ac92eb295c2e4d191dea229473d10fe1487a91f67d069",
+    "size": 16578653,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "reference sheets extracted from the 1990 manual"
+  },
+  {
+    "path": "reference/manuals/YM2608J Translated.pdf",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM2608J%20Translated.PDF",
+    "sha256": "570b6210cb98bb5651ff6c1a303b9f65c5fff5b54627ad8d81760b844349ee81",
+    "size": 411926,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "YM2608 (OPNA) application manual, Nemesis's English translation"
+  },
+  {
+    "path": "reference/manuals/YM2608J.pdf",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM2608J.PDF",
+    "sha256": "b84432b49387ce76617f682cceb17e9ba27008667734ef3dfcaa2e68e1a16b54",
+    "size": 1961941,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "the Japanese original"
+  },
+  {
+    "path": "reference/manuals/YM3015.pdf",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM3015.pdf",
+    "sha256": "7fa529f2a35aed12017e020fbb212166bdbfb793a9e28990ed005b27229b410b",
+    "size": 276363,
+    "kind": "manual",
+    "tier": "specification",
+    "date": "2026-09-22",
+    "why": "YM3015 DAC datasheet"
+  },
+  {
+    "path": "reference/web/nicole-express-truth-about-tmss.html",
+    "url": "https://nicole.express/2026/the-truth-about-tmss.html",
+    "sha256": "ada5d7cfa1776939ad234f24db623f8d89a1ba6e73a992f6bfba856d1bdc5ffb",
+    "size": 23229,
+    "kind": "live-wiki",
+    "tier": "hardware-observed (one tester)",
+    "date": "2026-09-22",
+    "why": "TMSS: a lead to confirm"
+  },
+  {
+    "path": "reference/web/plutiedev-a130xx-usage.html",
+    "url": "https://plutiedev.com/a130xx-usage",
+    "sha256": "377104cf4463f819b6b146fb4555f31670109ec1c004712e2e2304de6a2b98b4",
+    "size": 2637,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-beyond-4mb.html",
+    "url": "https://plutiedev.com/beyond-4mb",
+    "sha256": "36107df0aad1d430e4b51b1e6ae082159ace832b98401790abd54a867ac056b4",
+    "size": 7165,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-cartridge-slot.html",
+    "url": "https://plutiedev.com/cartridge-slot",
+    "sha256": "a97f856d94b541a0ae3770d2a43be6cf8a67c7eabb3c9b304ae24fd18156901d",
+    "size": 19041,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-controllers.html",
+    "url": "https://plutiedev.com/controllers",
+    "sha256": "6b961e871cef0db4767570fcc6b3c82c678ccaf9faf01e9fb42eb4568346df55",
+    "size": 17937,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-dma-transfer.html",
+    "url": "https://plutiedev.com/dma-transfer",
+    "sha256": "23a4bf9aaf638b9667c84c785c31e07f501e1c4c6589bd40626774653a0a2800",
+    "size": 10081,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-hardware-issues.html",
+    "url": "https://plutiedev.com/hardware-issues",
+    "sha256": "73c22a16e62ccc4697318a138e8212ec379902d269dc30fffe8f08b4dccac4b7",
+    "size": 17615,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-io-ports.html",
+    "url": "https://plutiedev.com/io-ports",
+    "sha256": "8a84d42e44f635ecaa30ac3d542fdccc5852c121703a8a2f605cdd43d5b23443",
+    "size": 13825,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-peripheral-id.html",
+    "url": "https://plutiedev.com/peripheral-id",
+    "sha256": "7f0007224a4d2814f230e040376050a08f4f6080cf2b9a1b9def4a23f94a2c8a",
+    "size": 7193,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-saving-sram.html",
+    "url": "https://plutiedev.com/saving-sram",
+    "sha256": "271069145956066e3ae9fc57bd008f35f135f7d4bbbd4e69b888a175f9cd2277",
+    "size": 7340,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-screen-resolution.html",
+    "url": "https://plutiedev.com/screen-resolution",
+    "sha256": "a17b9eace05b146a95360687606e61836bb8eba45e8aab323c2ed18777667d80",
+    "size": 7252,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-shadow-highlight.html",
+    "url": "https://plutiedev.com/shadow-highlight",
+    "sha256": "aa776c7bf0528850d415d3cd12285b52bb7b39160147248e5c6daf618182b15d",
+    "size": 6956,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-using-the-z80.html",
+    "url": "https://plutiedev.com/using-the-z80",
+    "sha256": "11df9f9bc9c7742addb6c465cf0fcc2dab3e86382a7683166ba243db8d6b284b",
+    "size": 10000,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-vdp-color-ramp.html",
+    "url": "https://plutiedev.com/vdp-color-ramp",
+    "sha256": "3066a3a093639291a7f106af3c1f0f18ec66370b589a182fcd2496018fb9c2fd",
+    "size": 4704,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-vdp-commands.html",
+    "url": "https://plutiedev.com/vdp-commands",
+    "sha256": "49546133a2b56b83b04f59329d18ca87eabf21499eeef5030c3872f904d41188",
+    "size": 5997,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-vdp-debug.html",
+    "url": "https://plutiedev.com/vdp-debug",
+    "sha256": "48a822ef13dc7ceacaf79c659832df8f01b9200a3318f0dbe91a185fd5cff78d",
+    "size": 8985,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/plutiedev-vdp-registers.html",
+    "url": "https://plutiedev.com/vdp-registers",
+    "sha256": "7f43017cc2d53b56e6426aade5af52ca7b1555b45629e9a4fe52bca2691b4b8b",
+    "size": 21728,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "Plutiedev (Sik)"
+  },
+  {
+    "path": "reference/web/railgun-vdp.html",
+    "url": "https://md.railgun.works/index.php?title=VDP",
+    "sha256": "fc7d9cca44b2abf6455eb64b84276a85e0c6625abe37b81636f983954b6b52e7",
+    "size": 117167,
+    "kind": "live-wiki",
+    "tier": "research",
+    "date": "2026-09-22",
+    "why": "md.railgun.works VDP page"
+  },
+  {
+    "path": "reference/web/terakawa-6button.html",
+    "url": "https://github.com/SukkoPera/MegaDrivePlusPlus/wiki/Interface-Protocol-of-SEGA-MegaDrive%27s-6-Button-Controller",
+    "sha256": "aee943ac8794d04cf73395a882f9796ad9f1989aa8ac7498f67c334bced30cc9",
+    "size": 240713,
+    "kind": "live-wiki",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Terakawa's 6-button timing measurements (mirror)"
+  },
+  {
+    "path": "tests/test_roms/aly-james/MD1_LADDER.wav",
+    "url": "http://www.alyjameslab.com/tutorials/MD1_LADDER.wav",
+    "sha256": "3fbd65925c935534d6b965bfe33747838512d5da5ee93d085bc6c7cf1df42ace",
+    "size": 273422,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured (board unverified)",
+    "date": "2026-09-22",
+    "why": "YM2612 ladder-effect recording"
+  },
+  {
+    "path": "tests/test_roms/eke/md_test.zip",
+    "url": "https://bitbucket.org/eke/genesis-plus-gx/downloads/md_test.zip",
+    "sha256": "5daef612489627a403657482b7a86727f2f8ea07e214a0c9e9c4c212ace2103f",
+    "size": 38472,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (visual)",
+    "date": "2026-09-22",
+    "why": "Eke's bundle: TmEE, Charles MacDonald (inferred), Paul Lee, VDPTEST; no readme, authorship from headers"
+  },
+  {
+    "path": "tests/test_roms/ghost/sweep_1000.rar",
+    "url": "http://shedevr.org.ru/ghost/ym2612/sweep_1000.rar",
+    "sha256": "6f4e26dc1d09d59f12a1c67c75b23338ab6a153564e9cf9f3d5df19ff47aef07",
+    "size": 2802,
+    "kind": "test-rom",
+    "tier": "capture tool",
+    "date": "2026-09-22",
+    "why": "Ghost's 1 kHz DAC/test-register sweep ROMs"
+  },
+  {
+    "path": "tests/test_roms/mask-of-destiny/gen_test_z80_bus.md",
+    "url": "http://www.retrodev.com/files/gen_test_z80_bus.md",
+    "sha256": "ed344fed9de5c98510662f432de893f4a6b2c573b44db15bf0ebdc35b4d8de1b",
+    "size": 5252,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "Mask of Destiny 2019: Z80 access to 68000 space, tested across multiple machines (t=3021)"
+  },
+  {
+    "path": "tests/test_roms/mask-of-destiny/gen_test_z80_bus.s68",
+    "url": "http://www.retrodev.com/files/gen_test_z80_bus.s68",
+    "sha256": "43c4aadea880b06a890946f6ab88166fc24e637a017b150f11cd2623097b7241",
+    "size": 10013,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "its source"
+  },
+  {
+    "path": "tests/test_roms/mdfourier/MDFourier-Genesis-SegaCD-Recordings-14062020.zip",
+    "url": "https://junkerhq.net/MDFourier/files/MDFourier-Genesis-SegaCD-Recordings-14062020.zip",
+    "sha256": "3becec030b45cc84372988fbc5351ffcf6cc5c5cde44f7d7f053e941f3fd5aa1",
+    "size": 135446904,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "MDFourier test signal recorded from ~21 MD boards (large)",
+    "large": true
+  },
+  {
+    "path": "tests/test_roms/nemesis/SpriteMaskingTestRom.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/SpriteMaskingTestRom.bin",
+    "sha256": "1331819ef3ed07c6a4512a8970a4d3488f2c0af6daaf382e2b6c0b0b29dc967d",
+    "size": 262144,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "Nemesis 2009: sprite limits and masking, results checked on an MD1600 (t=541 start=30)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/SpriteMaskingTestRom.zip",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/SpriteMaskingTestRom.zip",
+    "sha256": "ed5afce10fc2b1f8d6fb0a7b13f1fc34cab3f064316136822f5f803ab0447df4",
+    "size": 4420,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "its source"
+  },
+  {
+    "path": "tests/test_roms/nemesis/VDPFIFOTesting.zip",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/VDPFIFOTesting.zip",
+    "sha256": "6bb1354be1bb05afa8bcb8a276ab7ba5126fb743bc091b50404c7ad353345e6a",
+    "size": 212882,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "Nemesis 2013: >100 self-checking VDP port/FIFO/DMA tests; 'all pass on the hardware, with a few exceptions' (t=1291 start=30)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/sr logic analyser results.zip",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Samples/sr%20logic%20analyser%20results.zip",
+    "sha256": "24e083ebcf0d55761fa2f779558f3bd9baeccf378e899da4508ba33539e61255",
+    "size": 7676593,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis 2010: HV counter and status register sampled across whole frames with a logic analyser, PAL MD1 and NTSC-J MD1, H32/H40 x V28/V30 x interlace modes (thread t=768)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/sr logic analyser roms.zip",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/sr%20logic%20analyser%20roms.zip",
+    "sha256": "f02f3acd625f20b77cb3344c0601c842bc69f25c0d3ea284457f384634affd9f",
+    "size": 22266,
+    "kind": "test-rom",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "the ROMs that produced the captures"
+  },
+  {
+    "path": "tests/test_roms/nemesis/sr logic analyser source.zip",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/sr%20logic%20analyser%20source.zip",
+    "sha256": "d4b16c29c15fa94c1bc1b713a0e8e8bcbee157775221c218a0e013d0459d74c9",
+    "size": 4765,
+    "kind": "test-rom",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "their source"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ssg-eg md1600 attack and release.rar",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Samples/ssg-eg%20md1600%20attack%20and%20release.rar",
+    "sha256": "7a42cc00c06babc93b4099339f4ebcc00e2b7c7a8633a7e0c395f0abb82af807",
+    "size": 106822481,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis 2009: attack/release recorded from an MD1600 (large)",
+    "large": true
+  },
+  {
+    "path": "tests/test_roms/nemesis/ssg-eg md1600.rar",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Samples/ssg-eg%20md1600.rar",
+    "sha256": "14a35ae02a5090a873adae84139e91b63920d5bcbf83f569a6da90ae8ab3f635",
+    "size": 10271971,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis 2008: SSG-EG test ROM recorded from an MD1600"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612FrequencyWriteOrder.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612FrequencyWriteOrder.bin",
+    "sha256": "e79459a7da8d87e0314b90bfc8fcbf0f086d16a26b437f01df84b2b00d34ebfe",
+    "size": 756,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis YM2612 test ROM (t=386)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612attackandrelease.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612attackandrelease.bin",
+    "sha256": "06b72d3875a3c3081618c101b47acaf5750ba04269ebe2f5c24ae3669dafb68b",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis YM2612 test ROM (t=386)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612csmmode.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612csmmode.bin",
+    "sha256": "3faaae394f6eba5e0a036576920b34a56900df564d259262ee60fb56fc7edac1",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis YM2612 test ROM (t=386)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612csmmode.wav",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612csmmode.wav",
+    "sha256": "4c47fffaa6eca0eeabf7103ae69d32359d753bad3c65311fc70ec19bc6bd14bf",
+    "size": 975998,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured (to confirm)",
+    "date": "2026-09-22",
+    "why": "CSM-mode recording beside the ROM; provenance to confirm in t=386"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612detune.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612detune.bin",
+    "sha256": "74306d736f99541cd5c23afa8b7c4d9177cbc803ac3156438b28f167acf453df",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis YM2612 test ROM (t=386)"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612multiplexing.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/ym2612multiplexing.bin",
+    "sha256": "519d19a023edf623598e1bd1560b236ab4778eae1f0b35c73dfe0cbca496e32f",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis: DAC time-division multiplexing"
+  },
+  {
+    "path": "tests/test_roms/nemesis/ym2612ssg-eg.bin",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612ssg-eg.bin",
+    "sha256": "03a73fd6c46a37c943147b7396200ad5e7129d108827bb6ac46726edf693eacc",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected (by ear)",
+    "date": "2026-09-22",
+    "why": "Nemesis YM2612 test ROM (t=386)"
+  },
+  {
+    "path": "tests/test_roms/r57shell/joy_speed_v1.02.bin",
+    "url": "http://elektropage.ru/r57shell/joy_speed_v1.02.bin",
+    "sha256": "3c49a278f73717913b969bf85dddd2b5e4b822b4e570afbf15691b09271dafef",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "r57shell: pad re-read latency tool (t=2308)"
+  },
+  {
+    "path": "tests/test_roms/r57shell/vdp_tests.bin",
+    "url": "http://elektropage.ru/r57shell/vdp_tests.bin",
+    "sha256": "207cd17db44a2142d97797d4c3f60bcf71a61994cbb8e46ded29b776f7a63f19",
+    "size": 131072,
+    "kind": "test-rom",
+    "tier": "hardware-corrected",
+    "date": "2026-09-22",
+    "why": "r57shell 2013: display-mode, sprite, S/H and priority tests, run by eye on an MD2 (t=1585)"
+  },
+  {
+    "path": "tests/test_roms/titan/titan-overdrive2.zip",
+    "url": "https://files.scene.org/get/parties/2017/revision17/oldskool_demo/titan-overdrive2.zip",
+    "sha256": "1fa9ebdfc4129ec8abf17846634427b4b8dca53c060efa27a3391f76ad0742e1",
+    "size": 3915102,
+    "kind": "test-rom",
+    "tier": "stress case",
+    "date": "2026-09-22",
+    "why": "Titan 2017: the hardest known real-hardware demo; output depends on VDP revision (readme)"
+  }
+]

@@ -1,0 +1,115 @@
+[
+  {
+    "path": "reference/src/mame",
+    "url": "https://github.com/mamedev/mame",
+    "rev": "f379cd060ac3b2bd567ebbd0957aed059d6895ff",
+    "sparse": [
+      "hash",
+      "src/mame/sega",
+      "src/devices/video",
+      "src/devices/sound",
+      "src/devices/bus/megadrive",
+      "src/devices/bus/sms_ctrl",
+      "src/devices/machine",
+      "3rdparty/ymfm"
+    ],
+    "why": "The source of the MAME 0.285 binary used as a detector: the genesis/megadriv/megadrij drivers (sega/megadriv.cpp, mdconsole.cpp), the VDP (video/315_5313.cpp, which embeds the 315-5124 for Mode 4), YM2612 via ymfm, the SN76496, the cartridge slot and pads."
+  },
+  {
+    "path": "reference/src/Genesis-Plus-GX",
+    "url": "https://github.com/ekeeke/Genesis-Plus-GX",
+    "rev": "fdab4a4ed709cc42a320bdeac5a7d15e82427ae0",
+    "sparse": [],
+    "why": "Eke's emulator, whose comments record many hardware measurements (VDP timing, DMA, FIFO, YM2612). Non-commercial licence: read and cite, never copy."
+  },
+  {
+    "path": "reference/src/Nuked-OPN2",
+    "url": "https://github.com/nukeykt/Nuked-OPN2",
+    "rev": "335747d78cb0abbc3b55b004e62dad9763140115",
+    "sparse": [],
+    "why": "The YM3438 (CMOS OPN2) emulated from its die shot, with a YM2612 mode ('MD1, MD2 VA2': the DAC's ladder distortion) and a read mode: the judge for the FM unit. LGPL-2.1: read and compare against, never copy."
+  },
+  {
+    "path": "reference/src/Nuked-PSG",
+    "url": "https://github.com/nukeykt/Nuked-PSG",
+    "rev": "d15a168c676f4669e23660be9225b34ad7c1764e",
+    "sparse": [],
+    "why": "The PSG inside the YM7101 VDP emulated from the die (the Mega Drive's SN76489-compatible PSG): a judge for the PSG that sms-python never had. GPL-2.0: read and compare against, never copy."
+  },
+  {
+    "path": "reference/src/Nuked-MD",
+    "url": "https://github.com/nukeykt/Nuked-MD",
+    "rev": "594ca2a494104df559a907db7c8f5602a93b2078",
+    "why": "The whole chipset emulated from decapped silicon (FC1004: YM7101 VDP with PSG, arbiter, I/O, TMSS, FM, NMOS 68000 and Z80): the strongest detector there is. GPL-2.0: read, never copy."
+  },
+  {
+    "path": "reference/src/SEGAChips",
+    "url": "https://github.com/emu-russia/SEGAChips",
+    "rev": "1b378b45c8f0a88501ba593cc480dc5159149a8d",
+    "sparse_patterns": [
+      "/*",
+      "!*.jpg",
+      "!*.jpeg",
+      "!*.png",
+      "!*.gif",
+      "!*.bmp",
+      "!*.tif",
+      "!*.tiff",
+      "!*.webp",
+      "!*.psd",
+      "!*.psb"
+    ],
+    "why": "The gate-level reverse engineering behind Nuked-MD: VDP, arbiter, I/O chip, FM netlists and notes (CC0-1.0). The die photographs are left out."
+  },
+  {
+    "path": "reference/src/YM2608-LLE",
+    "url": "https://github.com/nukeykt/YM2608-LLE",
+    "rev": "7a2aca7b6830b96e48e3a4e1a40d15525993fa60",
+    "why": "Low-level die-derived models including the NMOS YM2612 (fmopna_2612.c), which Nuked-OPN2 (YM3438) is not. GPL-2.0: read, never copy."
+  },
+  {
+    "path": "reference/src/Exodus",
+    "url": "https://github.com/RogerSanders/Exodus",
+    "rev": "08f388f77040af28d16d44fdfbddb73252953161",
+    "why": "Nemesis's emulator, built alongside his logic-analyser work; 121/122 on his own VDPFIFOTesting (2013). MIT; the no-copy rule still applies."
+  },
+  {
+    "path": "reference/src/blastem",
+    "url": "https://github.com/libretro/blastem",
+    "rev": "542164dc99a8c72daaa0ad179af1df4a434abdff",
+    "why": "BlastEm (libretro's git mirror; upstream is Mercurial at retrodev.com): the best published VDP evidence among maintained emulators (Overdrive 2, VDPFIFOTesting). GPL-3.0: read, never copy."
+  },
+  {
+    "path": "reference/src/jgenesis",
+    "url": "https://github.com/jsgroth/jgenesis",
+    "rev": "d19ee94f64798946e30d8be7a3dc6f1f9f8732c8",
+    "why": "Claims VDPFIFOTesting, Direct Color DMA and MD Soft Checker in its release notes. GPL-3.0: read, never copy."
+  },
+  {
+    "path": "reference/src/clownmdemu-core",
+    "url": "https://github.com/Clownacy/clownmdemu-core",
+    "rev": "5f0d4eace627c4d5a4d6435e9d822a15d2ea3dda",
+    "why": "Accuracy-minded, explicitly incomplete. AGPL-3.0: read, never copy."
+  },
+  {
+    "path": "reference/src/240pTestSuite",
+    "url": "https://github.com/ArtemioUrbina/240pTestSuite",
+    "rev": "361f4a2c35af5bd6d45d6c12a0a4f5bccbc85230",
+    "sparse": [
+      "240psuite/Genesis"
+    ],
+    "why": "The 240p Test Suite's Genesis source (GPL-2.0), which also generates the MDFourier signal the hardware recordings captured."
+  },
+  {
+    "path": "reference/src/MDFourier",
+    "url": "https://github.com/ArtemioUrbina/MDFourier",
+    "rev": "81cf1bd0c6ff8376f31d98d1bff56a9991fba742",
+    "why": "The analyser that compares a recording of the MDFourier signal with a reference (no licence stated: read only)."
+  },
+  {
+    "path": "reference/src/TMSS-Disassembly",
+    "url": "https://github.com/OrionNavattan/TMSS-Disassembly",
+    "rev": "6bef50130248f57c5eaa88b32507a52cfcd4b62f",
+    "why": "A disassembly of the TMSS boot ROM that rebuilds bit-exact (no licence stated: read only)."
+  }
+]
