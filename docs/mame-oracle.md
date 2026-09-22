@@ -36,9 +36,13 @@ dbg:command('wpset c00000,20,r,1,{logerror "VR %X %X %X %d\\n",wpaddr,wpsize,wpd
 dbg:command("go")
 ```
 
-and the Z80 one traces `pc,af,bc,de,hl,ix,iy,sp,af2,bc2,de2,hl2,totalcycles`
+and the Z80 one traces `pc,af,bc,de,hl,ix,iy,sp,af2,bc2,de2,hl2,r,totalcycles`
 with `:genesis_snd_z80` visible, and watches $4000–$7FFF (YR/YW: YM2612, bank
-register, VDP and PSG) and $8000–$FFFF (KR/KW: the 68000 window).
+register, VDP and PSG) and $8000–$FFFF (KR/KW: the 68000 window). It also watches
+the 68000's accesses to $A00000–$A0FFFF, $A11100 and $A11200 (MR/MW, `wpset
+a00000:maincpu,...`), logged with the Z80's own `totalcycles`: markers that place
+those accesses in the Z80's stream as MAME interleaved them ("Interleaving",
+below).
 
 ## What it produced (2026-09-22)
 
@@ -63,15 +67,22 @@ Two runs of the tool gave identical counts, and the exit snapshot is the
    behave the same, so each run watches only its own CPU's windows.)
 2. **The two runs are the same run.** MAME is deterministic for a cartridge
    without input: both runs recorded the same 6,091 VDP writes in 3 s of Sonic,
-   byte for byte. So the two logs can be merged by time: the 68000's
-   `totalcycles` × 7 and the Z80's × 15 are both master clocks from power-on.
-   Anything that makes a run non-deterministic (input, a real-time clock)
-   breaks this; check it the same way before relying on a merge.
-3. **The Z80 action stays under 14 values.** sms-python found that a
+   byte for byte. Anything that makes a run non-deterministic (input, a real-time
+   clock) breaks this; check it the same way before relying on a merge. **But the
+   two logs cannot be merged by `totalcycles`** (corrected 2026-09-22; this item
+   first said the 68000's × 7 and the Z80's × 15 were both master clocks from
+   power-on). The 68000's count is; the Z80's is not: it stands still while the
+   Z80 is held in reset and restarts near 0 after each reset (Sonic's first Z80
+   instruction is at count 0, the 68000 having released it at its cycle 984),
+   and through a bus request it counts on by MAME's timeslices rather than by
+   the hold (a 347.2-cycle hold shows as a jump of 348 to 354). Use the markers
+   ("Interleaving").
+3. **The Z80 action stays at 14 values or fewer.** sms-python found that a
    `logerror` with more than 14 values logs nothing on the Z80 (its
-   `docs/mame-oracle.md`, trap 2); the 13 values here include BC′, DE′ and HL′.
-   The 68000's action logs 22 values without trouble; the cause of the Z80 limit
-   is unknown, so test before adding values.
+   `docs/mame-oracle.md`, trap 2); the 14 values here (R added 2026-09-22, after
+   Sonic 3's driver read it with `LD A,R`) log correctly. The 68000's action logs
+   22 values without trouble; the cause of the Z80 limit is unknown, so test
+   before adding values.
 4. **MAME loads a zip's first member.** `mame_trace.py` extracts the image
    (`.md`, `.gen`, `.bin`, `.smd`) itself.
 5. **The Z80's accesses to the 68000's bus appear on the 68000's bus in MAME.**
@@ -98,6 +109,27 @@ Two runs of the tool gave identical counts, and the exit snapshot is the
    them. Expect the same here and measure it before comparing timing.
 9. **TMSS**: `genesis` has no TMSS; `genesis_tmss` does and needs the boot ROM
    in its romset.
+
+## Interleaving
+
+MAME runs the 68000 for a timeslice, then the Z80 up to the same time; a write to
+$A11100 or $A11200 ends the 68000's slice and sets a timer that applies the
+request or reset after the Z80 has caught up. Three consequences, found in the
+lockstep (docs/worklog.md):
+
+- the Z80 honours a bus request only at an instruction boundary (MAME 0.285
+  `src/devices/cpu/z80/z80.lst`, the `ffff` block), and keeps running after the
+  68000's write while it catches up to the 68000's time;
+- an instruction the Z80 is inside when its slice ends finishes in its *next*
+  slice, after the 68000's: Sonic's 68000 reads $A01FFD as $FD although the Z80's
+  `LD (HL),H` storing $1F there was logged before the 68000's bus request;
+- the markers' Z80 counts do not say how far into an instruction the Z80 was.
+
+So the markers give the order of every 68000 access to the Z80's side against the
+Z80's instruction stream, to within the one Z80 instruction a marker falls inside.
+`scripts/lockstep_mame.py` settles that instruction with the board's machine-cycle
+estimate and, when the Z80's next registers or the 68000's next read of Z80 RAM
+say MAME ran it on the other side, counts that as a named difference.
 
 ## Lockstep and replay
 
