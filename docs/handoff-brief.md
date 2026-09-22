@@ -150,6 +150,30 @@ Build the board as `src/megadrive_python/`. The requirements:
 
 Do not skip a rung. The early ones make the later ones cheap to diagnose.
 
+## Working agreement for the first build session
+
+- **Scope: milestones 1 and 2, then stop.** Report at the end of milestone 1
+  (in the work log) and carry on; stop after milestone 2's acceptance and write
+  the summary for review. Do not start milestone 3.
+- **Keep `docs/worklog.md`**: what was run, when, with what command and result;
+  every decision with its reason; every open question for the user, marked
+  `QUESTION:`. The reviewing session reads it first.
+- **The environment.** PyPy 3.11 is `~/.local/bin/pypy3.11`; make `.venv-pypy`
+  and a CPython `.venv` in this repository. m68000-python is a private
+  repository: for development install it from the local clone
+  (`/data/emu/m68000-python`, at the revision you pin), and pin the git URL and
+  revision in `pyproject.toml` for CI. MAME is `/usr/games/mame` (0.285); the
+  romset is `/data/emu/roms/megadrive` (some entries are broken symlinks); the
+  MAME ROM path is in `scripts/mame_trace.py`.
+- **A shared machine.** Run long jobs under `nice`, at most 16 parallel
+  processes, and delete MAME traces you no longer need (they are hundreds of
+  MB); never fill `/tmp`.
+- **The GitHub repository exists** (private, alewman/megadrive-python). Commit
+  locally; do not push. The reviewing session reviews and pushes.
+- **When in doubt about a source's meaning, quote it in the work log** and say
+  how you read it. The documents here were written from the sources; if one of
+  them misreads a source, fix the document in its own commit and say so.
+
 ## Constraints
 
 - **Oracle tiers are not negotiable.** MAME, Genesis Plus GX, BlastEm,
@@ -166,8 +190,7 @@ Do not skip a rung. The early ones make the later ones cheap to diagnose.
   PRs there.
 - Commit in reviewable units with `git -c user.name=alewman -c
   user.email=alewman@gmail.com commit` and the `Co-Authored-By:` line for the
-  model you are running as. Do not push or create the GitHub repository until
-  the user asks.
+  model you are running as. Do not push.
 
 ## Size and speed, honestly
 
