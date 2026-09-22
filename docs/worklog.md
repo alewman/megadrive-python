@@ -937,3 +937,179 @@ timing is the same number of frames on both. Two candidates, neither checkable f
 here -- the recorder's sample clock (a capture nominally at 96,000 Hz running 1.2 %
 slow would give exactly this) and the console's crystal against the nominal
 53,693,175 Hz. It is recorded as an open item rather than guessed at.
+
+### Milestone 4 acceptance: the runs and their results (2026-09-22)
+
+All at commit `383992c` unless said; m68000-python 51ee1a5, z80-python 0.4.0, PyPy
+7.3.23 (Python 3.11.15), referees built as above with gcc 15.2.0. The machine was
+shared, so the wall times vary by up to a factor of three between runs of the same
+comparison.
+
+#### The PSG against Nuked-PSG (die-derived, the judge): passes
+
+`.venv-pypy/bin/python scripts/run_psg_compare.py --games`, 47 s. Ten streams, the
+four attenuations compared at **every input clock**:
+
+| Stream | input clocks | differing |
+| --- | ---: | ---: |
+| random walk (seed 1, 4,829 writes) | 1,028,959 | **0** |
+| random walk (seed 2, 4,812 writes) | 1,031,380 | **0** |
+| every tone period (0-7 and 8-1023 in steps of 37, all three channels) | 179,016 | **0** |
+| every noise setting (8 settings x 3 tone-3 periods) | 492,264 | **0** |
+| every attenuation on every channel | 115,064 | **0** |
+| Sonic The Hedgehog (USA, Europe) `46160baa…`, 400 frames, 12 writes | 19,567,876 | **0** |
+| Streets of Rage 2 (USA) `4a314edb…`, 400 frames, 52 writes | 22,135,675 | **0** |
+| Gunstar Heroes (USA) `f177810c…`, 400 frames, 16 writes | 6,903,440 | **0** |
+| Castlevania - Bloodlines (USA) `5bfe171f…`, 400 frames, 8 writes | 5,044,491 | **0** |
+| Phantasy Star IV (USA) `511f35cc…`, 400 frames, 447 writes | 23,802,440 | **0** |
+| **Total** | **80,300,605** | **0** |
+
+The games use the PSG sparsely (8 to 447 writes in 6.7 s), so most of those clocks
+are the free-running generators agreeing, which is the part a long run tests.
+
+#### The YM2612 against Nuked-OPN2 (die-derived, the judge): passes
+
+`.venv-pypy/bin/python scripts/run_fm_streams.py --roms --games`, 21 min. **18
+streams, 0 comparisons not identical**: every value of MOL, every value of MOR and
+every value of the status byte, on every internal cycle, in **both** chip variants
+against the matching Nuked-OPN2 mode.
+
+| Stream | internal cycles | MOL | MOR | status |
+| --- | ---: | --- | --- | --- |
+| random walk (seed 1, 4,000 writes) | 504,939 | equal | equal | equal |
+| random walk (seed 2, 4,000 writes) | 502,904 | equal | equal | equal |
+| channel 3 special mode and CSM (3 timer-A rates) | 397,172 | equal | equal | equal |
+| SSG-EG, all eight shapes keyed on and off | 1,884,812 | equal | equal | equal |
+| the LFO, 8 speeds x 8 PMS x 4 AMS | 2,467,004 | equal | equal | equal |
+| both timers, four reloads each | 336,476 | equal | equal | equal |
+| the DAC, every value and the ninth bit | 31,532 | equal | equal | equal |
+| `ym2612csmmode.bin` `3faaae39…` | 123,658 | equal | equal | equal |
+| `ym2612ssg-eg.bin` `03a73fd6…` | 8,446,814 | equal | equal | equal |
+| `ym2612attackandrelease.bin` `06b72d38…` | 8,447,837 | equal | equal | equal |
+| `ym2612detune.bin` `74306d73…` | 123,557 | equal | equal | equal |
+| `ym2612multiplexing.bin` `519d19a0…` | 126,636 | equal | equal | equal |
+| `ym2612FrequencyWriteOrder.bin` `e79459a7…` | 123,607 | equal | equal | equal |
+| Sonic The Hedgehog (USA, Europe), 720 frames, 66,944 register writes | 15,351,279 | equal | equal | equal |
+| Streets of Rage 2 (USA), 720 frames, 2,750 | 15,350,206 | equal | equal | equal |
+| Gunstar Heroes (USA), 720 frames, 96 | 2,466,058 | equal | equal | equal |
+| Castlevania - Bloodlines (USA), 720 frames, 3,101 | 15,341,712 | equal | equal | equal |
+| Phantasy Star IV (USA), 720 frames, 45,260 | 15,351,280 | equal | equal | equal |
+| **Total** | **87,377,483** | | | |
+
+87,377,483 internal cycles per variant, 174,754,966 over the two, and three values
+compared on each: **524,264,898 values, none different**. That is 68 emulated seconds
+of the chip's whole output, sampled 24 times per output sample.
+
+Two notes on the streams, neither a result:
+
+- **Gunstar Heroes reaches only 96 register writes** in 720 frames with Start pressed
+  once: its driver wants Start at the title *and* at the mode select. With presses at
+  frames 200, 400 and 600 it writes 176,586 registers by frame 1,400. The GAMES table
+  and `capture_streams` now take several press frames; the run above predates that, so
+  the Gunstar stream in it is the title screen's.
+- **Four of the six test ROMs write all their registers in the first tenth of a
+  second** and then play, so their streams end early and the comparison runs 0.1 s
+  past the last write. `--tail` runs further on.
+
+#### The MDFourier signal against the hardware recordings (a detector, and one fit)
+
+The 240p Test Suite's MDFourier signal is 172 tone blocks of 20 frames between two
+sync blocks: 96 FM, 40 PSG, 20 PSG ramp and 16 noise
+(`reference/src/MDFourier/profiles/mdfblocksGEN.mfn`). `scripts/run_mdfourier.py`
+drives the suite to it from its menus (down, down, A; down, down, A; A), records the
+board's own output, decodes a recording with ffmpeg, aligns both on their two syncs
+and measures each block's level (RMS about its own mean).
+
+MDFourier's own analyser is not built here: it needs FFTW and libFLAC and neither
+header is installed (docs/polish.md).
+
+```sh
+unzip -j tests/test_roms/mdfourier/MDFourier-Genesis-SegaCD-Recordings-14062020.zip \
+    "Recordings-2020-06-14/A-MD1UTVA3-M192.flac" -d <tmp>
+.venv-pypy/bin/python scripts/run_mdfourier.py --recording <tmp>/A-MD1UTVA3-M192.flac
+```
+
+**The signal's timing matches exactly.** Both machines show ten loud regions and
+**58.40 s between the two syncs** -- the board's at 5.00 s and 63.40 s, the Model 1
+VA3's at 1.50 s and 59.90 s. The signal is 3,520 frames, 58.74 s at the nominal
+59.92 Hz, so both run it at the same rate and the 0.34 s is the trimming of the
+syncs' attack, not drift. (Worth noting against the SSG-EG recording's 1.0-1.2 %:
+whatever that was, it is not the board's frame rate.)
+
+**The mixing ratio, measured.** On the Model 1 VA3 the 40 PSG tone blocks sit
+**6.70 dB below** the 96 FM blocks. That is the one number `audio.PSG_GAIN` sets, and
+it was fitted here: at the gain the board started with (1,400) its PSG sat 3.72 dB
+*above* its FM, 10.42 dB too loud; at **422** it sits 6.66 dB below, **0.04 dB** from
+the hardware. This is the only parameter of the analogue path that a pinned source
+measures, and it is now measured rather than guessed.
+
+| group | hardware, relative to its own FM | board | board minus hardware |
+| --- | ---: | ---: | ---: |
+| FM (96 blocks) | 0.00 dB | 0.00 dB | (the reference) |
+| PSG tones (40) | -6.70 dB | -6.66 dB | **+0.04 dB** |
+| PSG ramp (20) | -7.10 dB | -7.17 dB | **-0.07 dB** |
+| noise (16) | -5.03 dB | -6.75 dB | **-1.72 dB** |
+
+**The filter, as a detector.** Each group's blocks climb through the chips' range, so
+the per-block difference is a frequency response. Board minus hardware, at twelve
+points through each group, each normalised by its own group's mean:
+
+```text
+FM    blocks 0..95   -0.2  -0.1   0.3  -0.1  -0.4  -0.4  -0.4  -0.3   0.1   0.5   0.9   1.1
+PSG   blocks 0..39   -1.6  -0.9   0.1   0.8   1.1   1.1   0.9   0.6   0.4  -0.2  -0.2  -0.5
+noise blocks 0..15    1.0   0.4  -0.2  -0.0   0.4  -0.3  -0.1  -0.1  -0.3  -0.5  -0.8  -0.6
+```
+
+Everything is inside **±1.6 dB**, so the one-pole low-pass at 8 kHz is in the right
+region: a corner badly wrong would tilt the FM's 96 blocks by many decibels end to
+end. The residual is a slight brightness at the top of the FM's range (+1.1 dB on the
+last block), which says the corner could be a little lower; that is left as a fit to
+revisit with MDFourier's own analyser, which does per-frequency work this measurement
+does not.
+
+**Not explained: the noise channel is 1.72 dB quieter, relative to the FM, than the
+hardware's.** The PSG's *digital* output is identical to Nuked-PSG's at every input
+clock, including every noise setting, so this is in the level model -- the attenuation
+curve applied to a pseudo-random bit stream against what the console's analogue stage
+does with it -- and not in the generator. Left open.
+
+### Open questions for the user
+
+QUESTION: **YM2608-LLE cannot be matched literally.** The measurements above
+attribute the remaining differences to the two harnesses placing a write one internal
+cycle apart, and they re-converge. Is that characterisation acceptable, or should the
+LLE harness drive /CS and /WR aligned to the chip's own /6 phase (which means finding
+that phase in its state) so the comparison can be made literal?
+
+QUESTION: **The two die-derived models disagree about the DAC's multiplexing order**
+(docs/undocumented-behavior.md, "The YM2612" item 6). The board follows Nuked-OPN2,
+because that is what the cycle-exact comparison is made against -- but YM2608-LLE is
+a transcription of the *YM2612's* die and Nuked-OPN2's YM2612 mode is self-described
+as unverified, which makes LLE the better authority for exactly this. The output
+sample is the same either way. Keep Nuked-OPN2's order, switch to LLE's (and lose the
+cycle-exact comparison), or carry both as a variant?
+
+QUESTION: **The analogue path is fitted to one recording.** `PSG_GAIN` and the filter
+corner come from `A-MD1UTVA3-M192.flac`, one Model 1 VA3. The archive holds 21 boards.
+Fit per revision -- a table on the machine, which is what `audio_path` is there for --
+or keep one Model 1 figure and one Model 2 figure?
+
+QUESTION: **The SSG-EG recording's notes start 1.0-1.2 % further apart than the
+board's**, while the MDFourier recording's syncs are exactly 58.40 s apart on both.
+That points at the SSG-EG recording's own clock rather than at the board, but it is
+not proved. Accept it as the recorder's, or pursue it (Nemesis's second SSG-EG
+recording, `ssg-eg md1600 attack and release.rar`, is 180 MB and untouched)?
+
+QUESTION: **Nemesis's CSM recording was not used.** docs/validation.md says to
+confirm in forum t=386 that `ym2612csmmode.wav` is from hardware before judging with
+it, and that was not done this session. Confirm and use it, or leave CSM judged by
+the die-derived models alone (where it passes cycle for cycle)?
+
+QUESTION: **What a discrete YM2612's ports 1-3 read** is Genesis Plus GX's 0, the only
+source there is (docs/undocumented-behavior.md, "The YM2612" item 7). Accept, or
+leave the board driving open bus there until someone measures it?
+
+QUESTION: **The noise channel is 1.72 dB quiet relative to the FM** against the
+MDFourier recording, while the PSG's tones are 0.04 dB out and its digital output is
+identical to Nuked-PSG's at every clock. Worth running down, or accepted as part of
+the analogue model's known looseness?

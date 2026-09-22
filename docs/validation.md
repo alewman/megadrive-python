@@ -233,3 +233,67 @@ nothing structural in 24 comparisons.
 **Speed** (the brief asks for it from milestone 3 on): 147.7 to 293.6 frames a second
 on PyPy 7.3.23 for the six lockstep games, 2.5 to 4.9 times real time, the renderer
 costing between half and two thirds of the time.
+
+### Milestone 4: sound
+
+The judges here are the **die-derived models**, because nothing above them covers the
+question: there is no YM2612 datasheet, no self-checking FM test ROM and no pinned
+capture of a Mega Drive PSG, which is exactly the case the tier rule reserves for
+them. The **recordings** judge what they do cover -- SSG-EG's shapes and rates, the
+ladder's depth -- and MDFourier is used as a detector of the analogue model, since
+what it would judge (a filter corner, a mixing ratio) has no pinned number.
+
+The referees are built from the pinned sources by `sh validation/build_referees.sh`
+into `reference/build-referees/` (ignored), with gcc 15.2.0; the harnesses are
+`validation/*.c` and copy nothing from them.
+
+**The PSG against Nuked-PSG** (die-derived, `Nuked-PSG` @ d15a168):
+`python scripts/run_psg_compare.py --games`, commit 383992c, 47 s: ten streams --
+five synthetic (two random walks, every tone period, every noise setting, every
+attenuation) and five cartridges' own -- with the four attenuations the chip drives
+compared at **every input clock**, sixteen times finer than its own sample rate:
+**80,300,605 input clocks, 0 different**.
+
+**The YM2612 against Nuked-OPN2** (die-derived, `Nuked-OPN2` @ 335747d, both output
+modes against the matching machine variant): `python scripts/run_fm_streams.py --roms
+--games`, commit 383992c, 21 min: eighteen streams -- seven synthetic (two random
+walks and six aimed at channel 3's special mode and CSM, SSG-EG's eight shapes, the
+LFO at every speed against every depth, both timers, the DAC), Nemesis's six test ROMs
+and five cartridges -- with **every value of both DAC pins and of the status byte on
+every internal cycle**, 24 to a sample at the chip's native rate:
+**524,264,898 values compared, 0 different**.
+
+**The YM2612 against YM2608-LLE** (die-derived, `YM2608-LLE` @ 7a2aca7, its
+`fmopna_2612.c`): **not equal sample for sample on every stream.** The two models put
+a channel's sample in a different place inside the four cycles it owns (the sum over
+an output sample cancels it) and the two harnesses drive a write differently (which
+can move a write one internal cycle). At the chip's native rate they are identical
+over the SSG-EG, timer and DAC streams, differ on 1 sample in 19,898 on the CSM
+stream, and on densely written streams differ in transient bursts around writes --
+1,200 writes give 146 runs, median 1 sample -- after which they re-converge. Measured
+in [worklog.md](worklog.md).
+
+**Nemesis's SSG-EG test against his MD1600 recording** (hardware-captured, the judge):
+`python scripts/run_ssg_eg.py --wav "<unpacked>/ssg-eg md1600.wav"`: nine notes on
+both, every length equal within one 50 ms block, every envelope repetition period
+identical (150 ms, 50 ms, or none, matching shape for shape). The notes start
+**1.0-1.2 % further apart** on the MD1600 than on the board, a rate difference left
+open (the recorder's sample clock or the console's crystal).
+
+**The ladder against Aly James's `MD1_LADDER.wav`** (hardware-captured):
+`python scripts/run_fm_streams.py --ladder tests/test_roms/aly-james/MD1_LADDER.wav`:
+the board's discrete variant's level stops falling 36-37 dB below its peak where the
+Model 1's stops 33 dB below; its ASIC variant does not plateau, falling another 12 dB.
+The ramps are not the same ramp, so the 4 dB is the distance between two differently
+made measurements, not an error.
+
+**The MDFourier signal against the recordings** (hardware-captured, used as a
+detector): `python scripts/run_mdfourier.py --recording <unpacked>/A-MD1UTVA3-M192.flac`.
+Both machines run the signal in the same 58.40 s between its two syncs. The PSG sits
+6.70 dB below the FM on the Model 1 VA3 and 6.66 dB below on the board (the board's
+`audio.PSG_GAIN` was fitted to it, 1,400 -> 422); the PSG ramp is 0.07 dB out and the
+noise channel 1.72 dB quiet, which is left open. Per block, everything is inside
+±1.6 dB, so the low-pass corner is in the right region without being a measured value.
+
+**Speed** (the brief asks for the FM's cost per emulated second): see
+[worklog.md](worklog.md), milestone 4.
