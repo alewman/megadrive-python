@@ -9,12 +9,16 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 and 2 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 3 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
-(119.8 M 68000 and 73.0 M Z80 instructions, every difference named), and the VDP's
+(119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
 fails VSRAM tests as the hardware does) and reproduce 99.04 % of the words of
-Nemesis's 288 HV/status capture dumps. No picture, no sound yet. Around the code,
+Nemesis's 288 HV/status capture dumps; and the picture -- both planes, the window,
+sprites, priority, shadow/highlight, H32/H40, V28/V30 and both interlace modes --
+gives Nemesis's sprite masking ROM the same nine results his MD1600 photographs show,
+in both widths, and matches MAME's frame pixel for pixel on every static screen of the
+six lockstep games. 148 to 294 frames a second on PyPy. No sound yet. Around the code,
 the groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
@@ -48,18 +52,22 @@ See [docs/README.md](docs/README.md).
 | --- | --- | --- |
 | `docs/` | The documents listed in `docs/README.md` | yes |
 | `scripts/fetch_references.py` | Rebuilds `reference/` and `tests/test_roms/` from the pins | yes |
-| `scripts/pinned_files.json` | 92 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
+| `scripts/pinned_files.json` | 94 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
 | `scripts/pinned_repos.json` | 14 git repositories at pinned revisions (sparse where large) | yes |
 | `scripts/mame_trace.py` | The MAME 0.285 two-run trace recipe for both CPUs and the device buses, verified | yes |
-| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP (no picture yet), the system clock | yes |
+| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the system clock | yes |
 | `scripts/lockstep_mame.py` | Milestone 1: both CPUs against MAME's logs | yes |
 | `scripts/run_hv_captures.py` | Milestone 2: Nemesis's HV/status captures, word for word | yes |
 | `scripts/run_vdpfifotesting.py` | Milestone 2: VDPFIFOTesting, read back from VRAM | yes |
+| `scripts/run_sprite_masking.py` | Milestone 3: the sprite masking ROM against Nemesis's MD1600 photographs | yes |
+| `scripts/run_z80_bus_test.py` | Milestone 3: MoD's `gen_test_z80_bus`, read off the screen | yes |
+| `scripts/compare_mame_frames.py` | Milestone 3: the board's picture against MAME's frame (a detector) | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
 | `tests/mame_traces/` | MAME runs | no |
 
+    python -m megadrive_python CART --frames 600 --png frame.png   # run and draw
     python scripts/fetch_references.py          # fetch everything missing
     python scripts/fetch_references.py --large  # also the large recordings
     python scripts/fetch_references.py --verify # check the pins, fetch nothing

@@ -400,6 +400,26 @@
     "why": "Nemesis: VRAM access slots"
   },
   {
+    "path": "reference/images/MD1600SpriteMaskH32.png",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/MD1600SpriteMaskH32.png",
+    "sha256": "751e25b21e625bcd99d3ae09671d7cf81ca6ba2027def1ca8eba6b0dddf3be3e",
+    "size": 107125,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis's MD1600 running his sprite masking ROM in H32 (forum t=541 start=30): milestone 3's judge"
+  },
+  {
+    "path": "reference/images/MD1600SpriteMaskH40.png",
+    "url": "http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/MD1600SpriteMaskH40.png",
+    "sha256": "205584438379b98447943e8fe18c4f1a621de68ea8855b03a911884a4bd71b2b",
+    "size": 95911,
+    "kind": "hardware-capture",
+    "tier": "hardware-captured",
+    "date": "2026-09-22",
+    "why": "Nemesis's MD1600 running his sprite masking ROM in H40 (forum t=541 start=30): milestone 3's judge"
+  },
+  {
     "path": "reference/manuals/FMDocs.7z",
     "url": "http://nemesis.hacking-cult.org/MegaDrive/Documentation/FMDocs.7z",
     "sha256": "74d195e5741868a5f8f64b4b73c0a060c257f09af40e8031df041567251f5581",

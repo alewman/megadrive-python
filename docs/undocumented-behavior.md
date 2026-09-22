@@ -106,7 +106,21 @@ source, the way sms-python does.
     after power-on (the VDP still in mode 4) reads F clear until its first
     VBlank, every later run reads it set; Nuked-MD shows the mechanism (any
     register written in mode 4 clears F; written in mode 5, not).
-16. **A VSRAM read past its 40th word** returns the last word the renderer read
+16. **Interlace mode 2 addresses patterns by the name's low ten bits times 64**, not
+    by "bit zero of the name is ignored" as CMD's `genvdp.txt` says: Exodus
+    (`CalculatePatternDataRowAddress`), Genesis Plus GX (`GET_LSB_TILE_IM2`) and MAME
+    (`get_nametable`, `m_imode == 3`) agree against him, and CMD's own `wtest_i2.bin`
+    renders correctly only the other way (milestone 3).
+17. **The window's column-fetch bug hits the partial column** the fine horizontal
+    scroll puts before plane A's first whole 2-cell column, so that column repeats the
+    two cells of the column after it (CMD's diagram; Genesis Plus GX reads it the same
+    way, MAME differently -- the two disagree by 112 pixels of `wbug.bin`).
+18. **In shadow/highlight mode the backdrop is darkened too**, wherever both planes are
+    low priority: Kabuto ("If both A+B are low prio, the visible color becomes
+    shadowed", with G in his mixer), CMD's `ste.htm` and Genesis Plus GX all say so;
+    MAME's backdrop stays at normal intensity, which is most of what the board and MAME
+    differ by on the S/H test ROMs (milestone 3).
+19. **A VSRAM read past its 40th word** returns the last word the renderer read
     from VSRAM, which follows the H counter (the column's entry, or the first two
     in full-screen vertical scroll; entries $26 AND $27 past the end): Exodus's
     model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
@@ -153,7 +167,10 @@ source, the way sms-python does.
 1. **The Z80's interrupt length.** CMD says the IRQ comes at line $E0 and is
    missed if disabled; Genesis Plus GX holds it to the end of that line. No
    hardware measurement is pinned. A test that enables interrupts at a
-   measured delay after the line starts would settle it.
+   measured delay after the line starts would settle it. The board holds it for
+   one line (Genesis Plus GX's choice, labelled): the only support for it is that
+   Sonic The Hedgehog 3's 1,688 Z80 interrupts in 30 seconds all fall at the
+   instruction MAME takes them at (milestone 1's lockstep).
 2. ~~The H counter's position in MCLK~~: decoded from Nemesis's captures in
    milestone 2 ([timing.md](timing.md), "What the captures say"). Left open
    there: a few hundred status reads near the HBlank edges, four dumps.
@@ -173,5 +190,23 @@ source, the way sms-python does.
    passes all four (milestone 2).
 7. **The YM2612's DAC sampling point** within its cycle, which differs between
    the Model 1 and Model 2 and which Kabuto did not publish.
-8. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
+8. **The delay from a bus request to BUSACK.** MoD's `gen_test_z80_bus` measures it
+   twice (with the Z80 running 4-T-state and 6-T-state machine cycles) but its
+   hardware values are not published in the pinned material; his logic-analyser
+   measurement of 2 68000 cycles from /BR to /BG (forum t=1661) is of the other
+   direction, the Z80 reaching the 68000's bus. The board grants at once, as MAME
+   does, so both counts read 0000. A model of the real delay (the Z80 finishing its
+   machine cycle, the 68000 held by the arbiter until BUSACK) was written and tried in
+   milestone 3: it moves the Z80/68000 interleaving off MAME's, which the milestone-1
+   lockstep replays instruction for instruction, so it waits for milestone 5's
+   arbiter work ([worklog.md](worklog.md)).
+9. **What a VRAM write in 128 KB mode does to the picture.** The board models the
+   write path from Kabuto's formulas (one byte per word, the address bits rearranged)
+   but keeps reading VRAM as in 64 KB mode, where the hardware shows garbage. Nothing
+   pinned judges either half; Overdrive 2 is the case.
+10. **Mid-line VDP writes.** The board renders a line at the point its active display
+   begins, so a VRAM, CRAM or register write made *along* a line lands at the next
+   line. r57shell's redraw-timing tests depend on the hardware's behaviour here and do
+   not pass; CRAM dots (milestone 5) are the same machinery.
+11. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
    romset's symlink is broken, and the forum link is a mega.nz page.

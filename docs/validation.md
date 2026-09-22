@@ -52,7 +52,7 @@ entries over 50 MB (recordings and the FM document bundle).
 | Oracle | What it covers | Why it is hardware | Pinned as |
 | --- | --- | --- | --- |
 | **Nemesis, VDPFIFOTesting** (2013) | over 100 self-checking tests of the ports: FIFO size and waits, the address and code registers, DMA of every kind into every memory, the busy flag, wrapping, the bus lock, the HV latch, byte swapping, the VSRAM read cache, the Mode 4 register mask | "all pass on the hardware, with a few exceptions" (t=1291 start=30): a Genesis 3 fails the VSRAM tests; the DMA-fill data-port and FIFO byte-order tests are intermittent on hardware. Exodus scored 121/122 | `tests/test_roms/nemesis/VDPFIFOTesting.zip` (ROM and source) |
-| Nemesis, sprite masking and overflow test (2009) | nine tests of sprite limits, the dot overflow and masking, in H32 and H40 | results checked on an MD1600, with a chart comparing emulators (t=541 start=30) | `SpriteMaskingTestRom.{bin,zip}` |
+| **Nemesis, sprite masking and overflow test** (2009) | nine tests of sprite limits, the dot overflow and masking, in H32 and H40 | results checked on an MD1600, with a chart comparing emulators (t=541 start=30); his two photographs of that machine are the judge and are pinned beside the ROM | `SpriteMaskingTestRom.{bin,zip}`; `reference/images/MD1600SpriteMask{H32,H40}.png` |
 | r57shell, VDP tests (2013) | mode changes, sprite links, S/H priority, colour and layer interactions | run by eye on an MD2 VA1.8 on two CRTs (t=1585); test 4 depends on the monitor | `tests/test_roms/r57shell/vdp_tests.bin` |
 | TmEE's colour and S/H tests; CMD's window, V counter and colour tests; Paul Lee's demos; VDPTEST | visual checks | written on and for hardware; authorship of CMD's and VDPTEST inferred from headers (Eke's bundle has no readme) | `tests/test_roms/eke/md_test.zip` |
 | 240p Test Suite v1.30 | video patterns; it also generates the MDFourier signal | "developed and tested on real hardware" (the author); a calibration tool, not a timing judge | local romset; source `reference/src/240pTestSuite` |
@@ -201,3 +201,35 @@ Nemesis reports intermittent on hardware (DMA Fill FIFO Usage; DP Writes During
 DMA Fill VRAM, CRAM, VSRAM) pass. **genesis3** (0x80-byte VSRAM): 114 of 122,
 the eight failures the DMA Fill to VSRAM tests, as a Genesis 3 fails VSRAM tests
 on hardware (Nemesis gives no list, so which ones is not checked).
+
+
+### Milestone 3: the VDP's picture
+
+**Nemesis's sprite masking ROM against his MD1600** (hardware-captured; the two
+photographs pinned in `scripts/pinned_files.json`, neither of which holds a red pixel,
+so all nine tests pass on his machine): `python scripts/run_sprite_masking.py`, commit
+4890f03, 2 s: **0 of 18 result cells differ**, in H32 and in H40.
+
+**MoD's `gen_test_z80_bus`** (hardware-corrected): `python scripts/run_z80_bus_test.py`,
+2 s: all eight of the ROM's own checks PASS, the Z80's writes to the 68000's work RAM
+read back $4243 and its reads give $FFFF, which is what MoD reports from several
+machines. Its two BUSACK delay counts read 0000: the board grants the bus at once
+(see [undocumented-behavior.md](undocumented-behavior.md), open item 8).
+
+**CMD's window and colour tests, TmEE's, and r57shell's** (hardware-corrected, judged
+against MAME's own frames as a detector, `scripts/compare_mame_frames.py --record`,
+3 emulated seconds each): `wtest`, `wtest_i1`, `stetest` and r57shell's `vdp_tests`
+100.00 % of pixels; `wbug` 99.84 %; `vctest` 96.93 %; `wtest_i2` 96.25 %; `SHLTEST`
+69.64 %; `STETEST2` 41.97 %. Every difference is named in
+[worklog.md](worklog.md); the large ones are the board darkening the backdrop in
+shadow/highlight mode, which Kabuto, CMD and Genesis Plus GX all describe and MAME does
+not do. **Not passed**: r57shell's redraw-timing tests, which want VRAM writes to land
+inside the line being drawn (the board renders a line at a time).
+
+**MAME's exit frames** (detector), six games at 2, 5, 10 and 20 emulated seconds: every
+static screen identical, every lower figure a moving demo a few frames out of phase;
+nothing structural in 24 comparisons.
+
+**Speed** (the brief asks for it from milestone 3 on): 147.7 to 293.6 frames a second
+on PyPy 7.3.23 for the six lockstep games, 2.5 to 4.9 times real time, the renderer
+costing between half and two thirds of the time.

@@ -9,6 +9,7 @@ Read in this order.
 | [undocumented-behavior.md](undocumented-behavior.md) | Model and revision differences, bus and VDP quirks, the YM2612 against the YM3438, known-wrong sources, open items |
 | [validation.md](validation.md) | Every oracle found, ranked by tier (hardware-captured, hardware-corrected, die-derived, specification, research, emulator-derived), with pins and licences; what is not available |
 | [mame-oracle.md](mame-oracle.md) | The verified MAME 0.285 two-run trace recipe for both CPUs, its measured output, and nine traps |
+| [worklog.md](worklog.md) | What each build session ran, with commands, results, decisions and their reasons, and the open `QUESTION:` items |
 | [polish.md](polish.md) | Changes deferred to one pass at the end: core pins and workarounds waiting on a release, and the documents to restate against the final runs |
 | [handoff-brief.md](handoff-brief.md) | The task for the session that builds the board: prerequisites, requirements, ten milestones with acceptance tests, constraints, size and speed |
 
@@ -42,3 +43,19 @@ not out of any single document:
    Model 1s and 5 % of Model 2s glitch): a stress case, not a judge.
 8. **Two local romset symlinks are broken**: MD Soft Checker v0.30 (Sega's
    diagnostic) and the Teradrive TMSS BIOS.
+
+## Findings made while building (see [worklog.md](worklog.md) for the runs)
+
+9. **Nemesis photographed his MD1600 running his sprite masking ROM**, and those two
+   pictures are the judge for milestone 3: neither holds a red pixel, so all nine
+   tests pass on his machine in both widths. They are pinned beside the ROM.
+10. **CMD's `genvdp.txt` is wrong about interlace mode 2's pattern addressing**
+    (Exodus, Genesis Plus GX and MAME agree against him), and his window bug is the
+    *partial* column at plane A's left edge, not the first whole one.
+11. **MAME does not darken the backdrop in shadow/highlight mode**; Kabuto, CMD's
+    `ste.htm` and Genesis Plus GX all say the hardware does. That is most of what the
+    board and MAME differ by on the shadow/highlight test ROMs.
+12. **A BUSACK delay cannot be modelled while the milestone-1 lockstep stands**: the
+    arbiter's wait moves the Z80/68000 interleaving off MAME's, which the lockstep
+    replays instruction for instruction
+    ([undocumented-behavior.md](undocumented-behavior.md), open item 8).

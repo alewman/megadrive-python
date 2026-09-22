@@ -332,3 +332,259 @@ bus-grant delay (MoD: 2 cycles /BR to /BG) are not modelled; they wait for MoD's
 
 Also decided: z80-python's reset not clearing I and R is being proposed as a PR
 there by the reviewing session; keep the board's labelled workaround until it lands.
+
+## Session 2 (2026-09-22): milestone 3, the VDP's picture
+
+### How the brief was read
+
+Scope is milestone 3 only: planes A and B with every scroll mode, the window,
+sprites (the cache, the phases, the per-line and per-pixel limits, masking, the X = 0
+rule), priority, shadow/highlight, H32/H40, V28/V30, both interlace modes, 128 KB
+mode; judged by Nemesis's sprite masking ROM against his MD1600 chart, r57shell's VDP
+tests against the MD2 report in forum t=1585, CMD's window and colour tests against
+his capture photos, MoD's `gen_test_z80_bus`, and MAME's exit frames as a detector.
+Render per line, and record frames per second on PyPy. Stop after that.
+
+Also inherited: the Z80's interrupt length and the Z80 bus-grant delay to settle; the
+core-side workarounds stay (docs/polish.md, the user's decision to batch them).
+
+### Environment
+
+Same as session 1: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23 (Python 3.11.15),
+m68000-python pinned at 51ee1a5 (unchanged, as docs/polish.md says), z80-python 0.4.0,
+MAME 0.285, machine a 13th-generation Core i9-13900K with 32 threads.
+`python scripts/fetch_references.py --verify`: "all pins satisfied" (with the two new
+pins below).
+
+### The renderer
+
+`src/megadrive_python/render.py` (560 lines), called by the VDP at each line's
+HBlank-clear point -- where its active display begins -- so that an H interrupt
+handler's writes, made in the horizontal blank just before, are already in the
+registers. Decisions and their sources:
+
+- **A line at a time, not a pixel at a time**, as the brief requires: the line's
+  scroll values, both planes' names and patterns, the sprites and the mixing are done
+  in one pass. What this loses is written in the module's docstring: a CRAM or register
+  write part way *along* a line lands at that line's start (CRAM dots are milestone 5),
+  and the sprite phases are evaluated together rather than spread over the two
+  preceding lines.
+- **Sprites follow Kabuto's phases**, with his X = 0 rule carried from line to line:
+  "Rendering of further sprite pixels is disabled whenever a sprite is read from a
+  cache slot with X=0 when the previous sprite read (no matter whether that happened on
+  the same line, previous line or even a previous frame) had X != 0", and "When there
+  are less than 40 sprite tiles on a raster line then further dummy sprites act as if
+  they had X=0". Nemesis's four masking rules (forum t=541 start=30) then fall out of
+  that one mechanism instead of being coded one by one -- including the one he says
+  "Nothing emulates", a mask in the first slot becoming effective when the previous
+  line ended on a dot overflow.
+- **The sprite cache** is written through by VRAM writes that land in the sprite table,
+  checked over the whole 128 KB range and never filled by moving the table (Kabuto).
+  It is checked against the address as the program gives it, not the byte-swapped one
+  the VDP stores at.
+- **Shadow/highlight is Kabuto's three steps** in order, which reproduce his table
+  (colour 63 shadows, 62 highlights or returns a shadowed pixel to normal, colours
+  14/30/46 cancel a shadow) and Genesis Plus GX's `make_lut_bgobj_ste` case for case.
+- **The colour ramp** is TmEE's oscilloscope measurement (forum t=2188, "All MD models
+  I tested ... seemed to have identical output"), which Plutiedev's page and MAME's
+  palette both come from, so MAME's frames compare as they stand.
+- **The debug register's plane forcing** (bits 8-6) is Kabuto's mixer
+  `(A|!a)&(B|!b)&(S|!s)&(G|!g)` with one plane held visible; the other bits are not
+  modelled.
+- **Status bits 6 and 5** (sprite overflow, collision) are set by the renderer and
+  cleared when the status register is read, as Genesis Plus GX does; CMD says only that
+  both are "most likely cleared at the end of the frame", so this is emulator-derived
+  and labelled as such in `vdp.status`.
+
+Found by running the test ROMs against MAME's frames (all of these are in the second
+commit's message with their numbers):
+
+1. **Plane sizes.** The invalid width (HSZ = 10b) shows the name table's *first row* on
+   every line (CMD), which a 32-cell wrap does not give; the vertical wrap is a mask
+   (0x2FF for the invalid height), not a modulus. The row shift and masks are Genesis
+   Plus GX's tables, the only statement of the invalid sizes' shape; CMD's sentence
+   agrees where the two overlap. `wbug.bin` 91.73 % -> 99.84 % of MAME's pixels.
+2. **The window bug** hits the *partial* column the fine scroll puts before plane A's
+   first whole 2-cell column, so that column's two cells repeat in the column after it
+   -- CMD's "1 column that has identical patterns as the next column". Genesis Plus GX
+   reads it the same way (`render_bg_m5`, the `if (start)` branch); MAME reads it as a
+   half-column rule with a `(hscroll & 0xf) < 8` test, which is the 112 pixels of
+   `wbug.bin` still differing.
+3. **Interlace mode 2 addresses patterns as (name & 0x3FF) * 64.** CMD says "Bit zero
+   of the name is ignored in interlace mode 2", which would be (name & 0x7FE) * 32;
+   Exodus (`CalculatePatternDataRowAddress`), Genesis Plus GX (`GET_LSB_TILE_IM2`) and
+   MAME (`get_nametable`, `m_imode == 3`) all take the low bits and multiply by 64.
+   Three against one, one of them Nemesis: CMD is wrong here. `wtest_i2.bin`
+   74.78 % -> 96.25 %.
+4. **Base address masks** as CMD gives them: plane A and B to 0xE000, the window to
+   0xF800 and to 0xF000 in H40 ("In 40-cell mode, A11 is always forced to zero" -- the
+   board was clearing A10), the scroll table to 0xFC00.
+5. **Each row keeps the palette it was drawn with**, so a game that rewrites CRAM part
+   way down the frame keeps each band's colours, and a frame is as wide as its widest
+   row, so a mid-frame H32/H40 switch is not cropped (CMD photographed one).
+
+### 128 KB mode
+
+Writes only: one byte per word (the other goes to the chip that is not there), bit 0 of
+the address ignored, the address bits rearranged by Kabuto's formula, and one access
+slot instead of two, which is why "write/DMA speed to VRAM increases to that of CRAM
+and VSRAM". What the mode does to the *picture* is not modelled: with one VRAM chip
+fitted the hardware shows "garbled display contents", and no pinned test covers it.
+Overdrive 2 (milestone 5) is the judge. The board's address register is 16 bits, so
+bit 16 -- which 128 KB mode stops ignoring -- is carried only in the sprite cache's
+check.
+
+### Milestone 3 acceptance: the runs and their results (2026-09-22)
+
+All at commit `4890f03` unless said; m68000-python 51ee1a5, z80-python 0.4.0,
+MAME 0.285.
+
+**Nemesis's sprite masking ROM against his MD1600** (hardware-captured; the judge).
+His two photographs are now pinned (`reference/images/MD1600SpriteMask{H32,H40}.png`,
+SHA-256 in `scripts/pinned_files.json`) and neither contains a single red pixel, so all
+nine tests pass on his machine in both modes. `python scripts/run_sprite_masking.py`
+(ROM SHA-256 in the pin file, 2 s): **0 of 18 result cells differ** -- nine tests, two
+cells each, H32 and H40. That covers the per-line sprite limit, both dot-overflow
+tests, masking in and out of the first slot, masking after a dot overflow, the
+non-existent masking mode 2, and the per-frame limits (64 entries in H32, 80 in H40).
+The mode switch: the ROM polls bit 5 of $A10003 without making TH an output, so on a
+3-button pad it is reading C rather than Start, and the harness presses both.
+
+**MoD's `gen_test_z80_bus`** (hardware-corrected; `gen_test_z80_bus.md`).
+`python scripts/run_z80_bus_test.py` (2 s): the eight checks the ROM makes all print
+PASS -- RESET and not BUSREQ $00DE, RESET and BUSREQ $0000, BUSREQ and not RESET $0078,
+normal operation $0034, byte writes + word read $7878, word write + byte reads $BE89,
+unused BUSACK bits $00C0, unused RESET bits $00C0 -- and the two it only prints:
+**Z80 writes to work RAM $4243, Z80 reads to work RAM $FFFF**, which is what MoD
+reports from several machines ("writes always worked and reads always failed"). Its
+two delay counts print **0000 and 0000** (below).
+
+**CMD's window and colour tests, and TmEE's** (`md_test.zip`), each against MAME's own
+frame after the same 3 emulated seconds (`scripts/compare_mame_frames.py --record`;
+MAME is a detector, never a judge):
+
+| ROM | pixels equal | what the rest is |
+| --- | ---: | --- |
+| `wtest.bin` (window) | 100.00 % | |
+| `wtest_i1.bin` (interlace 1) | 100.00 % | |
+| `wtest_i2.bin` (interlace 2) | 96.25 % | the window's vertical range in interlace mode 2: the board covers V counter lines 0..WVP*8, as Genesis Plus GX does; MAME halves it |
+| `wbug.bin` (the window bug) | 99.84 % | the bug's 112 pixels, above |
+| `stetest.bin` (S/H) | 100.00 % | |
+| `STETEST2.bin` (S/H) | 41.97 % | two thirds shadow-versus-normal (below); the rest a palette index difference in a mid-frame raster test, not run down |
+| `SHLTEST.BIN` (TmEE) | 69.64 % | every one of the 21,760 differing pixels is the board's shadow of MAME's colour |
+| `vctest.bin` (V counter) | 96.93 % | every differing pixel likewise |
+| r57shell `vdp_tests.bin` | 100.00 % | |
+
+The shadow-versus-normal difference is deliberate: in shadow/highlight mode the board
+darkens the backdrop and every pixel where both planes are low priority, which is
+Kabuto's measured rule ("If both A+B are low prio, the visible color becomes
+shadowed"), CMD's `ste.htm` ("The changes in intensity due to a tile's priority setting
+will also affect any parts of the backdrop color that can be seen") and Genesis Plus GX
+(`make_lut_bg_ste`: "Half intensity when both pixels are low priority"). MAME's
+backdrop pixels carry its normal-intensity flag instead. Three sources against one
+detector: the board keeps its rule and the difference is named here.
+
+**r57shell's VDP tests** (hardware-corrected by the MD2 report in forum t=1585): the
+ROM runs and its first screen, "VDP Redraw Time Test 1", renders pixel for pixel as
+MAME renders it. It says "You MUST SEE right column of spheres" and neither the board
+nor MAME shows them: the test wants VRAM writes to land *within* the line being drawn,
+which a per-line renderer cannot do. **Not passed**, and not comparable either: the
+thread's hardware evidence is photographs of a CRT plus prose (MrTamk1s, an MD2 VA1.8
+with a 315-5708-01: "VDP Redraw Test #4 acted differently on my smaller CRT and on the
+Big CRT"), and no pad button the board models moves the ROM off its first screen -- it
+polls the pad seven times a frame, which is the 6-button handshake (milestone 7).
+
+**MAME's exit frames on the lockstep games** (detector).
+`scripts/compare_mame_frames.py --record` at four lengths, six games, `genesis`:
+
+| Game | 2 s | 5 s | 10 s | 20 s |
+| --- | ---: | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 98.65 / 100.00 | 100.00 | 72.46 / 77.31 | 92.10 / 93.10 |
+| Streets of Rage 2 (USA) | 100.00 | 100.00 | 99.97 / 100.00 | 99.91 / 99.96 |
+| Gunstar Heroes (USA) | 100.00 | 100.00 | 100.00 | 82.75 / 86.71 |
+| Castlevania - Bloodlines (USA) | 100.00 | 100.00 | 98.90 / 99.31 | 91.10 / 92.90 |
+| Sonic The Hedgehog 3 (USA) | 100.00 | 28.87 | 99.87 | 99.90 / 99.95 |
+| Phantasy Star IV (USA) | 100.00 | 92.57 / 100.00 | 100.00 | 93.03 / 93.54 |
+
+(exact frame / best of the eight frames around it, where they differ). Every static
+screen is identical; every lower figure is a moving demo or animation a few frames out
+of phase -- Sonic 3 at 5 s is its transformation sequence, the same picture at a
+different phase. Nothing structural showed up in any of the 24 comparisons.
+
+**Milestone 1 and 2, unchanged by all of this**: Sonic The Hedgehog re-recorded from
+MAME 0.285 (30 emulated seconds) and replayed: 23,286,815 68000 and 12,728,465 Z80
+instructions identical, 0 unexplained, 44 s (the named differences: 5,258 YM2612 status
+replayed, 3,165 $A11100 non-grant bits, 1,477 VDP reads replayed, 41,274 steps
+differing by MAME's `before_delay(1)`, 3,276 by its DMA stall). VDPFIFOTesting 122 of
+122 on `genesis`; the HV captures 8,762,415 of 8,847,360 words, the same as the
+milestone-2 baseline to the word. `pytest`: 19 passed on PyPy (96 s). The trace was
+deleted (3.4 GB).
+
+### Frames per second on PyPy (the brief's speed section)
+
+`.venv-pypy/bin/python`, 900 frames after 120 frames of warm-up, one process, NTSC
+(59.92 frames a second is real time):
+
+| Game | fps | fps with the renderer turned off | 68000 instructions a second |
+| --- | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 147.7 | 367.2 | 1,882,988 |
+| Streets of Rage 2 (USA) | 215.3 | 434.0 | 2,397,718 |
+| Gunstar Heroes (USA) | 163.0 | 294.1 | 1,741,528 |
+| Castlevania - Bloodlines (USA) | 293.6 | 705.0 | 1,304,430 |
+| Sonic The Hedgehog 3 (USA) | 181.5 | 411.0 | 2,046,804 |
+| Phantasy Star IV (USA) | 223.9 | 425.4 | 2,519,624 |
+
+So 2.5 to 4.9 times real time with the picture, and the picture costs between half and
+two thirds of the time. On CPython 3.14.4 the same Sonic run is 23.9 fps, as expected.
+The YM2612 (milestone 4) has yet to be paid for.
+
+### The two open items from milestone 1
+
+**The Z80's interrupt length: kept at one line.** No hardware measurement is pinned;
+CMD (`gen-hw.txt` 2.4) gives the line and says the interrupt is missed if the Z80 has
+interrupts disabled, and Genesis Plus GX holds it to the end of that line, which is
+what the board does (`VDP.z80_irq_at`, labelled). What can be said for it: in the
+milestone-1 lockstep Sonic The Hedgehog 3 takes 1,688 Z80 interrupts in 30 seconds, all
+of them at the instruction MAME took them at, which a much shorter or longer window
+would not give. It stays emulator-derived.
+
+**The Z80 bus-grant delay: measured, not modelled, and here is why.** The board grants
+the bus at once, as MAME does, so MoD's two counts print 0000. A delayed grant was
+written and tried: the Z80 samples BUSREQ "with the rising edge of the last clock
+period of any machine cycle" (Zilog UM0080), so the grant falls at the end of the
+machine cycle in progress, which the board can estimate from `System.z80_probe` (its
+machine-cycle ends, the last one being the step's own length so that trailing internal
+cycles belong to it). With that in place the $A11100 read reports "busy" until the
+grant, and a 68000 access to the Z80's space in between has to *wait* -- the arbiter
+holds it, it does not drop the access (Kabuto: the 68000 waits about 11 of its cycles
+when both want the bus). Holding the 68000 moves its later accesses in the same
+instruction to later clocks, which moves the points at which the Z80 is caught up, and
+Sonic's Z80 then runs one instruction ahead of MAME's (a write to the bank register
+that MAME had not made yet): the milestone-1 lockstep diverges after 912,165
+instructions. MAME grants the bus at once and models no arbiter stall, so the two
+cannot both hold. Since no hardware value for either count is published in the pinned
+material -- MoD's thread reports the ROM but not its numbers, and his logic-analyser
+measurement (2 68000 cycles from /BR to /BG, forum t=1661) is of the *other* direction,
+the Z80 reaching the 68000's bus -- there is nothing to judge the model by, and the
+lockstep is a real detector today. The delay is therefore left to milestone 5, whose
+subject is exactly the arbiter's delays and which will have to teach the lockstep about
+board stalls anyway. Recorded in docs/undocumented-behavior.md.
+
+QUESTION: is that the right call? The alternative is to model the BUSACK wait now and
+accept that the milestone-1 lockstep can no longer be replayed instruction for
+instruction against MAME (it would need a "the board waits for BUSACK, MAME does not"
+class, and the Z80 interleaving would have to be compared some other way).
+
+QUESTION: r57shell's redraw-timing tests want VRAM writes to land inside the line being
+drawn. Rendering per line is what the brief asks for and what pays for the frame rate
+above; drawing per pixel-clock would cost a lot of it. Leave those tests failing, or
+plan a per-slot renderer for milestone 5 (it is the same machinery CRAM dots need)?
+
+QUESTION: the window's vertical range in interlace mode 2 differs between Genesis Plus
+GX (the board's choice: V counter lines, so twice as many field lines) and MAME. No
+hardware source covers it and CMD's `wtest_i2.bin` is a picture, not a self-check.
+Accept the current choice?
+
+QUESTION: 128 KB mode's writes are implemented from Kabuto's formulas with nothing to
+judge them until Overdrive 2 in milestone 5, and its effect on the picture is not
+modelled at all. Accept, or leave 128 KB mode out until there is a judge?
