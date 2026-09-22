@@ -17,6 +17,8 @@ distortion model, so this module carries:
 * a **one-pole low-pass for ``model1`` and two cascaded poles for ``model2``**
   (:data:`FILTER_HZ`), whose corner is fitted to the same recordings and is
   labelled an assumption wherever it is claimed;
+* **a DC blocker** (:data:`DC_BLOCK_HZ`), which the coupling capacitor at the jack
+  is;
 * **no distortion model at all**.  Kabuto measures the Model 2's distortion as
   "quite high ... very well audible" but publishes no transfer curve, and inventing
   one would be worse than leaving it out.  The Model 2's output here is therefore
@@ -43,13 +45,24 @@ MCLK_PER_FM_SAMPLE = 1008
 MCLK_PER_PSG_SAMPLE = 240
 
 #: The PSG's level (0.0-4.0 from :mod:`megadrive_python.psg`) per unit of the FM's
-#: summed DAC.  Fitted to the MDFourier recordings; see the module docstring.
-PSG_GAIN = 1400.0
+#: summed DAC.  **Measured**, not guessed: the MDFourier signal's 40 PSG tone blocks
+#: sit 6.70 dB below its 96 FM blocks on a real Model 1 VA3
+#: (``A-MD1UTVA3-M192.flac``, hardware-captured), and this is the gain that puts the
+#: board's at the same distance.  docs/worklog.md, milestone 4, has the run.
+PSG_GAIN = 422.0
 
 #: The analogue low-pass corner, in Hz, for each ``Machine.audio_path``: one pole on
 #: the Model 1, two on the Model 2 (Kabuto).  Fitted; not a measured value.
 FILTER_HZ = {"model1": 8000.0, "model2": 4500.0}
 FILTER_POLES = {"model1": 1, "model2": 2}
+
+#: The output is AC-coupled, as every console's is: the YM2612's DAC idles at a
+#: standing level rather than at zero (the ladder's +1 sign in the gaps between
+#: channels alone is a constant 72 units a sample), and the coupling capacitor at the
+#: jack removes it.  Without this a recording of the board sits far off zero and a
+#: silence is not silent.  10 Hz is the usual order for a line output; no source
+#: gives the console's, so it is an assumption like the low-pass corner.
+DC_BLOCK_HZ = 10.0
 
 #: Full scale.  Six FM channels at full volume sum to about 6,100 of the YM2612's
 #: multiplexed units (24 cycles of up to 3 x 256), so this keeps a loud game inside
@@ -74,6 +87,8 @@ class AudioPath:
         self._psg_phase = 0
         self._pending_psg: list[float] = []
         self._filter = [(0.0, 0.0)] * self.poles
+        self._dc_in = (0.0, 0.0)
+        self._dc_out = (0.0, 0.0)
         self._resample_phase = 0.0
         self._previous = (0.0, 0.0)
         self._have_previous = False
@@ -120,7 +135,22 @@ class AudioPath:
             # The PSG is one signal mixed into both sides.
             merged.append((left + level * gain, right + level * gain))
         del self._pending_psg[:psg_index]
-        return self._resample(self._filtered(merged))
+        return self._resample(self._dc_blocked(self._filtered(merged)))
+
+    def _dc_blocked(self, samples: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """The coupling capacitor: a one-pole high-pass at :data:`DC_BLOCK_HZ`."""
+        pole = 1.0 - 2.0 * 3.141592653589793 * DC_BLOCK_HZ / self.fm_rate
+        in_l, in_r = self._dc_in
+        out_l, out_r = self._dc_out
+        out = []
+        for left, right in samples:
+            out_l = left - in_l + pole * out_l
+            out_r = right - in_r + pole * out_r
+            in_l, in_r = left, right
+            out.append((out_l, out_r))
+        self._dc_in = (in_l, in_r)
+        self._dc_out = (out_l, out_r)
+        return out
 
     def _filtered(self, samples: list[tuple[float, float]]) -> list[tuple[float, float]]:
         alpha = self._alpha()
