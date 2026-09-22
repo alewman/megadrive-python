@@ -272,6 +272,33 @@ Nuked-OPN2 (YM3438) and YM2608-LLE (YM2612) are cycle-accurate die-derived
 models: run the same register stream through them to get the judge's output
 ([validation.md](validation.md)).
 
+**The chip's own clock grid** (milestone 4, from those models). The YM2612 runs at
+MCLK / 7 and divides that by 6, so one *internal cycle* is 42 MCLK and serves one of
+the chip's 24 operator slots; 24 cycles -- 1,008 MCLK -- are one output sample, which
+is 53,267 Hz on NTSC and 52,781 Hz on PAL. Slots 0-5 are the six channels' operator
+1, 6-11 operator 3, 12-17 operator 2, 18-23 operator 4. Every stage of the chip is a
+fixed number of cycles behind the slot being served (the phase generator 19 and 20,
+the envelope 22 and 23, the modulation 6 and 18), which is why a register written
+between two cycles reaches one operator this sample and the next operator only next
+sample, and why `src/megadrive_python/ym2612.py` runs the pipeline rather than a
+per-sample loop.
+
+BUSY's 32 internal cycles are 32 x 6 = 192 68000 clocks, which is Eke's measurement
+read the other way round. Timer A counts one per output sample (1,008 MCLK); timer B
+one per 16 of them.
+
+## The PSG
+
+The PSG inside the VDP is clocked at MCLK / 15, the Z80's clock. It divides that by
+4 into two internal phases and serves one of its four channels per phase pair, so one
+full rotation -- one output sample -- is 16 input clocks: 240 MCLK, 223,721 Hz on
+NTSC. Five FM samples take exactly 21 PSG samples (1,008 x 5 = 240 x 21), which is
+how `src/megadrive_python/audio.py` box-filters one onto the other without drift.
+
+The *period* a counter is compared against comes from a one-hot selector that runs
+one place behind the counter index, so counter 0 is the noise channel's, counter 1
+tone 1's, counter 2 tone 2's and counter 3 tone 3's (Nuked-PSG; milestone 4).
+
 ## Frame pacing for a frontend
 
 NTSC runs 53,693,175 / (3,420 × 262) = 59.92 frames a second, PAL

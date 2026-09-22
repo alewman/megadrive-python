@@ -603,3 +603,337 @@ modelled at all. Accept, or leave 128 KB mode out until there is a judge?
    detector-tier choice with MAME's alternative recorded beside it, until a
    hardware source settles it.
 4. **128 KB mode stays**, judged by Overdrive 2 in milestone 5.
+
+## Session 3 (2026-09-22): milestone 4, sound
+
+### How the brief was read
+
+Scope is milestone 4 only: the PSG after sms-python's, judged by Nuked-PSG; the
+YM2612 with all six channels, channel 3's special mode, CSM, SSG-EG, the LFO, both
+timers, BUSY, the DAC and the ladder effect as a variant field, judged by
+Nuked-OPN2's YM2612 mode and YM2608-LLE's YM2612 path sample for sample at the chip's
+native rate for register streams from Nemesis's test ROMs and five games; Nemesis's
+SSG-EG test against his MD1600 recording by measurement; the MDFourier signal against
+the recordings as a detector of the analogue model. Record the FM's cost per
+emulated second on PyPy. Then stop.
+
+The tier rule for this milestone, as the brief states it: the recordings are
+hardware-captured and judge; the die-derived models judge where no capture covers
+the question; MAME and Genesis Plus GX are detectors. There is no YM2612 datasheet
+and no self-checking FM test ROM (docs/validation.md), so the chips' *arithmetic* is
+exactly the case where the die-derived models judge, and that is how the FM and PSG
+comparisons below are stated.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K. gcc 15.2.0
+(Ubuntu 15.2.0-16ubuntu1) for the referees. `unrar` 7.20 and `ffmpeg` for the
+recordings. The machine was shared with other work for part of the session, which
+the wall times below reflect.
+
+The large material was already fetched (`python scripts/fetch_references.py --large`
+in an earlier session): `tests/test_roms/nemesis/ssg-eg md1600*.rar`,
+`tests/test_roms/mdfourier/MDFourier-Genesis-SegaCD-Recordings-14062020.zip`,
+`tests/test_roms/aly-james/MD1_LADDER.wav`. Everything unpacked from them was
+deleted at the end of the session and none of it is committed.
+
+### The three referees
+
+`sh validation/build_referees.sh` builds all three into `reference/build-referees/`
+(git-ignored, beside the previous session's `reference/build-nuked-md/`):
+
+```sh
+gcc -O2 -w -I reference/src/Nuked-OPN2  -o reference/build-referees/opn2_ref \
+    validation/opn2_ref.c  reference/src/Nuked-OPN2/ym3438.c
+gcc -O2 -w -I reference/src/Nuked-PSG   -o reference/build-referees/psg_ref \
+    validation/psg_ref.c   reference/src/Nuked-PSG/ympsg.c
+gcc -O2 -w -I reference/src/YM2608-LLE  -o reference/build-referees/lle2612_ref \
+    validation/lle2612_ref.c reference/src/YM2608-LLE/fmopna_2612.c
+```
+
+Each takes a binary event file of `{u64 clock; u8 port; u8 data}` and writes a binary
+result; the clock unit is documented in each `validation/*.c`. Nothing of the
+referees' source is copied into this repository -- the three `.c` files here only
+drive them, and the licences (LGPL-2.1, GPL-2.0+, GPL-2.0) stay with the sources in
+`reference/`, which is ignored.
+
+`lle2612_ref` is a *pin-level* harness: /IC held for 4,096 chip clocks, then /CS and
+/WR driven low for 16 chip clocks per write, with A0 and A1 from the port. That
+matters below.
+
+### The PSG
+
+#### Decisions
+
+- **It is sms-python's, adapted, not imported** (the brief's rule): same three tone
+  channels, one noise channel, one write-only port, 16-bit LFSR. Cited in the module
+  docstring by file.
+- **The generator runs the die's rotation, not a four-channels-at-once tick.**
+  sms-python advances all four channels together once per 16 input clocks; that is
+  right for its own judge. Here the judge is Nuked-PSG and matching it needs the
+  shape the die has, which turned out to be four things sms-python does differently:
+  two internal phases a quarter of the input clock apart with one counter stepped per
+  phase pair; the *period* taken from a one-hot selector that runs one place behind
+  the counter index (so counter 0 is the noise channel's and counter 1 tone 1's); an
+  up-counter compared with the period rather than a down-counter reloaded at zero;
+  and a left-shifting LFSR tapped at bits 15 and 12 with a zero-detect, its output
+  bit 14 latched a phase behind.
+- **A write reaches the register on the next input clock -- or on the same one.**
+  Nuked-PSG updates the registers at the head of every clock *and* again inside the
+  second internal phase (`ympsg.c` lines 285 and 208), so a write landing on that
+  phase is a clock earlier than one that does not. Found by measurement: without it,
+  19 of 102,569 input clocks differed on the first random stream, every one of them
+  at a write. Modelled.
+- **Power-on is the /IC sequence, run, not asserted.** Nuked-PSG's `YMPSG_Init`
+  holds /IC over 16 clocks and releases it, which leaves the counters at 1, the
+  overflow shift register full (0x0F) and the one-hot selector at bit 3 -- not a
+  zeroed machine. `PSG.reset` runs the same 16 clocks and the state then matches
+  Nuked's field for field (checked in `tests/test_milestone4.py`).
+- **The attenuation curve is the measured one** (`ympsg_vol`: 1.0, 0.772, 0.622,
+  0.485, ...), not the ideal 2 dB a step sms-python uses (1.0, 0.794, 0.631, ...).
+  Recorded in docs/undocumented-behavior.md.
+- **The port decode is CMD's**: "Doing byte-wide writes to even PSG addresses has no
+  effect", and a word write must carry the data in the LSB (CMD `gen-hw.txt` 1 note
+  3). Reading the port locks up, so there is no read.
+
+#### What is compared, exactly
+
+`scripts/run_psg_compare.py` compares **the four attenuations the chip is driving, at
+every input clock** (MCLK / 15, 3.58 MHz) -- sixteen times finer than the chip's own
+output rate. That is the whole digital state; nothing is averaged and nothing is
+rounded. Nuked's *analogue* level is not compared, because the board uses Nuked's own
+measured curve and comparing it would be circular; the curve itself is checked
+entry by entry in the tests.
+
+### The YM2612
+
+#### The one decision everything else follows from
+
+**The model is the chip's pipeline, not a per-sample FM loop.** The acceptance is
+sample-for-sample equality with two die-derived models, and a textbook OPN2 cannot
+meet that bar however carefully it is written. The real chip serves one operator per
+internal cycle, 24 cycles to an output sample, and every stage sits a fixed number of
+cycles behind the slot being served: the phase generator 19 and 20, the envelope 22
+and 23, the modulation 6 and 18, the channel accumulator 18. A register written
+between two cycles therefore reaches one operator this sample and the next operator
+only next sample, and the envelope's total level and sustain level are each delayed a
+further cycle. Only the same pipeline gives the same samples.
+
+So `src/megadrive_python/ym2612.py` runs the chip's cycle: `cycles` counts 0-23,
+slots 0-5 are the six channels' operator 1, 6-11 operator 3, 12-17 operator 2, 18-23
+operator 4. Its shape, its stage offsets and its constant tables are read from
+**Nuked-OPN2** (`ym3438.c`, LGPL-2.1, the YM3438's die) and **YM2608-LLE**
+(`fmopna_impl.c`, GPL-2.0, the NMOS YM2612's die), cited by file and line in every
+method. No code is copied: the models were read and this was written from what they
+say, as the working agreement requires.
+
+The two ROM tables are **generated**, not transcribed:
+`round(-log2(sin((i + 0.5) * pi / 512)) * 256)` and `round((2 ** (i / 256) - 1) *
+1024)`, the functions Gambrell and Niemitalo recovered from the OPL2's ROM and which
+Nuked-OPN2 credits for the same tables. `tests/test_milestone4.py` checks all 512
+entries against the pinned model's own. The other constants (the detune increments,
+the envelope step table, the two LFO shift tables, the LFO reloads, the algorithm
+matrix) are measurements of the chip carried as data, each with the line they were
+read from.
+
+#### Decisions and their sources
+
+- **BUSY** is set only by a *data* write and lasts 32 internal cycles, which at 6
+  68000 clocks a cycle is Eke's "32 internal clocks (32 x 6 68000 cycles)" read the
+  other way round (forum t=386 start=810, hardware-captured). The model is
+  structural, not a timer: the die's own counter.
+- **BUSY reads from port 0 only on the discrete chip, from every port on the ASIC**
+  (Eke, same measurement), which is `FMVariant.busy_on_all_ports`. What a discrete
+  chip's other three ports read is not in any pinned source; the board returns 0,
+  which is Genesis Plus GX's choice (`core/sound/sound.c` line 152), labelled
+  emulator-derived and listed as an open item.
+- **Kabuto's "wait about 33.6 Z80 cycles between register writes"** is modelled by
+  construction, not by a delay: the chip has no register RAM the CPU can reach, and a
+  write waits in a latch until the cycle that serves the addressed slot comes round.
+- **The ladder effect is `FMVariant.ladder`**, as the brief asks. With it, the
+  discrete chip's output stage drives the channel's value on one of the channel's
+  four cycles and the bare sign (+1 or -1) on the other three, adds 1 to every
+  non-negative sample and triples everything; without it, the ASIC drives the value
+  on three of the four and zero on the fourth, unamplified.
+- **The DAC** is 9 bits: register $2A carries the top eight and the test register
+  $2C bit 3 the ninth, which is where Kabuto's "9 bits" comes from. Its *sampling
+  point* within a cycle, which he says differs between Model 1 and Model 2 and did
+  not publish, is not modelled: the board sums a sample's 24 multiplexed values, the
+  same on both.
+- **The /RESET line is shared with the Z80** (CMD 2.2), so the board holds the chip
+  at power-on and a game that pulses it clears the chip -- but not the samples
+  already made, which are the output queue and not chip state.
+
+#### What is compared, exactly
+
+`scripts/run_fm_streams.py` runs each register stream from power-on and compares
+**every value of both DAC pins, one per internal cycle** -- 24 to an output sample,
+so a stricter test than sample-for-sample at the chip's native rate -- plus the
+status byte (BUSY and both timer overflow flags) on the same cycles. Nothing is
+averaged, nothing is rounded, and a stream either matches on every cycle or the first
+differing cycle is printed with both values. Both chip variants are run against the
+matching Nuked-OPN2 mode.
+
+The streams are: two seeded random walks over the whole register space; six aimed
+streams (channel 3's special mode and CSM at three timer-A rates, all eight SSG-EG
+shapes keyed on and off, the LFO at all eight speeds against every PMS and AMS depth,
+both timers at four reloads, the DAC through every value and its ninth bit); Nemesis's
+six YM2612 test ROMs run on the board; and five cartridges run on the board. The ROM
+and game streams are *the board's own*: the writes its YM2612 received, at the
+internal cycle it received them on, captured with the generator turned off (the
+register stream does not depend on it). So a difference there would be the board's
+scheduling as much as the chip's.
+
+#### YM2608-LLE: what it agrees with and what it does not
+
+YM2608-LLE is a **pin-level** model at MCLK / 7 of the NMOS YM2612's own die, so it
+is the better authority for the discrete chip's output stage than Nuked-OPN2, whose
+YM2612 mode its own comment calls "YM2612 DAC emulation(not verified)" (`ym3438.c`
+line 966). Comparing the two showed one real difference and one artefact of the
+harnesses, and both are worth recording.
+
+**The real one.** The six channels are multiplexed onto MOL/MOR four cycles each.
+YM2608-LLE drives the channel's value on the *first* of its four cycles and the bare
+sign (+1 or -1) on the other three (`fmopna_impl.c` lines 5824-5853). Nuked-OPN2
+drives the sign on three and the value on the *last* (`ym3438.c` lines 937-1010,
+`out_en = ((cycles & 3) == 3)`). Measured on the channel-3 stream: YM2608-LLE puts
+-14 at the start of the group and -1 for the next three cycles; the board (following
+Nuked-OPN2) puts -1 for three cycles and -16 at the end. The 24 values of an output
+sample are the same multiset either way, so the sample at the chip's native rate is
+unaffected and nothing audible turns on it. The board keeps Nuked-OPN2's order,
+because that is what the cycle-exact comparison above is made against, and the
+difference is recorded in docs/undocumented-behavior.md ("The YM2612" item 6).
+
+**The artefact.** A write is driven differently in the two harnesses: `lle2612_ref`
+holds /CS and /WR low for 16 chip clocks, as a bus cycle does, while `OPN2_Write`
+latches an edge. A write can therefore land one internal cycle apart in the two. The
+comparison is then made at the chip's native rate (each model's DAC summed over a
+sample, one phase and one whole-sample lag fitted over the run), and what is left
+scales with how often the stream writes:
+
+| Stream (24 x 20,000 cycles each) | samples differing |
+| --- | --- |
+| SSG-EG, all eight shapes | **0** of 19,898 |
+| both timers | **0** |
+| the DAC | **0** |
+| channel 3 special mode and CSM | 1 of 19,898 (0.01 %) |
+| the LFO, 8 speeds x 8 PMS x 4 AMS (292 writes) | 325 of 19,898 (1.63 %) |
+| a random walk, one write per 36 cycles | 4,351-7,179 of ~20,900 (21-34 %) |
+| a random walk, one write per 4,000 cycles | 25 of 67,299 (0.04 %) |
+| a random walk, one write per 1,000 cycles | 12 of 17,424 (0.07 %) |
+
+and the differences are transient: on the dense stream, 1,200 writes produce 146 runs
+of differing samples, median length 1 sample and mean 4.4, after which the two models
+agree again. That is what a one-cycle difference in when a write lands looks like;
+it is not a difference in either chip's arithmetic. Shifting the LLE harness's write
+by a few chip clocks moves the count (642 -> 547 at -9 clocks) but does not remove
+it, which is expected: the landing cycle differs only for writes that fall near a
+boundary.
+
+**So, stated precisely:** at the chip's native rate the board and YM2608-LLE are
+identical over the SSG-EG, timer and DAC streams and differ on 1 sample in 19,898 on
+the CSM stream; on streams that write every few tens of cycles they differ in bursts
+around writes that the two harnesses place a cycle apart, and re-converge. This is
+*not* the literal "equal sample for sample" the brief asks for, and the reason is
+measured above rather than argued.
+
+### The analogue path
+
+`src/megadrive_python/audio.py`. Three signals leave the board -- MOL, MOR and the
+PSG's one output -- and meet in an amplifier that differs by revision. What is
+modelled, and what is not:
+
+- **The PSG is box-filtered onto the FM's grid with an integer phase.** Five FM
+  samples take exactly 21 PSG samples (1,008 x 5 = 240 x 21), so nothing drifts over
+  a long run.
+- **A low-pass**: one pole for `model1`, two cascaded for `model2`, which is
+  Kabuto's "instead of the MD1's 1st order filter there's a 2nd order filter". He
+  gives no corner frequency and nothing pinned does, so the board's are **fitted**
+  and labelled where they are defined.
+- **A DC blocker**, which the coupling capacitor at the jack is. This is not
+  cosmetic: the discrete YM2612 drives +1 in every gap between channels, which is a
+  standing 72 units of every sample even in silence, so without it a recording of the
+  board sits far off zero and a silence is not silent. Found by measurement: the
+  first MDFourier run could not find the signal's silences at all.
+- **No distortion model.** Kabuto measures the Model 2's amplifier as introducing
+  "severe nonlinearities ... Distortion is quite high too, very well audible" and
+  publishes no transfer curve. The board's Model 2 is therefore cleaner than the
+  hardware's, and docs/undocumented-behavior.md says so.
+- **The PSG-to-FM mixing ratio** is the one number the MDFourier recordings measure
+  directly (below).
+
+### The ladder effect, against Aly James's MD1_LADDER.wav (hardware-captured)
+
+`MD1_LADDER.wav` is 3.1 seconds of a real Model 1 playing a tone whose level is
+walked down. Its envelope, measured in 50 ms blocks, falls smoothly for the first
+half and then **stops falling about 33 dB below its peak**, staying there for about
+0.8 s before the note reaches absolute silence. That plateau is the ladder: the +1
+the discrete chip adds to every non-negative sample, and the bare sign it drives
+between channels, do not shrink with the note.
+
+`python scripts/run_fm_streams.py --ladder tests/test_roms/aly-james/MD1_LADDER.wav`
+walks one operator's total level from 0 to 127 on the board and prints each machine's
+level profile in decibels below its own peak, at ten points along the ramp:
+
+| | peak | 0 | 1/10 | 2/10 | 3/10 | 4/10 | 5/10 | 6/10 | 7/10 | 8/10 | 9/10 | 10/10 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| board, discrete YM2612 | 222.9 | 0.0 | -9.7 | -18.5 | -27.2 | -34.0 | **-36.1** | **-37.1** | **-37.0** | -40.4 | silence | silence |
+| board, ASIC YM3438 | 128.3 | 0.0 | -9.8 | -18.7 | -28.2 | -37.9 | -46.1 | -49.0 | -48.9 | -52.4 | silence | silence |
+| `MD1_LADDER.wav` (a Model 1) | 19,670 | 0.0 | -9.5 | -18.2 | -25.7 | -30.7 | **-32.8** | **-32.8** | **-33.0** | -42.6 | -61.1 | -61.2 |
+
+The board's discrete variant plateaus at -36 to -37 dB where the Model 1 plateaus at
+-33; its ASIC variant does not plateau at all, falling another 12 dB. So **the
+board's ladder has the hardware's shape, within 4 dB of its depth, and the variant
+field does what it is there for**. What this does *not* claim: the two ramps are not
+the same ramp (the recording's ROM is not published, its console's filter and the
+capture's gain are unknown), so the 4 dB is not an error figure -- it is the distance
+between two differently made measurements of the same effect. Nothing here is rounded
+into a pass.
+
+### Nemesis's SSG-EG test against his MD1600 recording (hardware-captured, the judge)
+
+`tests/test_roms/nemesis/ssg-eg md1600.rar` unpacks to 83.3 s of mono 96 kHz audio of
+his MD1600 running `ym2612ssg-eg.bin`. It cannot be compared sample for sample -- it
+is an analogue recording of unknown gain, with an unknown start offset, through the
+console's filter -- so `scripts/run_ssg_eg.py` compares what can be measured on both:
+how many notes sound, how long each lasts, how far apart they start, and the
+repetition period of the envelope inside each note, by autocorrelating its amplitude
+envelope (20 Hz blocks, RMS about each block's own mean, so neither signal's standing
+level counts as sound).
+
+```sh
+unrar x "tests/test_roms/nemesis/ssg-eg md1600.rar" <tmp>/
+.venv-pypy/bin/python scripts/run_ssg_eg.py --wav "<tmp>/ssg-eg md1600.wav"
+```
+
+| note | MD1600 start | board | MD1600 length | board | MD1600 period | board |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 0.00 | 0.00 | 0.40 | 0.45 | none | none |
+| 1 | 9.50 | 9.20 | 4.10 | 4.10 | none | none |
+| 2 | 18.80 | 18.40 | 0.10 | 0.10 | none | none |
+| 3 | 28.10 | 27.60 | 3.80 | 3.80 | **150 ms** | **150 ms** |
+| 4 | 37.35 | 36.85 | 4.35 | 4.30 | **50 ms** | **50 ms** |
+| 5 | 46.70 | 46.04 | 3.80 | 3.80 | none | none |
+| 6 | 55.95 | 55.24 | 4.35 | 4.30 | **50 ms** | **50 ms** |
+| 7 | 65.25 | 64.44 | 4.10 | 4.10 | **150 ms** | **150 ms** |
+| 8 | 74.55 | 73.64 | 0.10 | 0.10 | none | none |
+| 9 | -- | 82.84 | -- | 0.40 | -- | none |
+
+(times in seconds, relative to each machine's first note; the board's note 9 is the
+ROM starting round again, which the recording, begun 4.9 s in, does not reach.)
+
+**Every one of the eight SSG-EG shapes behaves the same way on both machines**: the
+three that hold or run to silence sound for 0.10-0.45 s and show no repeating
+envelope; the five that repeat sound for 3.80-4.35 s; and the four that repeat
+*visibly* do so at the same rate, 150 ms or 50 ms, to the resolution of the
+measurement (50 ms blocks). Every length agrees within one block.
+
+**What does not agree: the rate.** The MD1600's notes start 9.25-9.50 s apart and the
+board's 9.19-9.25 s, a steady **1.0-1.2 % difference** that accumulates to 0.91 s over
+the eight gaps. That is a clock ratio, not a structural difference: the ROM's own
+timing is the same number of frames on both. Two candidates, neither checkable from
+here -- the recorder's sample clock (a capture nominally at 96,000 Hz running 1.2 %
+slow would give exactly this) and the console's crystal against the nominal
+53,693,175 Hz. It is recorded as an open item rather than guessed at.

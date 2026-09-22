@@ -59,3 +59,17 @@ not out of any single document:
     arbiter's wait moves the Z80/68000 interleaving off MAME's, which the lockstep
     replays instruction for instruction
     ([undocumented-behavior.md](undocumented-behavior.md), open item 8).
+13. **The two die-derived FM models disagree about the DAC's multiplexing order**
+    (milestone 4): YM2608-LLE, a transcription of the YM2612's own die, drives a
+    channel's sample on the first of its four cycles and the bare sign on the other
+    three; Nuked-OPN2's YM2612 mode -- which its own comment calls "not verified" --
+    drives the sign first and the sample last. The 24 values of an output sample are
+    the same either way, so nothing audible turns on it
+    ([undocumented-behavior.md](undocumented-behavior.md), "The YM2612" item 6).
+14. **The Sega PSG's attenuation ladder is not 2 dB a step**: Nuked-PSG's measured
+    curve gives 0.772 and 0.622 where the ideal gives 0.794 and 0.631. sms-python
+    uses the ideal one; this board uses the measured one.
+15. **Nothing pinned gives the console's audio filter a corner frequency or the PSG
+    and FM a mixing ratio.** Kabuto measured the shapes (first order on the Model 1,
+    second on the Model 2, "quite high" distortion on the Model 2) but published no
+    numbers, so the board's are fitted to the MDFourier recordings and labelled.

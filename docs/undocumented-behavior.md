@@ -147,6 +147,54 @@ source, the way sms-python does.
    ([validation.md](validation.md)); the early pages of the YM2612 thread were
    corrected later in the same thread (phase generator at start=165, envelope
    generator at start=405): cite the corrections.
+6. **The two die-derived models disagree about where in a channel's four cycles the
+   sample is driven** (found in milestone 4). The six channels are multiplexed onto
+   MOL/MOR four cycles each. YM2608-LLE -- a transcription of the *YM2612's* die --
+   drives the channel's value on the first of the four and the bare sign (+1 or -1)
+   on the other three (`fmopna_impl.c` lines 5824-5853). Nuked-OPN2 is a
+   transcription of the *YM3438's* die with a YM2612 output mode its own comment
+   calls "YM2612 DAC emulation(not verified)" (`ym3438.c` line 966); that mode drives
+   the sign on three cycles and the value on the **last**. The 24 values of an output
+   sample are the same multiset either way, so the sample at the chip's native rate
+   is unaffected and nothing audible turns on it; the board follows Nuked-OPN2, and
+   the difference is measured and recorded in [worklog.md](worklog.md).
+7. **What a discrete YM2612's ports 1-3 read is not known.** Eke measured that the
+   status answers on port 0 only on the discrete chip and on every port on the ASIC
+   (forum t=386 start=810), but not what the other three ports give. Genesis Plus GX
+   returns 0 (`core/sound/sound.c` line 152), which the board copies, labelled
+   emulator-derived. A hardware read would settle it.
+8. **The ladder effect is a property of the DAC's output stage, not of a filter.**
+   The discrete chip adds 1 to every non-negative sample and drives +1/-1 in the gaps
+   between channels, so the console's low-pass sees a step at the zero crossing
+   (HardWareMan's oscilloscope traces; Aly James's `MD1_LADDER.wav`). The board
+   carries it as `FMVariant.ladder` and it is what `ym2612ladder` differences in the
+   referee comparison come from.
+
+## The PSG and the analogue path
+
+1. **The attenuation ladder is not 2 dB a step.** Nuked-PSG's measured curve
+   (`ympsg.c` line 7) gives 1.0, 0.772, 0.622, 0.485 ... where the ideal would give
+   1.0, 0.794, 0.631, 0.501. The board uses the measured one
+   (`psg.VOLUME_LEVELS`); sms-python uses the ideal one, which is why the two
+   boards' PSG levels differ slightly.
+2. **The PSG's counter is an up-counter compared with the period**, reset to 0 and
+   then incremented, not a down-counter reloaded at zero (Nuked-PSG
+   `YMPSG_ClockInternal1`). The two differ for one tick after a period is written and
+   for the periods 0 and 1.
+3. **A PSG register write reaches the register on the clock after the write, or on
+   the same clock** when that clock happens to be the second of the two internal
+   phases, which updates the registers a second time (`ympsg.c` lines 208 and 285).
+   Worth 19 samples in 102,569 on the first stream the board was compared on.
+4. **No distortion model.** Kabuto measures the Model 2's amplifier as introducing
+   "severe nonlinearities ... Distortion is quite high too, very well audible" and
+   the Model 1's filter as first-order against the Model 2's second-order, but
+   publishes no transfer curve and no corner frequency. The board low-passes (one
+   pole for `model1`, two for `model2`) at a corner fitted to the MDFourier
+   recordings and models no distortion at all, so its Model 2 output is cleaner than
+   the hardware's. `src/megadrive_python/audio.py` says so where the constants are.
+5. **The mixing ratio between the PSG and the FM** has no pinned number either; the
+   board's is measured from the MDFourier recordings ([worklog.md](worklog.md),
+   milestone 4).
 
 ## Known-wrong or superseded sources
 
@@ -189,7 +237,10 @@ source, the way sms-python does.
    and the fill's FIFO byte order, vary on real hardware (Nemesis). The board
    passes all four (milestone 2).
 7. **The YM2612's DAC sampling point** within its cycle, which differs between
-   the Model 1 and Model 2 and which Kabuto did not publish.
+   the Model 1 and Model 2 and which Kabuto did not publish. Related: "On MD1 it
+   just outputs a short pulse for each voice ... on MD2 it holds the value for quite
+   a while", which the board does not model -- it sums a sample's 24 multiplexed
+   values, the same on both.
 8. **The delay from a bus request to BUSACK.** MoD's `gen_test_z80_bus` measures it
    twice (with the Z80 running 4-T-state and 6-T-state machine cycles) but its
    hardware values are not published in the pinned material; his logic-analyser
@@ -210,3 +261,6 @@ source, the way sms-python does.
    not pass; CRAM dots (milestone 5) are the same machinery.
 11. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
    romset's symlink is broken, and the forum link is a mega.nz page.
+12. **The analogue path's corner frequency and the PSG/FM mixing ratio** are fitted
+   to the MDFourier recordings, not read from a document; no source gives either.
+13. **What a discrete YM2612's ports 1-3 read** (above, "The YM2612" item 7).

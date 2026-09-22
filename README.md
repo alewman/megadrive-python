@@ -9,7 +9,7 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 to 3 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 4 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
 (119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
@@ -18,8 +18,11 @@ Nemesis's 288 HV/status capture dumps; and the picture -- both planes, the windo
 sprites, priority, shadow/highlight, H32/H40, V28/V30 and both interlace modes --
 gives Nemesis's sprite masking ROM the same nine results his MD1600 photographs show,
 in both widths, and matches MAME's frame pixel for pixel on every static screen of the
-six lockstep games. 148 to 294 frames a second on PyPy. No sound yet. Around the code,
-the groundwork it was built from, in the shape that built
+six lockstep games. Sound is there too: the PSG and the YM2612 -- all six channels,
+channel 3's special mode, CSM, SSG-EG, the LFO, both timers, BUSY, the DAC and the
+ladder effect -- run the chips' own pipelines and are compared against the die-derived
+models cycle by cycle. `--wav` writes what a console would have played. Around the
+code, the groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
 - a primer on the machine;
@@ -62,12 +65,18 @@ See [docs/README.md](docs/README.md).
 | `scripts/run_sprite_masking.py` | Milestone 3: the sprite masking ROM against Nemesis's MD1600 photographs | yes |
 | `scripts/run_z80_bus_test.py` | Milestone 3: MoD's `gen_test_z80_bus`, read off the screen | yes |
 | `scripts/compare_mame_frames.py` | Milestone 3: the board's picture against MAME's frame (a detector) | yes |
+| `validation/` | The three audio referees' harnesses and their build script (Nuked-OPN2, Nuked-PSG, YM2608-LLE) | yes |
+| `scripts/run_fm_streams.py` | Milestone 4: the YM2612 against Nuked-OPN2 and YM2608-LLE, cycle by cycle | yes |
+| `scripts/run_psg_compare.py` | Milestone 4: the PSG against Nuked-PSG, input clock by input clock | yes |
+| `scripts/run_ssg_eg.py` | Milestone 4: Nemesis's SSG-EG test against his MD1600 recording, by measurement | yes |
+| `scripts/run_mdfourier.py` | Milestone 4: the MDFourier signal against the hardware recordings (a detector) | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
 | `tests/mame_traces/` | MAME runs | no |
 
-    python -m megadrive_python CART --frames 600 --png frame.png   # run and draw
+    python -m megadrive_python CART --frames 600 --png frame.png --wav sound.wav
+    sh validation/build_referees.sh             # build milestone 4's three referees
     python scripts/fetch_references.py          # fetch everything missing
     python scripts/fetch_references.py --large  # also the large recordings
     python scripts/fetch_references.py --verify # check the pins, fetch nothing
