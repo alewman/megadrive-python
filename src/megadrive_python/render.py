@@ -72,6 +72,9 @@ SPRITE_LIMITS = {256: (64, 16, 32), 320: (80, 20, 40)}
 #: ``shift_table``/``col_mask_table``/``row_mask_table``; emulator-derived, read and
 #: rewritten, never copied), which is the only statement of the invalid sizes' shape
 #: beyond CMD's sentence; CMD's sentence and this agree where they overlap.
+#: Decoded tile rows kept before the cache is emptied (bounded memory in a long run).
+TILE_CACHE_LIMIT = 100_000
+
 PLANE_CELLS = (32, 64, 32, 128)
 PLANE_ROW_SHIFT = (6, 7, 0, 8)
 PLANE_ROW_MASK = (0x0FF, 0x1FF, 0x2FF, 0x3FF)
@@ -100,7 +103,9 @@ class Renderer:
         self.overflow = False
         self.collision = False
         #: Decoded tile rows, keyed by the four pattern bytes and the attribute: the key
-        #: holds the data, so an entry can never go stale when VRAM changes.
+        #: holds the data, so an entry can never go stale when VRAM changes. A game
+        #: settles at a few thousand of them (Sonic: 12,208 after a minute); the cache
+        #: is emptied if one ever churns through :data:`TILE_CACHE_LIMIT`.
         self._tiles: dict[int, tuple] = {}
         #: The palette each row was drawn with (normal, shadow and highlight RGB for
         #: every CRAM entry). A game that rewrites CRAM part way down the frame -- as
@@ -156,6 +161,8 @@ class Renderer:
             if flip:
                 pixels.reverse()
             row = tuple(attribute | pixel if pixel else 0 for pixel in pixels)
+            if len(self._tiles) >= TILE_CACHE_LIMIT:
+                self._tiles.clear()
             self._tiles[key] = row
         return row
 
