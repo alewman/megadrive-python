@@ -86,9 +86,10 @@ class Board:
         bus access *before* calling the host (``_cycles`` in its ``_core.py``), so
         inside a bus callback ``_cycles - 4`` is the clock the access began at,
         counted from the start of the step. That attribute is private: reading it
-        here is the labelled workaround for the accessor proposed to m68000-python
-        (docs/worklog.md, "Proposed core change"). It is the only place the board
-        reads it.
+        here is the labelled workaround for the accessor proposed to m68000-python as
+        its PR #1, ``M68000CPU.step_clocks`` (docs/worklog.md, "Proposed core
+        change"). This is the only place the board reads it; when the PR lands,
+        ``cpu._cycles`` below becomes ``cpu.step_clocks``.
         """
         cpu = self.m68k
         if cpu is None:

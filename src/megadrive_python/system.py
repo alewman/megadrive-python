@@ -86,9 +86,15 @@ class System:
     def _z80_reset_line(self, held: bool) -> None:
         if held:
             # The reset state is applied at once; the Z80 is not stepped while held.
-            self.z80.request_reset()
-            self.z80.step()
-            self.z80.clear_reset()
+            z80 = self.z80
+            z80.request_reset()
+            z80.step()
+            z80.clear_reset()
+            # RESET "clears the Program Counter and registers I and R" (Zilog UM0080,
+            # "Reset"); z80-python 0.4.0 clears PC but leaves I and R, so the board does
+            # it (a workaround: the change is proposed to z80-python, docs/worklog.md).
+            z80.i = 0
+            z80.r = 0
 
     # -- running --------------------------------------------------------------------
 

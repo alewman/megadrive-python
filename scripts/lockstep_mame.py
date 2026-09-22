@@ -276,34 +276,36 @@ class Lockstep:
         if (inflight is not None and not inflight.closed and address & 0xFFFF00 == 0xA11200
                 and not value & 0x101 and not self.board.z80_reset):  # fmt: skip
             inflight.events.append(None)
+            if inflight.order == "after" and self.zrec is inflight.record and not self.zrec_ran:
+                # A reset under way cannot be followed by the old instruction: it is cut
+                # (MAME's count need not restart for that, as Phantasy Star IV shows).
+                inflight.order = "cut"
+                self.zrec_ran = True
+                self.z80_cut += 1
+                self.z80_previous = None
 
     def m68k_write_word(self, address: int, value: int) -> None:
-        tag = watch_68k(address)
-        if tag == "A":
-            self.note_68k_ram_write(address & ~1, value >> 8)
-        elif tag == "B":
-            self.note_68k_reset_write(address, value)
-        if tag is not None:
-            if tag in "AB":
-                self.z80_until_marker("W", address, 16)
-            theirs = self.pop_68k("W", tag, address, 16).value
-            if theirs != value:
-                self.fail(f"{tag}W {address:06X}.16: board {value:X}, MAME {theirs:X}")
+        self.check_68k_write(address, value, 16)
         self.board.write_word(address, value)
 
     def m68k_write_byte(self, address: int, value: int) -> None:
-        tag = watch_68k(address)
-        if tag == "A":
-            self.note_68k_ram_write(address, value)
-        elif tag == "B":
-            self.note_68k_reset_write(address, value)
-        if tag is not None:
-            if tag in "AB":
-                self.z80_until_marker("W", address, 8)
-            theirs = self.pop_68k("W", tag, address, 8).value
-            if theirs != value:
-                self.fail(f"{tag}W {address:06X}.8: board {value:X}, MAME {theirs:X}")
+        self.check_68k_write(address, value, 8)
         self.board.write_byte(address, value)
+
+    def check_68k_write(self, address: int, value: int, size: int) -> None:
+        tag = watch_68k(address)
+        if tag is None:
+            return
+        if tag in "AB":
+            self.z80_until_marker("W", address, size)
+            if tag == "A":
+                self.note_68k_ram_write(address & ~1 if size == 16 else address,
+                                        value >> 8 if size == 16 else value)  # fmt: skip
+            else:
+                self.note_68k_reset_write(address, value)
+        theirs = self.pop_68k("W", tag, address, size).value
+        if theirs != value:
+            self.fail(f"{tag}W {address:06X}.{size}: board {value:X}, MAME {theirs:X}")
 
     # -- the Z80's bus, checked against MAME ------------------------------------
 
@@ -501,9 +503,7 @@ class Lockstep:
                 z80.step()
             for event in inflight.events:
                 if event is None:
-                    z80.request_reset()
-                    z80.step()
-                    z80.clear_reset()
+                    self.system._z80_reset_line(True)  # the board's reset, I and R cleared
                 else:
                     board.z80_ram[event[0]] = event[1]
             if order == "after":
