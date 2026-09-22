@@ -35,6 +35,22 @@ if TYPE_CHECKING:
     from m68000_python import M68000CPU
 
 
+#: The cartridge-side refresh: every 128 68000 clocks of real time, the next 68000 bus
+#: cycle absorbs it, and if that cycle is a cartridge access it takes 2 clocks longer.
+#: Kabuto ("The bus system": "every time 128 cycles have passed the next bus access is
+#: slowed down by 2 cycles ... if this hits when the 68k is writing to the VDP ... the
+#: slowdown doesn't happen"; hardware-measured research), made exact against Nuked-MD
+#: (die-derived) in four probe loops, 670 of 670 ticks each (docs/worklog.md).
+CART_REFRESH_MCLK = 896
+CART_REFRESH_STALL = 14
+#: The work-RAM refresh the VDP performs: once due, the next work-RAM access waits 3
+#: 68000 clocks; it falls due again 791-819 MCLK after that access started (Nuked-MD
+#: probes; Kabuto: "RAM accesses get their own further slowdowns"). The midpoint is
+#: used; which value in the window is right is not settled (docs/worklog.md).
+RAM_REFRESH_STALL = 21
+RAM_REFRESH_AFTER_MCLK = 805
+
+
 class Lockup(Exception):
     """An access that locks up a real console (CMD ``gen-hw.txt`` section 1).
 
@@ -74,6 +90,11 @@ class Board:
         #: the bus at the end of the machine cycle in progress, not of the
         #: instruction (``System.catch_up_z80``).
         self.catch_up_z80: Callable[..., None] = lambda mclk, stopping=False: None
+        #: The two refreshes that slow the 68000 (``_refresh``); their power-on phases
+        #: are unknown, so a caller may set them (the capture harness fits them).
+        self.cart_refresh_due = CART_REFRESH_MCLK
+        self.ram_refresh_due = RAM_REFRESH_AFTER_MCLK
+        self.refresh_enabled = True
         #: Called when the Z80's reset line is released or asserted (True = held).
         self.on_z80_reset: Callable[[bool], None] = lambda held: None
 
@@ -107,6 +128,20 @@ class Board:
         and the 68000 has the bus" (CMD 2.2): requested and out of reset."""
         return self.z80_bus_requested and not self.z80_reset
 
+    def _refresh(self, address: int) -> None:
+        """The refresh stalls of the 68000 bus cycle about to start at ``address``."""
+        t = self.m68k_access_clock()
+        if t >= self.cart_refresh_due:
+            self.cart_refresh_due += (
+                (t - self.cart_refresh_due) // CART_REFRESH_MCLK + 1
+            ) * CART_REFRESH_MCLK
+            if address < 0x800000:
+                self.stall += CART_REFRESH_STALL
+                t += CART_REFRESH_STALL
+        if address >= 0xE00000 and t >= self.ram_refresh_due:
+            self.stall += RAM_REFRESH_STALL
+            self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
+
     # -- open bus ------------------------------------------------------------
 
     def open_bus(self) -> int:
@@ -128,6 +163,8 @@ class Board:
     # -- the 68000's bus -------------------------------------------------------
 
     def read_word(self, address: int) -> int:
+        if self.refresh_enabled:
+            self._refresh(address)
         top = address >> 16
         if top < 0x40:
             return self.cartridge.read_word(address)
@@ -135,7 +172,10 @@ class Board:
             offset = address & 0xFFFF
             return (self.ram[offset] << 8) | self.ram[offset + 1]
         if top >= 0xC0:
-            return self._vdp_access(address).read_word(address & 0x1F, self.m68k_access_clock())
+            vdp = self._vdp_access(address)
+            value = vdp.read_word(address & 0x1F, self.m68k_access_clock())
+            self.stall += vdp.hold
+            return value
         if top == 0xA0:
             value = self._z80_area_read(address)
             return value | (value << 8) if value is not None else self.open_bus_msb()
@@ -146,13 +186,18 @@ class Board:
         return self.open_bus_msb()
 
     def read_byte(self, address: int) -> int:
+        if self.refresh_enabled:
+            self._refresh(address)
         top = address >> 16
         if top < 0x40:
             return self.cartridge.read_byte(address)
         if top >= 0xE0:
             return self.ram[address & 0xFFFF]
         if top >= 0xC0:
-            return self._vdp_access(address).read_byte(address & 0x1F, self.m68k_access_clock())
+            vdp = self._vdp_access(address)
+            value = vdp.read_byte(address & 0x1F, self.m68k_access_clock())
+            self.stall += vdp.hold
+            return value
         if top == 0xA0:
             value = self._z80_area_read(address)
             if value is not None:
@@ -166,6 +211,8 @@ class Board:
         return 0 if address & 1 else self.open_bus() >> 8
 
     def write_word(self, address: int, value: int) -> None:
+        if self.refresh_enabled:
+            self._refresh(address)
         top = address >> 16
         if top >= 0xE0:
             offset = address & 0xFFFF
@@ -187,6 +234,8 @@ class Board:
             raise Lockup(f"68000 write to ${address:06X} (32X area) without a 32X")
 
     def write_byte(self, address: int, value: int) -> None:
+        if self.refresh_enabled:
+            self._refresh(address)
         top = address >> 16
         if top >= 0xE0:
             self.ram[address & 0xFFFF] = value
@@ -206,6 +255,25 @@ class Board:
             self._system_write(address, value, value, word=False)
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"68000 write to ${address:06X} (32X area) without a 32X")
+
+    def dma_read_word(self, address: int) -> int:
+        """A word the VDP's 68000-to-VDP DMA reads from the 68000's bus (the 68000 is
+        held meanwhile): cartridge, work RAM, or anything else as the 68000 would read
+        it. A source in the VDP's own range reads $FFFF here: no measurement says what
+        it gives (not claimed)."""
+        top = address >> 16
+        if top < 0x40:
+            return self.cartridge.read_word(address)
+        if top >= 0xE0:
+            offset = address & 0xFFFF
+            return (self.ram[offset] << 8) | self.ram[offset + 1]
+        if top >= 0xC0:
+            return 0xFFFF
+        refresh, self.refresh_enabled = self.refresh_enabled, False
+        try:
+            return self.read_word(address)
+        finally:
+            self.refresh_enabled = refresh
 
     def tas_write(self, address: int, value: int) -> None:
         """TAS's write half: the Mega Drive's bus never completes it

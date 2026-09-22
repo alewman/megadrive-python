@@ -81,6 +81,11 @@ class Machine:
     CD), which clears bit 5. ``audio_path`` names the analogue mixer ("model1": a
     first-order filter; "model2": second-order and more distortion; Kabuto,
     measured on several boards; research), read from milestone 4.
+
+    ``hv_unit`` names the measured console whose HV counter reads a machine copies at
+    the one sampling phase where a read catches the counters changing
+    (``vdp.HV_UNITS``): Nemesis's PAL Model 1 or his NTSC-J Model 1. The two differ
+    there, by analogue timing; which other consoles behave like either is not known.
     """
 
     name: str
@@ -92,6 +97,11 @@ class Machine:
     hardware_version: int
     audio_path: str
     expansion: bool = False
+    hv_unit: str = ""
+
+    @property
+    def hv_reads(self) -> str:
+        return self.hv_unit or ("pal-model1" if self.pal else "ntscj-model1")
 
     @property
     def mclk(self) -> int:

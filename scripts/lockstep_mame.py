@@ -104,6 +104,7 @@ class Lockstep:
     def __init__(self, machine_name: str, image: bytes, trace: Path, patch: bool) -> None:
         self.system = System(MACHINES[machine_name], Cartridge.from_image(image))
         self.board = board = self.system.board
+        board.refresh_enabled = False  # MAME models neither refresh (docs/worklog.md)
         self.m68k = cpu = self.system.m68k
         self.z80 = z80 = self.system.z80
         self.patch = patch
