@@ -588,3 +588,18 @@ Accept the current choice?
 QUESTION: 128 KB mode's writes are implemented from Kabuto's formulas with nothing to
 judge them until Overdrive 2 in milestone 5, and its effect on the picture is not
 modelled at all. Accept, or leave 128 KB mode out until there is a judge?
+
+## Decisions (the user, 2026-09-22), answering milestone 3's questions
+
+1. **The Z80 BUSACK delay waits for milestone 5** (the arbiter), where the bus
+   timing is settled as a whole. Modelling it now would cost the instruction-exact
+   milestone-1 replay, which is the regression net for everything else. The test
+   ROM's own delay counts (0000/0000) stay recorded as a known difference from
+   MoD's hardware report.
+2. **The per-slot renderer is planned for milestone 5**, with the CRAM dots: the
+   same machinery serves r57shell's redraw-timing tests, and its cost in frames
+   per second is measured once, there.
+3. **The IM2 window vertical range stays Genesis Plus GX's**, labelled as a
+   detector-tier choice with MAME's alternative recorded beside it, until a
+   hardware source settles it.
+4. **128 KB mode stays**, judged by Overdrive 2 in milestone 5.
