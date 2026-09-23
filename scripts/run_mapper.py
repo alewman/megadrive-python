@@ -87,6 +87,7 @@ def run(name: str, machine: str, frames: int, png: Path | None) -> int:
     system = System(MACHINES[machine], cartridge)
     system.board.fm.enabled = False
     started = time.perf_counter()
+
     def shot(frame: int) -> None:
         rows = system.vdp.renderer.frame_rgb()
         if png is not None and rows and rows[0]:
