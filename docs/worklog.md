@@ -2480,3 +2480,21 @@ suite.
 
 **End of the timing session.** Milestone 7 next, then milestone 8's sweep on this
 timing.
+
+## Decisions (the user, 2026-09-23), answering the timing session's questions
+
+1. **The grant with the Z80 held in reset stays a named difference** (referee 235
+   MCLK against the board's 57, one observation on one ROM). The post-sweep
+   debugging session can probe it; it is measured now, which was the point.
+2. **Kabuto's 5.6-cycle DMA start-up stays**, as the session chose: the
+   hardware-measured source judges, the die-derived referee corroborates.
+3. **The work-RAM refresh keeps 805 MCLK with the difference named.** Five rules
+   were scored and none fits more than two programs; milestone 8's sweep says
+   whether it costs anything visible before anyone spends a session on the
+   FC1004's refresh counter. Unneeded machinery is latency.
+4. **The z80-python accessor is proposed as a PR there** by the reviewing session
+   (the same shape as m68000-python's `step_clocks`), so the `pop` pair's second
+   read can land at its own T-state. The board adopts it in the polish pass, not
+   before: `docs/polish.md` carries the row.
+5. **Milestone 8's triage watches for the 7- and 35-MCLK work-RAM stretches**,
+   which the board does not model, as a possible cause of a frame difference.
