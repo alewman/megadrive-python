@@ -1982,9 +1982,17 @@ to `genesis`: nothing in this probe distinguishes the two FM variants.
 
 ### Milestones 1 to 5, unchanged
 
-Nothing in `src/` was modified this session, so no acceptance run could move. To show
-it rather than assert it: `.venv-pypy/bin/python -m pytest -q` at the commit that adds
-this entry.
+**Nothing in `src/` was modified this session.** Every difference the referee found is
+a decision that re-opens an earlier milestone's acceptance run -- the lockstep needs
+re-recording from MAME, the arbiter's numbers move, Overdrive 2's realised sample rate
+moves -- so each is a `QUESTION:` below and a row in docs/polish.md's new "waiting on a
+decision the user has to make" table, not a change made at the end of a session that
+could not re-run what it moved.
+
+`.venv-pypy/bin/python -m pytest -q` at commit `10255f9`: **46 passed, 1 deselected**
+in 139 s, against milestone 5's 42 passed, 1 deselected -- the four new ones are
+milestone 6's (three probe loops reproduced cycle for cycle, and the cartridge refresh
+grid). `ruff check` and `ruff format --check` clean over the whole tree.
 
 ### Open questions for the user
 
@@ -2024,3 +2032,13 @@ the request arrived), or accept a 0.6-wait-state bias?
 QUESTION: **`SpriteMaskingTestRom.bin` makes eleven bus cycles on the referee and then
 stops.** Worth a look (it may be a referee limitation, in which case it is a named
 cause, or a real difference in what the ROM does on an FC1004), or leave it?
+
+### Commits
+
+| | |
+| --- | --- |
+| `b95f0d5` | Nuked-MD headless, with a bus-level trace (`validation/nuked_md_headless.c`, `validation/nuked_md_sdl.h`, `validation/build_nuked_md.sh`) |
+| `10255f9` | Six comparisons against the referee (`scripts/nuked_md.py`, `scripts/run_nuked_md.py`, `tests/test_milestone6.py`) |
+| `0ae7a6a` | Milestone 6's record: the worklog, the certification record, and the open items in `undocumented-behavior.md`, `timing.md`, `polish.md` and `README.md` |
+
+**End of milestone 6.** Stopping here, as the working agreement says.
