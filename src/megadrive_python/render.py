@@ -135,6 +135,12 @@ class Renderer:
         self.cram_dirty = True
         #: CRAM dots: ``(pixel, RGB)`` per row, from a CRAM write during the display.
         self._dots: list[list[tuple[int, int]]] = [[] for _ in range(480)]
+        #: Rows drawn with register $00 bit 0 set, which "actually turns off all
+        #: display generation, as opposed to the screen blanking feature which simply
+        #: shows the backdrop color" (CMD ``genvdp.txt`` 17). Such a row leaves the
+        #: picture black whatever CRAM holds; it is kept per row rather than per pixel
+        #: because there is no CRAM entry that means "nothing".
+        self._blanked = bytearray(480)
         #: The line being drawn (``begin_line``): where it starts in master clocks, how
         #: much of it has been drawn, and everything its remaining pixels need.
         self.pending = False
@@ -487,6 +493,7 @@ class Renderer:
             self.rows = row + 1
         backdrop = vdp.registers[7] & 0x3F
         self.widths[row] = width
+        self._blanked[row] = vdp.registers[0] & 0x01
         if width < 320:
             for x in range(width, 320):
                 out[x] = backdrop
@@ -689,6 +696,12 @@ class Renderer:
         default = [(0, self._palette or self._make_palette())]
         out = []
         for index, row in enumerate(rows):
+            if self._blanked[index]:
+                # Register $00 bit 0: no display generation at all, so no colour of
+                # CRAM's reaches the screen (CMD ``genvdp.txt`` 17; r57shell's "VDP
+                # Blink Test (Reg 0 bit 0)" is what makes it visible).
+                out.append([0] * width)
+                continue
             palettes = self._palettes[index] or default
             line = [0] * width
             for span, (start, palette) in enumerate(palettes):
