@@ -205,9 +205,13 @@ SMS VDPs; the Mega Drive's variant is a late, optional milestone.
   (0 on consoles without TMSS; the Manual's security code tests it).
 - **Ports** A, B and EXT each have a data, a control (direction) and serial
   registers (CMD 3.0). A 3-button pad multiplexes its buttons on the TH line;
-  the 6-button pad adds a counter that advances on TH edges and times out after
-  about 1.5 ms (Terakawa's measurements, `reference/web/terakawa-6button.html`;
-  the timeout depends on a capacitor and varies per pad).
+  the 6-button pad adds a counter that advances on TH's rising edges and times
+  out. CMD 3.2 and Terakawa's page (`reference/web/terakawa-6button.html`) give
+  the same six rows of pin values; the timeout they give is not the same
+  quantity -- CMD "about 8192 (probably less than that) 68000 CPU cycles" since
+  TH last changed, Terakawa 1.1, 1.6 and 1.8 ms from the *first* rising edge --
+  and it depends on a capacitor, so it "differ[s] one by one controller" (his
+  words). Do not fit one number to it.
 - **Cartridges**: plain ROM up to 4 MB; battery SRAM at $200000 (switched in
   and out by $A130F1); I²C EEPROMs in a few games (Eke's `gen_eeprom.pdf` in
   `md_tech.zip`); the Super Street Fighter II bank mapper at $A130F3–$A130FF
@@ -215,12 +219,17 @@ SMS VDPs; the Mega Drive's variant is a late, optional milestone.
   MAME's software list (`/usr/share/games/mame/hash/megadriv.xml`) names the
   board for each known dump, as in sms-python.
 - **TMSS** (Trademark Security System): consoles with a nonzero version number
-  have a 2 KB boot ROM in the I/O ASIC that shows "PRODUCED BY OR UNDER LICENSE
-  FROM SEGA ENTERPRISES LTD." and requires the cartridge to write "SEGA" to
-  $A14000 before using the VDP (Manual PDF page 94 gives the "U.S. security
-  software" games must include). The ROM is locally available as a No-Intro
-  dump (`/data/emu/roms/megadrive/[BIOS] Sega Mega Drive - Genesis - Boot ROM
-  (World).zip`, 2,048 bytes). A 2026 write-up claims Japanese consoles check
+  have a boot ROM that shows "PRODUCED BY OR UNDER LICENSE FROM SEGA
+  ENTERPRISES LTD." and requires the cartridge to write "SEGA" to $A14000
+  before using the VDP (Manual PDF page 94 gives the "U.S. security software"
+  games must include). It powers up in the cartridge's place, and **bit 0 of
+  $A14101 chooses between the two** -- 1 the cartridge, 0 the boot ROM (CMD
+  `gen-hw.txt` 4.4; the boot program does it with BSET and BCLR while running
+  from work RAM). The chip holds 2,048 bytes and the hardware pads them to 16 KB
+  with zeros; the ROM is locally available as a No-Intro dump
+  (`/data/emu/roms/megadrive/[BIOS] Sega Mega Drive - Genesis - Boot ROM
+  (World).zip`), with a disassembly that rebuilds it bit for bit in
+  `reference/src/TMSS-Disassembly`. A 2026 write-up claims Japanese consoles check
   only the header ([undocumented-behavior.md](undocumented-behavior.md)).
 
 ## The models
