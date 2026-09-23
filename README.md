@@ -119,6 +119,10 @@ See [docs/README.md](docs/README.md).
 | `scripts/run_tmss.py` | Milestone 7: the boot ROM, the hand-off, the header check and the VDP lock | yes |
 | `scripts/run_region.py` | Milestone 7: the version register against the Manual, and three games that check it | yes |
 | `scripts/run_r57shell_tests.py` | Milestone 7: r57shell's eight VDP-test screens | yes |
+| `scripts/run_soft_checker.py` | Milestone 8: Sega's own MD Soft Checker, read off the screen | yes |
+| `scripts/mame_media.py` | Milestone 8: which board MAME puts an image on, and how to hand it one | yes |
+| `scripts/compat_sweep.py` | Milestone 8: every cartridge of the romset against MAME's frame (a detector) | yes |
+| `scripts/triage_diffs.py` | Milestone 8: every difference sorted, by the lockstep and by the board's own timing | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
