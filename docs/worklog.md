@@ -2987,3 +2987,31 @@ Genie and the Sega Pico family; the sweep will say how many images they are.
 **End of milestone 7.** Stopping here, as the working agreement says; milestone 8's
 sweep is next.
 
+
+## Decisions (the user, 2026-09-23), answering milestone 7's questions
+
+1. **The 6-button pad keeps CMD's timeout** (8192 68000 cycles since TH last
+   changed) as the field's default. Terakawa's three figures measure different
+   quantities and he says they vary per pad, so no single number is claimed as
+   hardware; the field stays a field.
+2. **The pad stops after the fourth rising edge** (CMD's rule), not MAME's
+   modulo-4 wrap: a research document plus `joy_speed`'s byte sequence beat a
+   detector.
+3. **The NBA Jam correction is accepted.** One game is thin, but a game behaving
+   correctly beats a document that cannot be right (Eke's `gen_eeprom.pdf` puts
+   /SDA-out and /SCL on one bit). Do not script the other Acclaim boards for now.
+4. **The three unrun EEPROM boards stay, named**: dropping them would stop those
+   games booting at all, and their disagreements are already recorded.
+5. **Redraw Test 4 is out of reach** and stays that way: a frame buffer cannot
+   show a CRT losing sync. No "sync went away" flag; unneeded machinery.
+6. **Register $00 bit 0 draws black**, labelled: nothing pinned says the colour.
+7. **Wire the J-Cart's two extra ports to `System(pads=...)` now**, while the
+   cartridge code is fresh, rather than leaving them to the frontend.
+8. **MD Soft Checker v0.30 is available after all** (the user asked the right
+   question): the local mirror has it as
+   `/data/emu/source/myrient.erista.me/files/No-Intro/Sega - Mega Drive - Genesis/MD Soft Checker (USA) (Proto) (Unl).zip`
+   (zip SHA-256 `688debcf0635e48ef501c84fd8348cdd40d18b2a5efa1e4391be1fd5cbf2996a`,
+   inner `.md` 262,144 bytes). No-Intro dropped the `(v0.30)` from the name, which
+   is why the romset's symlink dangles. It runs on the board: at 600 frames it
+   shows its pad screen with both ports reading a 3-button pad. It is Sega's own
+   factory diagnostic, so it is a hardware-corrected oracle: use it.
