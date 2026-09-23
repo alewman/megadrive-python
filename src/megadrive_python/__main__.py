@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 from .cartridge import Cartridge
-from .io import BUTTONS
+from .io import BUTTONS, PAD_TYPES
 from .machine import MACHINES
 from .png import write_png
 from .system import System
@@ -49,12 +49,33 @@ def main(argv: list[str] | None = None) -> int:
         "--press", default="", help="buttons held from --press-at on (e.g. start,a)"
     )
     parser.add_argument("--press-at", type=int, default=0, help="frame to press them at")
+    parser.add_argument(
+        "--pad", default="3button", choices=sorted(PAD_TYPES),
+        help="the device on control port 1 (default 3button)",
+    )  # fmt: skip
+    parser.add_argument("--pad2", default="3button", choices=sorted(PAD_TYPES), help="port 2")
+    parser.add_argument(
+        "--save", type=Path,
+        help="the battery file: read at power-on if it exists, written at the end",
+    )  # fmt: skip
+    parser.add_argument(
+        "--tmss-rom", type=Path,
+        help="the TMSS boot ROM, which then runs before the cartridge",
+    )  # fmt: skip
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
     # from_image, not Cartridge(...): the board (a mapper, battery RAM) comes from
     # MAME's software list, which is what makes a banked cartridge work.
-    system = System(MACHINES[args.machine], Cartridge.from_image(load_image(args.cartridge)))
+    cartridge = Cartridge.from_image(load_image(args.cartridge))
+    if args.save and args.save.exists():
+        cartridge.load_bytes(args.save.read_bytes())
+    system = System(
+        MACHINES[args.machine],
+        cartridge,
+        pads=(PAD_TYPES[args.pad](), PAD_TYPES[args.pad2]()),
+        tmss_rom=load_image(args.tmss_rom) if args.tmss_rom else None,
+    )
     system.audio.sample_rate = args.rate
     if args.no_sound:
         system.board.fm.enabled = False
@@ -67,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     audio: list[tuple[int, int]] = []
     for frame in range(args.frames):
-        if pressed and frame == args.press_at:
+        if pressed and pad is not None and frame == args.press_at:
             pad.pressed = pressed
         system.run_frame()
         if args.wav:
@@ -77,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
             system.board.fm.take_samples()
             system.board.psg.take_samples()
     seconds = time.perf_counter() - started
+    if args.save and cartridge.battery:
+        args.save.write_bytes(cartridge.save_bytes())
     if args.wav:
         write_wav(args.wav, audio, args.rate)
     if args.png:

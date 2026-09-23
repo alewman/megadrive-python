@@ -50,9 +50,13 @@ MAX_Z80_T = 23
 class System:
     """Machine + cartridge, ready to run."""
 
-    def __init__(self, machine: Machine, cartridge: Cartridge | None) -> None:
+    def __init__(self, machine: Machine, cartridge: Cartridge | None, *,
+                 pads: tuple[object, object] | None = None,
+                 tmss_rom: bytes | None = None) -> None:  # fmt: skip
         self.machine = machine
-        board = self.board = Board(machine, cartridge)
+        board = self.board = Board(machine, cartridge, pads=pads)
+        if tmss_rom is not None:
+            board.install_tmss_rom(tmss_rom)
         self.m68k = M68000CPU(
             board.read_byte, board.read_word, board.write_byte, board.write_word,
             tas_write=board.tas_write, acknowledge=self._acknowledge,
