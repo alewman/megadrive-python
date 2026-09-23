@@ -1597,3 +1597,23 @@ also gets wrong differently. Run them down in a session of their own, or leave t
 until milestone 8's sweep gives more cases of the same kind?
 
 **End of milestone 5.** Stopping here, as the working agreement says.
+
+## Decisions (the user, 2026-09-23), answering milestone 5's questions
+
+1. **The one-slot-per-refresh change is accepted**: Kabuto's measured access
+   pattern and Sega's own DMA table agree on one, against Exodus's two, and the
+   change is what puts the DMA on Kabuto's slopes and reproduces the Manual's
+   bytes-a-line table. Two sources over an emulator, as the tier rule says.
+2. **Kabuto's DMA start-up cost (+5.6) is left open** and revisited in milestone
+   8, where a real game difference in the sweep would point at it.
+3. **The bus grant stays.** It is Zilog UM0080's rule (specification tier),
+   labelled as having no hardware judge, and it costs the lockstep nothing.
+4. **Charging the 68000's share of a bank access to its next instruction is
+   accepted**, documented as a consequence of stepping instruction by instruction
+   rather than bus cycle by bus cycle.
+5. **Kabuto's "X = -3" output pipeline is left unmodelled.** Fitting 21 pixels
+   from Overdrive 2's sphere would be fitting to a demo whose correct output
+   depends on the VDP revision.
+6. **Overdrive 2's four wrong frames get their own session after milestone 8's
+   sweep**, so that it is known first whether the same cause shows in ordinary
+   games. Nuked-MD (milestone 6) is the referee for it.
