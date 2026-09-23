@@ -291,7 +291,8 @@ start-up he measured has no mechanism here and is left open.
   reported bus-cycle lengths and it is **exact**: fitted to the referee's observed
   stretches it reproduces all of them at one phase window (518-523 MCLK from
   power-on) for two unrelated programs, and over ten test ROMs it misplaces none of
-  the referee's ticks. Two variants of it fail. Separately, the next work-RAM access
+  the referee's ticks. The obvious variant of it -- only a cartridge access absorbs
+  the tick -- reproduces neither program at any phase. Separately, the next work-RAM access
   once one is due waits 21 MCLK, and the next falls due 805 MCLK after that access
   started. The 21 is confirmed; **the re-arm rule is not** -- the period that
   reproduces the referee is 806-819 MCLK in a dense work-RAM loop, 694-699 in

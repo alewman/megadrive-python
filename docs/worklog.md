@@ -1727,8 +1727,8 @@ observed stretches:
 | CMD's `wtest.bin` | 250 | 518-523 |
 
 The same phase window for two unrelated programs, because both start from the same
-power-on. Two variants were also tried and both fail: "only a cartridge access absorbs
-the tick" reproduces neither ROM at any phase. Over the ten test ROMs below the board's
+power-on. The obvious variant -- "only a cartridge access absorbs the tick", so that a
+work-RAM access leaves it standing -- reproduces neither ROM at any phase. Over the ten test ROMs below the board's
 rule misplaces **0 of the referee's cartridge ticks** in every one.
 
 ### The work-RAM refresh: the period is narrowed, the *rule* does not generalise
@@ -1737,8 +1737,8 @@ The board's rule is "once due, the next work-RAM access waits 21 MCLK, and the n
 falls due 805 MCLK after that access started" (milestone 2, from Nuked-MD; the user
 accepted it as the basis until a hardware measurement exists).
 
-- **The stretch is confirmed**: 21 MCLK, on every one of the 179 work-RAM stretches
-  seen in three probe loops and on all 100 and 344 in the two test ROMs above.
+- **The stretch is confirmed**: 21 MCLK, on every work-RAM stretch seen in four probe
+  loops (59, 59, 56 and 20 of them) and on all 100 and 344 in the two test ROMs above.
 - **In a dense work-RAM loop the rule is exact**, and the period is narrowed from
   milestone 2's 743-826 to **806-819** (`move.w (a0),d0` x16 with a0 = $FF0000, and the
   same with writes: 799 work-RAM accesses, 59 stretched, every period in 806..819

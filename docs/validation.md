@@ -403,7 +403,9 @@ power-on phase is the only thing about either refresh that is not the board's.
 
 In all ten the board's **cartridge refresh** rule misplaces **0** of the
 referee's ticks; fitted against the referee's own observed stretches it is exact
-for two unrelated programs at the same phase window (518-523 MCLK). Every
+for two unrelated programs at the same phase window (518-523 MCLK), and the
+obvious variant of it -- only a cartridge access absorbs the tick -- reproduces
+neither at any phase. Every
 difference is one of four named causes: the **work-RAM refresh** rule (below) and
 the cartridge stretches that move with it, the **Z80 bus grant** (below), the
 referee's **VDP power-on phase**, and its **hardware version register**.
