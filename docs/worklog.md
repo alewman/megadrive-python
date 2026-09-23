@@ -2528,13 +2528,13 @@ z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K, shared through
 | --- | ---: | --- |
 | `src/megadrive_python/eeprom.py` | 241 | the serial (I2C) EEPROM, modes 1, 2 and 3, from Eke-Eke's `gen_eeprom.pdf` |
 | `src/megadrive_python/io.py` | +212 | `Pad6`, and TH edges timed: every access that can move TH now tells the port when |
-| `src/megadrive_python/cartridge.py` | +366 | the EEPROM boards, the J-Cart ports, the battery's save and load, `BootROM`, the SSF2 mapper's documentation |
+| `src/megadrive_python/cartridge.py` | +392 | the EEPROM boards, the J-Cart ports, the battery's save and load, `BootROM`, the SSF2 mapper's documentation |
 | `src/megadrive_python/board.py` | +72 | the TMSS boot ROM and $A14101, and the I/O chip's clock |
 | `src/megadrive_python/render.py` | +13 | register $00 bit 0: no display generation |
 | `src/megadrive_python/{system,__main__}.py` | +37 | `pads=`, `tmss_rom=`, `--pad`, `--pad2`, `--save`, `--tmss-rom` |
-| `scripts/run_pads.py` | 264 | the pads against CMD's table, r57shell's `joy_speed`, and which games handshake |
+| `scripts/run_pads.py` | 299 | the pads against CMD's table, r57shell's `joy_speed`, and which games handshake |
 | `scripts/run_battery.py` | 168 | battery SRAM and EEPROM against the games and against MAME's own nvram |
-| `scripts/run_mapper.py` | 129 | the SSF2 mapper against `ssf2tnc.txt` and the game |
+| `scripts/run_mapper.py` | 130 | the SSF2 mapper against `ssf2tnc.txt` and the game |
 | `scripts/run_tmss.py` | 197 | the boot ROM, the hand-off, the header check and the VDP lock |
 | `scripts/run_region.py` | 211 | the version register against the Manual, and three games that check it |
 | `scripts/run_r57shell_tests.py` | 154 | the eight VDP-test screens, now that they can be walked |
