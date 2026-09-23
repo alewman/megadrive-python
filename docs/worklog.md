@@ -2350,3 +2350,114 @@ cycle-exact**; `run_nuked_md.py probes` is 2,921 of 3,546 and `roms` is unchange
 every one of its ten figures. The one referee comparison that improved is the FM
 probe: **568 of 636 bus cycles** against milestone 6's 434, the 68 $A0xxxx stall
 differences gone.
+
+### Frames per second: the changes make the board slightly faster
+
+Timing changes can cost speed, so this was measured -- and it does the opposite, for
+a reason worth stating: a frame is a fixed number of master clocks, so charging the
+68000 more stall clocks means it executes *fewer* instructions per emulated frame.
+
+The machine was shared all session and identical runs of the same build vary by up to
+10 %, so this is a **paired** measurement: the session's starting commit `86fa7e1` in
+a git worktree and the current tree, 900 frames each, `--no-sound`, alternating, two
+runs each, the better of the two, by **user CPU time**.
+
+| Game | before (s) | after (s) | before fps | after fps | change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 19.00 | 18.26 | 47.4 | 49.3 | +4.1 % |
+| Streets of Rage 2 (USA) | 20.32 | 19.58 | 44.3 | 46.0 | +3.8 % |
+| Gunstar Heroes (USA) | 24.33 | 21.58 | 37.0 | 41.7 | +12.7 % |
+| Castlevania - Bloodlines (USA) | 18.54 | 17.58 | 48.5 | 51.2 | +5.5 % |
+| Sonic The Hedgehog 3 (USA) | 22.16 | 21.39 | 40.6 | 42.1 | +3.6 % |
+| Phantasy Star IV (USA) | 20.96 | 20.84 | 42.9 | 43.2 | +0.6 % |
+
+(The absolute figures are well below milestone 5's 50-64 because of the load; only
+the paired difference means anything here.)
+
+### Overdrive 2's realised DAC rate, which these changes do move
+
+Milestone 5's clearest single piece of evidence was that the arbiter's delays bring
+Kabuto's own sound driver from 27.0 kHz to 26.3 kHz -- "26 kHz sample playback", the
+number he designed for. 600 PAL frames, counting the driver's writes to the YM2612's
+register $2A:
+
+| | milestone 5 | now |
+| --- | ---: | ---: |
+| arbiter on | 26,313 Hz | **25,855 Hz** |
+| arbiter off | 27,028 Hz | 26,318 Hz |
+| Kabuto | "26 kHz" | "26 kHz" |
+
+Both figures moved and the two halves say which change did what. With the arbiter off
+the only changes in play are the $A0 clock and the DMA start-up, and they cost 2.6 %
+(27,028 → 26,318). The arbiter itself now costs 1.8 % rather than 2.6 %, which is the
+corrected wait states (2.86 rather than 3.55 per bank access). The result is 0.6 %
+*below* 26 kHz where it was 1.2 % above; both round to his figure, and the demo is
+still being driven at the rate its author says it should be.
+
+### The picture, unmoved
+
+The nine milestone-3 test ROMs against MAME's own frame after 3 emulated seconds
+(`scripts/compare_mame_frames.py`, a detector): 100.00 % for `wtest`, `wtest_i1`,
+`stetest` and r57shell's `vdp_tests`, 99.84 % `wbug`, 96.93 % `vctest`, 96.25 %
+`wtest_i2`, 69.64 % `SHLTEST`, 41.97 % `STETEST2` -- **every figure identical** to
+milestones 3 and 5.
+
+### The suite
+
+`.venv-pypy/bin/python -m pytest -q`: **49 passed, 6 deselected** in 158 s;
+`.venv/bin/python -m pytest -q` (CPython 3.14.4): 49 passed, 6 deselected in 395 s.
+Three tests are new (the Z80-space clock, the /AS-low release rule, the DMA
+start-up) and one was rewritten for the grant's propagation. The six deselected are
+the `slow` marker's MAME-log replays, collected this time because the trace
+directories were present; they were run directly instead, above, and the logs
+(3.5 GB) were deleted afterwards. `ruff check` and `ruff format --check` clean.
+
+### Open questions for the user
+
+QUESTION: **The bus grant with the Z80 held in reset.** The propagation constant (50
+MCLK) is fitted to 122 grants with the Z80 *running*, and the board now matches the
+referee's mean there to 0.01 of a cycle. With the Z80 held in reset the referee takes
+**235 MCLK**, and that is one observation, on one ROM, so nothing was fitted to it --
+which leaves `gen_test_z80_bus` and `stetest` ending their referee comparison at the
+same $A11100 poll as before. Is it worth a purpose-built probe (request the bus
+repeatedly with the Z80 held, over many grants) to see whether 235 is a constant, or
+does the named difference do?
+
+QUESTION: **Which DMA start-up figure.** The board took Kabuto's 5.6 cycles because
+the session's rule makes the hardware source the judge; that leaves a one-word fast
+transfer at 7.4 cycles against his 8.0 and the referee's 11.0, and the fit +1.7 in one
+harness and +9.0 in the other against the referee's +8.0. Keep the hardware number, or
+is the referee's 8.0 the better choice now that both agree the effect is real?
+
+QUESTION: **The work-RAM refresh, next step.** 805 stayed and the question is sharper
+(three stretch sizes, a rate that varies two and a half times between programs, no
+grid that fits). The obvious next move is to stop inferring the refresh from stretches
+and read the FC1004's refresh counter out of the referee's own state, which means
+adding to `validation/nuked_md_headless.c`. Worth a session of its own, or leave it
+named until milestone 8's sweep says whether it costs anything visible?
+
+QUESTION: **The `pop` split is now the board's largest arbiter difference** (2.50
+against the referee's 3.27, entirely because both of a `pop`'s reads land at the Z80
+step's start). The fix is the Z80 equivalent of m68000-python's `step_clocks`, which
+docs/polish.md has been carrying since milestone 6. Is it time to propose that PR to
+z80-python, given that it is now the only thing between the board and the referee on
+this experiment?
+
+QUESTION: **The referee stretches a work-RAM access by 7 or 35 MCLK as well as 21**
+(100 of 401 stretches in Nemesis's capture ROM are 7; 182 of 1,020 in `vdp_tests` are
+35). The board models only the 21. Since the rule that places them is not known, the
+sizes cannot be modelled either -- but should the *observation* be part of what
+milestone 8's triage looks for?
+
+### Commits
+
+| | |
+| --- | --- |
+| `8085361` | Two clocks the referee found: the Z80's space, and the grant |
+| `9ca2ec6` | The DMA's start-up cost, taken from the hardware source |
+| `7558425` | How long the 68000 really holds the bus |
+| `3ae1498` | The grant's propagation applies with the Z80 held too |
+| `647c283` | The timing session's record (worklog, certification record, open items, polish, timing, README) |
+
+**End of the timing session.** Milestone 7 next, then milestone 8's sweep on this
+timing.

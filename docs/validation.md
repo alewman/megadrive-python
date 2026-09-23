@@ -489,7 +489,10 @@ Nemesis's photographs judge that ROM).
 | `run_nuked_md.py sound`, the FM probe | 434 of 636 bus cycles agree | **568 of 636**; the 68 $A0xxxx stall differences are gone, 1 remains |
 | `run_nuked_md.py probes`, eight loops | 2,921 of 3,546 | **unchanged** |
 | `run_nuked_md.py roms`, ten ROMs | as milestone 6's table | **unchanged**, every figure |
-| `pytest -q` | 46 passed, 1 deselected | **48 passed** (three new tests; one rewritten for the grant's propagation) |
+| `pytest -q`, PyPy and CPython 3.14.4 | 46 passed, 1 deselected | **49 passed, 6 deselected** (three new tests, one rewritten for the grant's propagation; the deselected six are the `slow` MAME-log replays, run directly instead) |
+| the nine milestone-3 test ROMs against MAME's frames (detector) | 100.00/100.00/100.00/99.84/96.93/96.25/69.64/41.97 % | **every figure identical** |
+| frames a second on PyPy, 900 frames, `--no-sound`, paired against commit `86fa7e1` | 37.0-48.5 fps | **41.7-51.2 fps**, +0.6 % to +12.7 %: a frame is a fixed number of master clocks, so more stall clocks means fewer instructions to run |
+| Overdrive 2's realised DAC rate (Kabuto's own driver, "26 kHz") | 26,313 Hz with the arbiter on, 27,028 without | **25,855 Hz** with it on, 26,318 without -- 0.6 % below his figure where it was 1.2 % above |
 
 **What did not move that might have been expected to.** The referee's ROM comparison
 is unchanged in every figure, including `gen_test_z80_bus` and `stetest`, which still
