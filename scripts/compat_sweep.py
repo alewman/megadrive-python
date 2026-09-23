@@ -55,6 +55,7 @@ sys.path[:0] = [str(ROOT / "src"), str(Path(__file__).resolve().parent)]
 
 from mame_media import cart_arguments, mame_board  # noqa: E402
 
+from megadrive_python import vdp as vdp_module  # noqa: E402
 from megadrive_python.board import Lockup  # noqa: E402
 from megadrive_python.cartridge import Cartridge, load_image  # noqa: E402
 from megadrive_python.machine import MACHINES, MCLK_PER_LINE  # noqa: E402
@@ -102,6 +103,12 @@ DISABLE = {
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
     "arbiter": lambda board: setattr(board, "arbiter_enabled", False),
 }
+#: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
+#: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the
+#: user's decision 2 after milestone 5 left for this milestone to judge "if a real
+#: game's difference in the sweep points at it"). The constant is a module global the
+#: VDP reads as it starts a transfer, so it is patched and restored around the run.
+#:
 #: ``disable="mame_sram"`` is not a board knob but a cartridge one: it puts the
 #: board on MAME's ``rom_sramsafe``, the 64 KB of battery RAM at $200000 its file
 #: loader gives every cartridge whose header declares none (docs/mame-oracle.md,
@@ -115,6 +122,9 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     row = {"name": path.stem, "board": "", "mame-board": "", "status": "",
            "differ": "", "offset": "", "seconds": ""}  # fmt: skip
     started = time.time()
+    startup = vdp_module.DMA_STARTUP_MCLK
+    if disable == "dma_startup":
+        vdp_module.DMA_STARTUP_MCLK = 0
     try:
         if not path.exists():
             # The romset is symlinks into a local mirror; some point at files the
@@ -225,6 +235,7 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
         row["status"] = f"error: {type(error).__name__}: {error}"[:200]
         traceback.print_exc(file=sys.stderr)
     finally:
+        vdp_module.DMA_STARTUP_MCLK = startup
         row["seconds"] = f"{time.time() - started:.1f}"
     return row
 

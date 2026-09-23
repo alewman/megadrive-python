@@ -30,11 +30,13 @@ causes. That is what the second pass is for.
 
 **2. Sensitivity** (``--sensitivity``). Re-run the sweep's own comparison with the
 board's work-RAM refresh off, with the cartridge refresh off, with the arbiter off,
-and with the cartridge put on MAME's ``rom_sramsafe`` fallback board (64 KB of
-battery RAM at $200000, which its *file* loader gives every cartridge whose header
-declares none: docs/mame-oracle.md, trap 10), and report which of them changes the
-frame. That last one is the whole question for an unlisted image, and it is answered
-by making the board do what MAME does rather than by argument. The work-RAM refresh is
+with Kabuto's DMA start-up cost out of the VDP, and with the cartridge put on MAME's
+``rom_sramsafe`` fallback board (64 KB of battery RAM at $200000, which its *file*
+loader gives every cartridge whose header declares none: docs/mame-oracle.md, trap
+10), and report which of them changes the frame. The last is the whole question for
+an unlisted image, and the one before it is what milestone 5's open item 15 was left
+here for -- both answered by making the board do the other thing rather than by
+argument. The work-RAM refresh is
 the board's weakest timing model -- its rule does not generalise and it models only
 the 21-MCLK stretch where Nuked-MD also shows 7 and 35 (docs/undocumented-behavior.md,
 open item 5; the user's decision 5 after the timing session asks this milestone to
@@ -151,6 +153,7 @@ def sensitivity(name: str, seconds: int, window: int) -> dict:
         "work-RAM refresh": "work_refresh",
         "cartridge refresh": "cart_refresh",
         "arbiter": "arbiter",
+        "the DMA's start-up": "dma_startup",
         "MAME's fallback SRAM": "mame_sram",
     }
     try:
@@ -181,6 +184,8 @@ def main() -> int:
     parser.add_argument("--sweep", type=Path, default=RESULTS / "megadrive.csv")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--sample", type=int, metavar="N",
+                        help="a spread sample of N of them, not the first N")  # fmt: skip
     args = parser.parse_args()
     if not (args.lockstep or args.sensitivity):
         parser.error("one of --lockstep or --sensitivity")
@@ -190,6 +195,10 @@ def main() -> int:
         for row in csv.DictReader(args.sweep.open(encoding="utf-8"))
         if row["status"].split(":")[0] in wanted
     ]
+    if args.sample and args.sample < len(names):
+        # Every kth, so the sample spreads over the romset rather than over its
+        # first letter; the CSV is in name order.
+        names = names[:: max(1, len(names) // args.sample)][: args.sample]
     if args.limit:
         names = names[: args.limit]
     which = "lockstep" if args.lockstep else "sensitivity"
