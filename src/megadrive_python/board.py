@@ -25,7 +25,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from .arbiter import AS_LOW_MCLK, MAX_RELEASE, bank_access_delay
+from .arbiter import (
+    AS_LOW_MCLK,
+    BUSACK_PROPAGATION_MCLK,
+    MAX_RELEASE,
+    bank_access_delay,
+)
 from .cartridge import Cartridge
 from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
@@ -539,14 +544,23 @@ class Board:
         elif offset & 0xFF00 == 0x1100:
             request = bool(high & 1)
             t = self.m68k_access_clock()
-            if request and self.z80_running and self.arbiter_enabled:
+            if not self.arbiter_enabled:
+                self.busack_at = t
+                self.catch_up_z80(t, stopping=request and self.z80_running)
+            elif request and self.z80_running:
                 # BUSACK: the Z80 samples BUSREQ at the end of the machine cycle it is
-                # in and lets go after it (Zilog UM0080; :mod:`megadrive_python.arbiter`).
+                # in and lets go after it (Zilog UM0080; :mod:`megadrive_python.arbiter`),
+                # and the arbiter takes its own propagation to report that.
                 # The system probes the Z80 for that clock and runs it up to it.
                 self.busack_at = self.z80_busack(t)
             else:
-                self.busack_at = t
-                self.catch_up_z80(t, stopping=request and self.z80_running)
+                # The Z80 is held in reset or has already let go, so there is no
+                # machine cycle to wait for -- but the arbiter still takes its
+                # propagation to answer (:data:`~megadrive_python.arbiter`.
+                # ``BUSACK_PROPAGATION_MCLK``), which is what both ROMs that poll
+                # $A11100 see the referee do (docs/worklog.md, the timing session).
+                self.busack_at = t + BUSACK_PROPAGATION_MCLK
+                self.catch_up_z80(t)
             self.z80_bus_requested = request
         elif offset & 0xFF00 == 0x1200:
             held = not high & 1
