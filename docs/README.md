@@ -73,3 +73,22 @@ not out of any single document:
     and FM a mixing ratio.** Kabuto measured the shapes (first order on the Model 1,
     second on the Model 2, "quite high" distortion on the Model 2) but published no
     numbers, so the board's are fitted to the MDFourier recordings and labelled.
+16. **Eke-Eke's EEPROM table has NBA Jam's two data bits crossed** (milestone 7): it
+    puts /SDA out and /SCL on one bit, which cannot be a board. The game settles it --
+    with MAME's assignment it reads its own save back on the next boot and writes
+    nothing; with Eke's it rewrites the whole chip every time
+    ([undocumented-behavior.md](undocumented-behavior.md), "Cartridges" item 1).
+17. **MAME's `sram` data area is an address range, not a chip size**: the chip is eight
+    bits wide on the odd byte, so it holds half as many bytes as the range is wide, and
+    MAME's battery file keeps each byte in both halves of a 16-bit word.
+18. **The 6-button pad's timeout has four published figures measuring three different
+    things**, and Terakawa says outright that it is a capacitor and "parameters differ
+    one by one controller". The board carries CMD's shape and figure as a field and
+    claims nothing; nothing observable turns on the value.
+19. **MAME's 6-button pad is stuck in 3-button mode** -- its own `md6bt.cpp` says
+    "TODO: doesn't work - reset happens before host inputs are read for the first
+    time" -- so MAME cannot be a detector for that pad.
+20. **r57shell's VDP tests were never blocked by the pad**: they are navigated with the
+    D-pad, as their author says in forum t=1585. Milestones 3 and 5 recorded the
+    handshake correctly and drew the wrong conclusion from it. Walking them found one
+    real gap, register $00 bit 0 ("turns off all display generation"), now modelled.

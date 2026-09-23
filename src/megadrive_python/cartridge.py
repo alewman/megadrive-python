@@ -307,10 +307,14 @@ class Cartridge:
         self.jcart = slot in JCART_SLOTS
         self.jcart_devices: list[object | None] = [None, None]
         self.jcart_th = 1
-        #: Anything the cartridge decodes besides plain ROM and the battery RAM: the
-        #: check the read and write paths make before touching the ROM, kept as one
-        #: attribute so that a plain cartridge pays for one test.
+        #: Anything the cartridge decodes besides plain ROM: an EEPROM's two lines or
+        #: a J-Cart's ports.
         self.decoded = self.eeprom is not None or self.jcart
+        #: True when *anything* has to be looked at before the ROM -- battery RAM or
+        #: :attr:`decoded`. The read and write paths test this one attribute, so a
+        #: plain cartridge pays exactly what it paid before either existed; a 68000
+        #: fetch is the hottest thing in the emulator.
+        self.special = bool(self.sram) or self.decoded
         if slot not in ("rom", *SRAM_SLOTS, *MAPPER_SLOTS) and not self.decoded:
             self.unsupported = slot
 
@@ -422,15 +426,17 @@ class Cartridge:
         return touched
 
     def read_word(self, address: int) -> int:
-        if self.sram_mapped and self.sram_start <= address < self.sram_end:
-            # 8-bit RAM on the odd byte: the even byte is undriven. Reads $FF there
-            # as MAME does; no hardware source here says what floats on D15-D8.
-            return 0xFF00 | self.sram[(address - self.sram_start) >> 1]
-        if self.decoded:
-            high = self._decode_read(address)
-            low = self._decode_read(address | 1)
-            if high is not None or low is not None:
-                return ((high or 0) << 8) | (low or 0)
+        if self.special:
+            if self.sram_mapped and self.sram_start <= address < self.sram_end:
+                # 8-bit RAM on the odd byte: the even byte is undriven. Reads $FF
+                # there as MAME does; no hardware source here says what floats on
+                # D15-D8.
+                return 0xFF00 | self.sram[(address - self.sram_start) >> 1]
+            if self.decoded:
+                high = self._decode_read(address)
+                low = self._decode_read(address | 1)
+                if high is not None or low is not None:
+                    return ((high or 0) << 8) | (low or 0)
         if self.mapper:
             offset = self._rom_offset(address)
             data = self.full
@@ -441,18 +447,21 @@ class Cartridge:
         return (rom[address] << 8) | rom[address + 1]
 
     def read_byte(self, address: int) -> int:
-        if self.sram_mapped and self.sram_start <= address < self.sram_end:
-            return self.sram[(address - self.sram_start) >> 1] if address & 1 else 0xFF
-        if self.decoded:
-            value = self._decode_read(address)
-            if value is not None:
-                return value
+        if self.special:
+            if self.sram_mapped and self.sram_start <= address < self.sram_end:
+                return self.sram[(address - self.sram_start) >> 1] if address & 1 else 0xFF
+            if self.decoded:
+                value = self._decode_read(address)
+                if value is not None:
+                    return value
         if self.mapper:
             offset = self._rom_offset(address)
             return self.full[offset] if offset < len(self.full) else 0xFF
         return self.rom[address]
 
     def write_byte(self, address: int, value: int) -> None:
+        if not self.special:
+            return
         if self.decoded and self._decode_write(address, value):
             return
         if (
@@ -464,6 +473,8 @@ class Cartridge:
             self.sram[(address - self.sram_start) >> 1] = value & 0xFF
 
     def write_word(self, address: int, value: int) -> None:
+        if not self.special:
+            return
         if self.decoded:
             # A word write drives both bytes, and several of these boards put the
             # clock on one and the data on the other ("these games use 16-bits write

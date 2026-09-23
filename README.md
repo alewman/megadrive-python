@@ -9,7 +9,7 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 to 6 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 7 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
 (119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
@@ -49,7 +49,19 @@ Z80 instructions with nothing unexplained and nothing named against MAME's own c
 and the 68000 holds the bus for only 18 of a bus cycle's 28 master clocks, which had
 been making every Z80 bank access cost half a wait state too much. It also showed that
 the board has the two halves of a Z80 `pop` the wrong way round, which needs a change
-to z80-python to fix. Around the
+to z80-python to fix. Cartridges and peripherals are in as well: battery SRAM
+and FRAM, the serial EEPROMs from Eke-Eke's protocol document, the Sega (SSF2) mapper,
+the 3- and 6-button pads, TMSS with the real boot ROM, and the region and version
+register -- each judged by a game doing the right thing. **Sonic The Hedgehog 3 lays out
+its FRAM and NBA Jam writes its EEPROM's header, and every byte of both equals what
+MAME writes**; a save reloaded into a fresh machine is read back and left alone.
+**Super Street Fighter II pages in its top megabyte with the two writes its technical
+document quotes and reaches its title screen. The TMSS boot ROM draws its licence
+message and hands off to the cartridge at frame 189, and MAME's own TMSS driver agrees
+on every one of 71,680 pixels.** The two pads reproduce CMD's published table for all
+4,352 combinations of their buttons, the games that want six buttons ask for them about
+once a frame and the ones that do not never ask, and r57shell's VDP tests -- blocked
+since milestone 3 on what turned out to be a misreading -- are walked and measured. Around the
 groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
@@ -101,12 +113,19 @@ See [docs/README.md](docs/README.md).
 | `scripts/run_bus_arbiter.py` | Milestone 5: MoD's two logic-analyser experiments, and the 68000's rate | yes |
 | `scripts/run_dma_cost.py` | Milestone 5: DMA cost per word and per raster line, against Kabuto and the Manual | yes |
 | `scripts/run_nuked_md.py` | Milestone 6: six comparisons against Nuked-MD, the die-derived referee | yes |
+| `scripts/run_pads.py` | Milestone 7: the 3- and 6-button pads against CMD's table, r57shell's `joy_speed`, and the games | yes |
+| `scripts/run_battery.py` | Milestone 7: battery SRAM and the EEPROMs, against the games and MAME's nvram | yes |
+| `scripts/run_mapper.py` | Milestone 7: the Sega (SSF2) mapper against `ssf2tnc.txt` and Super Street Fighter II | yes |
+| `scripts/run_tmss.py` | Milestone 7: the boot ROM, the hand-off, the header check and the VDP lock | yes |
+| `scripts/run_region.py` | Milestone 7: the version register against the Manual, and three games that check it | yes |
+| `scripts/run_r57shell_tests.py` | Milestone 7: r57shell's eight VDP-test screens | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
 | `tests/mame_traces/` | MAME runs | no |
 
     python -m megadrive_python CART --frames 600 --png frame.png --wav sound.wav
+    python -m megadrive_python CART --pad 6button --save game.srm --tmss-rom BOOT.zip
     sh validation/build_referees.sh             # build milestone 4's three referees
     sh validation/build_nuked_md.sh             # build milestone 6's referee, Nuked-MD
     python scripts/fetch_references.py          # fetch everything missing

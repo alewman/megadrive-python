@@ -508,3 +508,101 @@ been compensating for its inability to place the second of a `pop`'s two reads a
 own T-state. The first read now lands on the referee's figure (2.97 against 2.95) and
 the second is plainly short (2.04 against 3.60), which is the z80-python limitation
 `polish.md` records, now unmasked rather than cancelled out.
+
+### Milestone 7: cartridges and peripherals
+
+The judges here are the **research documents the brief names** -- Eke-Eke's
+`gen_eeprom.pdf` for the EEPROMs, Bart Trzynadlowski's `ssf2tnc.txt` for the Sega
+mapper, Terakawa's page and CMD's `gen-hw.txt` 3.2 for the pads, the TMSS boot ROM's
+own disassembly and CMD's 4.4 for TMSS, the Manual's page 72 for the version register
+-- and, for every one of them, **a game doing the right thing**. MAME 0.285 is a
+detector: its own board guesses differ from its software list's for some of these
+images, and for the 6-button pad it cannot detect anything at all (below).
+
+**The pads** (`python scripts/run_pads.py`, 21 s; `--games`, 156 s).
+
+- CMD's table, walked on the board's own bus by a 68000 program and compared byte for
+  byte for **every one of the 4,096 combinations of the twelve buttons** on the
+  6-button pad and 256 on the 3-button one: **34,816 of 34,816 bytes match**.
+- **r57shell's `joy_speed_v1.02.bin`** (hardware-corrected, forum t=2308): the ROM's
+  own bursts of reads are `$7F $33 $7F $33 ...` with the 3-button pad and
+  `$7F $33 $7F $30 $7F $3F $7F $33` with the 6-button one, which is CMD's six rows.
+  Its *heading* says "3 Buttons Pad" for both -- and for MAME's own 6-button pad too,
+  whose code says why (`md6bt.cpp`: "TODO: doesn't work - reset happens before host
+  inputs are read for the first time"), so MAME cannot judge this and the board agrees
+  with it.
+- **The games**: Super Street Fighter II drives the handshake to its third and fourth
+  rising edge 2,368 times in 2,600 frames and Comix Zone 399 times in 600, while Sonic
+  The Hedgehog and Streets of Rage 2 never do it once.
+- **The timeout is not claimed.** Four published figures, three of them measuring
+  different quantities, and Terakawa's own warning that it is a capacitor and
+  "parameters differ one by one controller"; the board carries CMD's shape and figure
+  as a field ([undocumented-behavior.md](undocumented-behavior.md), "The pads").
+
+**The battery** (`python scripts/run_battery.py`, 90-125 s a game): five games run 40
+emulated seconds from a blank battery, saved, reloaded into a fresh machine and run
+again, against MAME's own `-nvram_directory` file. **Sonic The Hedgehog 3 writes 272
+of its 512 FRAM bytes and every one equals MAME's; NBA Jam writes its EEPROM's
+"Snake 1993" header and all 256 bytes equal MAME's, and on the warm start it reads
+them back and writes nothing at all.** Phantasy Star IV, Wonder Boy in Monster World
+and Evander Holyfield's Boxing write nothing without being played, so for them the
+comparison says only that a blank chip stays blank. MAME's battery file is twice the
+board's, one 16-bit word per address with the byte in both halves, and the comparison
+unpacks it.
+
+**The serial EEPROM** is Eke's protocol written from his document, modes 1, 2 and 3,
+with `tests/test_milestone7.py` driving the two wires directly. His NBA Jam entry's
+bit assignment is contradicted by the game and corrected
+([undocumented-behavior.md](undocumented-behavior.md), "Cartridges" item 1).
+
+**The Sega (SSF2) mapper** (`python scripts/run_mapper.py --titan`, 61 s and 94 s):
+Super Street Fighter II makes 267 writes to $A130xx in 2,400 frames, the first two of
+them `$A130FD = $08` and `$A130FF = $09` -- the checksum pair `ssf2tnc.txt` quotes from
+the US dump at $003BEC -- and reaches its title screen rather than the red screen the
+document says a wrong mapper gives. Overdrive 2 on the same mapper ends with pages 10
+and 11 in the two top windows.
+
+**TMSS** (`python scripts/run_tmss.py`, 14 s), with the local No-Intro boot ROM (2,048
+bytes, SHA-1 `3f50b76b0529db7f79c396b5e808cc0786ffc311`, padded to 16 KB with zeros as
+the hardware does): the licence message is on screen by frame 2, **the cartridge takes
+the bus at frame 189 and Sonic The Hedgehog runs**, which is the brief's acceptance;
+MAME's `genesis_tmss` at 7 emulated seconds agrees on **71,680 of 71,680 pixels
+(100.00 %)**; a cartridge whose header is not 'SEGA' never gets the bus and leaves
+$A14000 locked; and a cartridge that touches the VDP without writing "SEGA" locks the
+machine up. The boot ROM is fitted by the caller (`System(..., tmss_rom=...)`), which
+is why milestones 1 to 6 are unaffected.
+
+**The region and version register** (`python scripts/run_region.py`, 126 s): all nine
+machines' $A10001 decode to the Manual's MODE/VMOD/DISK/VER fields, and a 68000 reads
+the same byte at the odd address, the even address and in both halves of a word (CMD
+3.0). Mortal Kombat 3, Comix Zone and Streets of Rage 3 each split the nine machines
+into exactly the four overseas NTSC ones, where they run, and the five PAL or domestic
+ones, where they print "DEVELOPED FOR USE ONLY WITH NTSC GENESIS SYSTEMS". Against
+MAME: 100.00 % of pixels on `megadriv` and `megadrij` for all three, and 100.00 %,
+97.28 % and 91.23 % on `genesis`, where the games are running and an animation is a
+frame or two out of phase.
+
+**r57shell's VDP tests** (`python scripts/run_r57shell_tests.py`, 10 s): the ROM is
+navigated with the D-pad -- which milestones 3 and 5 had wrong -- and all eight screens
+are walked and measured. Test 1's column of spheres is drawn, test 2's is not, test 3
+is a clean interlaced field, test 5 blinks now that register $00 bit 0 is modelled, and
+**test 4 is not reproduced**: the only hardware statement about it is that a CRT rolled,
+which a frame buffer cannot show. The MD2 report in forum t=1585 covers that one test
+and nothing else.
+
+**Milestones 1 to 6, re-run:**
+
+| Run | Before | After |
+| --- | --- | --- |
+| the milestone-1 replay for the two battery games (traces re-recorded from MAME 0.285) | Sonic The Hedgehog 3: 21,741,798 68000 and 11,837,738 Z80 instructions, 0 unexplained; Phantasy Star IV: 21,254,417 and 13,280,703, 0 unexplained | (see [worklog.md](worklog.md), milestone 7) |
+| Nemesis's HV/status captures, 288 dumps | 8,762,415 / 8,847,360 words | **8,762,415 / 8,847,360**, unchanged to the word |
+| VDPFIFOTesting, nine machines | 122/122 on eight, 114/122 on genesis3 | **unchanged** |
+| Nemesis's sprite masking ROM | 0 of 18 cells differ | **unchanged** |
+| MoD's `gen_test_z80_bus` | 8 checks PASS, delay counters 0001/0001 | **unchanged** |
+| `scripts/run_bus_arbiter.py` | 2.27 / 2.91 / 2.44 wait states, 481.0 clocks a line | **unchanged** |
+| `scripts/run_dma_cost.py` | one word 7.4, fit 2.37 x words + 1.7; 16.1/167.1/18.1/205.1 bytes a line | **unchanged** |
+| the nine milestone-3 test ROMs against MAME's frames | 100.00/100.00/100.00/99.84/96.93/96.25/69.64/41.97 % | **unchanged, every figure** |
+| the PSG against Nuked-PSG, ten streams | 0 of 121,279,196 input clocks | **0 of 121,279,139** (the same figure a worktree at the session's starting commit gives, stream for stream) |
+| the YM2612 against Nuked-OPN2, 18 streams, both variants | 0 of 110,549,790 x 3 x 2 | **0 of 110,502,778 x 3 x 2** -- 663,016,668 values, none different |
+| `run_nuked_md.py roms`, ten ROMs | as milestone 6's table | **unchanged**, every figure |
+| `pytest -q`, PyPy and CPython 3.14.4 | 49 passed, 1 deselected | **73 passed, 1 deselected** on both (154 s on PyPy, 404 s on CPython): 24 new tests |

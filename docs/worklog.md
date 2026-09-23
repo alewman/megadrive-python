@@ -2498,3 +2498,491 @@ timing.
    before: `docs/polish.md` carries the row.
 5. **Milestone 8's triage watches for the 7- and 35-MCLK work-RAM stretches**,
    which the board does not model, as a possible cause of a frame difference.
+
+## Session 7 (2026-09-23): milestone 7, cartridges and peripherals
+
+### How the brief was read
+
+Scope is milestone 7 only: battery SRAM, the EEPROM games, the SSF2 mapper, the 3- and
+6-button pads with Terakawa's timing, TMSS with the local No-Intro boot ROM, and the
+region and version register. Each is judged by its research document **and by a game
+that uses it doing the right thing** -- saving and reloading, a mapper's banks
+appearing, a region check passing or failing as the hardware would -- with MAME as a
+detector where nothing better exists. Plus the two things the brief hands over
+explicitly: run r57shell's VDP tests once the 6-button pad works and judge them against
+the MD2 report in forum t=1585, and give the SSF2 mapper (which milestone 5 already
+had as `rom_titan`) its own judge, Super Street Fighter II.
+
+MD Soft Checker v0.30 is not available (a dangling symlink in the local romset) and was
+not used.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K, shared throughout.
+
+### What was built
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `src/megadrive_python/eeprom.py` | 241 | the serial (I2C) EEPROM, modes 1, 2 and 3, from Eke-Eke's `gen_eeprom.pdf` |
+| `src/megadrive_python/io.py` | +212 | `Pad6`, and TH edges timed: every access that can move TH now tells the port when |
+| `src/megadrive_python/cartridge.py` | +366 | the EEPROM boards, the J-Cart ports, the battery's save and load, `BootROM`, the SSF2 mapper's documentation |
+| `src/megadrive_python/board.py` | +72 | the TMSS boot ROM and $A14101, and the I/O chip's clock |
+| `src/megadrive_python/render.py` | +13 | register $00 bit 0: no display generation |
+| `src/megadrive_python/{system,__main__}.py` | +37 | `pads=`, `tmss_rom=`, `--pad`, `--pad2`, `--save`, `--tmss-rom` |
+| `scripts/run_pads.py` | 264 | the pads against CMD's table, r57shell's `joy_speed`, and which games handshake |
+| `scripts/run_battery.py` | 168 | battery SRAM and EEPROM against the games and against MAME's own nvram |
+| `scripts/run_mapper.py` | 129 | the SSF2 mapper against `ssf2tnc.txt` and the game |
+| `scripts/run_tmss.py` | 197 | the boot ROM, the hand-off, the header check and the VDP lock |
+| `scripts/run_region.py` | 211 | the version register against the Manual, and three games that check it |
+| `scripts/run_r57shell_tests.py` | 154 | the eight VDP-test screens, now that they can be walked |
+| `tests/test_milestone7.py` | 379 | 24 tests that need nothing fetched |
+
+### The pads
+
+#### Decisions and their sources
+
+- **Two sources describe the 6-button pad and they agree on every value it returns.**
+  Terakawa's page (`reference/web/terakawa-6button.html`, hardware-corrected: he timed
+  real pads) gives the sequence as rows of Sel and the six pins; CMD's `gen-hw.txt` 3.2
+  ("checked on the real thing") gives the same rows as `?1CBRLDU` / `?0SA00DU` /
+  `?1CBRLDU` / `?0SA0000` / `?1CBMXYZ` / `?0SA1111`. Reading the two together settles
+  two things Terakawa's table alone does not: **D4 and D5 still carry B and C in the
+  extra-buttons phase** (his "HI HI" is those two released), and **the counter stops**
+  after the fourth rising edge -- "From this point on, the standard 3-button pad values
+  will be returned if any further TH transitions are done" -- rather than starting
+  round again, which is what MAME does (it wraps modulo 4, `bus/sms_ctrl/md6bt.cpp`).
+- **The timeout is a field, not a constant, and nothing is claimed for it.** The brief
+  said not to fit one number and call it hardware, and the sources make that easy to
+  obey: they do not measure the same quantity. CMD times out "about 8192 (probably less
+  than that) 68000 CPU cycles" after TH was last *modified*; Terakawa gives 1.1 ms for
+  the second up-edge, 1.6 ms for the data to stay readable and 1.8 ms before the
+  sequence may restart, all from the *first* up-edge; MAME uses 1.5 ms from the last
+  rising edge. `Pad6.timeout_mclk` takes CMD's shape and figure (57,344 MCLK) because
+  his is the only one that says what the clock runs from, and the class docstring
+  carries all four. Nothing observable turns on the choice: a poll takes a few
+  microseconds and a game polls once a frame, so every one of the four resets the pad
+  between frames and none of them resets it inside one.
+- **TH's edges now have a time.** A 6-button pad counts edges, not levels, so
+  `IOChip.read` and `IOChip.write` take a master clock and `Port.set_th` tells the
+  device whenever a write to the data *or* the control register could have moved TH (a
+  control write can make TH an output or let it float back up, which is an edge too).
+  The board passes `m68k_access_clock()` for a 68000 access and `step_start` for a Z80
+  one. A 3-button pad ignores all of it and behaves exactly as before.
+- **The pad's own MODE switch** is `Pad6.mode_switch`: "the MODE button can be held
+  down when powering-up the console, and the 6-button gamepad will respond like a
+  3-button one" (CMD 3.2). Held False the pad never advances its counter.
+
+#### What the pads were judged by (2026-09-23)
+
+**CMD's table, every button combination** (`scripts/run_pads.py`, 21 s). A small 68000
+program makes TH an output and walks it high, low, high, ... eight times, reading
+$A10003 after each change into work RAM, so every access goes through the board's own
+bus. The eight bytes are compared with CMD's rows written out as bytes, for **all
+4,096 combinations of the twelve buttons on the 6-button pad and all 256 on the
+3-button one**: **34,816 of 34,816 bytes match**.
+
+**r57shell's `joy_speed_v1.02.bin`** (hardware-corrected; his own tool, forum t=2308;
+SHA-256 `3c49a278f737…`). The ROM's own reads of $A10003 were watched on the port and
+grouped into bursts, 400 frames each:
+
+| pad | reads in 400 frames | the commonest burst |
+| --- | ---: | --- |
+| 3-button | 972 in 198 bursts | `$7F $33 $7F $33 $7F $33 $7F $33` (56 x) |
+| 6-button | 1,552 in 197 bursts | `$7F $33 $7F $30 $7F $3F $7F $33` (56 x) |
+
+which is CMD's table read off a real test ROM: `?1CBRLDU` = $7F, `?0SA00DU` = $33,
+then `?0SA0000` = $30 and `?1CBMXYZ` = $3F where the 6-button pad's counter has
+reached two and three. The ROM's own screen shows the same eight bytes.
+
+**What `joy_speed` does *not* do is name the pad**: its heading reads "Port 1: 3
+Buttons Pad No Reset" for both pads. MAME 0.285 with `-ctrl1 md6button` prints exactly
+the same heading, and its own code says why -- its pad reads its MODE switch in
+`device_reset` with the comment "TODO: doesn't work - reset happens before host inputs
+are read for the first time", so MAME's 6-button pad is stuck in 3-button mode. So
+MAME cannot detect the difference here and the board agrees with it; the evidence for
+the pad is the byte sequence above, not that heading.
+
+**The games** (`scripts/run_pads.py --games`). A 6-button game drives TH high three or
+more times in a burst; a 3-button game never does:
+
+| game | frames | the counter reached 2 | 3 | 4 |
+| --- | ---: | ---: | ---: | ---: |
+| Super Street Fighter II (USA) | 2,600 | 2,368 | 2,368 | 2,368 |
+| Comix Zone (USA) | 600 | 399 | 399 | 399 |
+| Sonic The Hedgehog (USA, Europe) | 600 | **0** | **0** | **0** |
+| Streets of Rage 2 (USA) | 600 | **0** | **0** | **0** |
+
+So the two games sold with the 6-button pad in mind ask for the extra buttons about
+once a frame and the two 3-button games never do, which is the pad working in a game
+rather than in a harness.
+
+### The battery: SRAM, FRAM and the serial EEPROMs
+
+#### Decisions and their sources
+
+- **The EEPROM is written from Eke-Eke's `gen_eeprom.pdf`** (in
+  `reference/docs/md_tech.zip`), the research document the brief names:
+  `src/megadrive_python/eeprom.py` is the two-wire protocol -- START and STOP, eight
+  clocks and an acknowledge, one, two or three address words by mode, a write wrapping
+  inside the page and a read wrapping at the end of the chip. His game table gives
+  which game is on which board and MAME's software list gives which board each image
+  is, so `cartridge.EEPROM_BOARDS` is keyed by MAME's slot name with Eke's numbers in
+  it. CMD's `gen-eeprom.txt` names the actual chips found on several boards (a Xicor
+  X24C01 in Monster World 3 and Mega Man - The Wily Wars, an X24C02 in NBA Jam), which
+  agrees with Eke's modes.
+- **Eke's NBA Jam entry is wrong and the game says so.** His table gives the Acclaim
+  type 1 board `SDA_IN` bit 0, `SDA_OUT` bit 1 and `SCL` bit 1 of $200001 -- the data
+  out and the clock on one bit, which cannot be a board. MAME's NBA Jam device reads
+  /SDA at bit 1 and writes /SDA at bit 0 and /SCL at bit 1. **Measured, with the game
+  as the judge**: with bit 1 the board writes NBA Jam's "Snake 1993" header once and,
+  restarted with that EEPROM loaded, reads it back and writes *nothing*; with bit 0 the
+  game cannot read its own save and rewrites all 256 bytes on every boot. The board
+  takes bit 1 (docs/undocumented-behavior.md, "Cartridges" item 1).
+- **MAME's `sram` data area is an address range, not a chip size.** `md_slot.cpp` sets
+  `m_nvram_end = m_nvram_start + length - 1` and allocates that many bytes as 16-bit
+  words, one per address the chip answers at. The chip is eight bits wide on the odd
+  byte (CMD 4.3, of Phantasy Star 4: "16k of battery backed RAM mapped to
+  $200001-$203FFF. (odd addresses used)"), so it holds half as many bytes as the range
+  is wide, and the board now halves the list's figure. Before this the board mapped
+  twice the address range MAME does; no game in the lockstep ever read the extra half,
+  which is why milestone 1 never saw it.
+- **A battery is saved and loaded as the chip's own bytes**, packed, which is half
+  MAME's file; `Cartridge.save_bytes` and `load_bytes`, and `--save FILE` on the
+  command line, which reads the file at power-on if it exists and writes it at the end.
+
+#### The runs (2026-09-23)
+
+`.venv-pypy/bin/python scripts/run_battery.py`. Each game runs 40 emulated seconds
+from a blank battery, the battery is saved, a fresh machine is built with it loaded
+and the game runs again; MAME 0.285 runs the same image for the same time with
+`-nvram_directory`. 90-125 s a game.
+
+| game | board's battery | after a reload | MAME's file | equal |
+| --- | --- | --- | --- | --- |
+| Sonic The Hedgehog 3 (USA), `rom_fram` | 512 bytes, **272 written** | unchanged | 1,024 bytes, both halves of every word equal | **512 of 512** |
+| NBA Jam (USA, Europe) (Rev 1), `rom_nbajam_alt` | 256 bytes, **48 written** ("Snake 1993") | unchanged, **0 EEPROM bytes written on the warm start** | 256 bytes | **256 of 256** |
+| Phantasy Star IV (USA), `rom_sram` | 8,192 bytes, none written in 40 s | unchanged | 16,384 bytes, halves equal | **8,192 of 8,192** |
+| Wonder Boy in Monster World (USA, Europe), `rom_eeprom_mode1` | 128 bytes, none written | unchanged, 0 written | 128 bytes | **128 of 128** |
+| Evander Holyfield's 'Real Deal' Boxing (World), `rom_eeprom_mode1` | 128 bytes, none written | unchanged, 0 written | 128 bytes | **128 of 128** |
+
+The two games that write during their own start-up are the evidence: **Sonic The
+Hedgehog 3 lays out its FRAM and the board's 512 bytes are MAME's 512 bytes exactly**,
+and **NBA Jam writes its EEPROM header and the board's 256 bytes are MAME's exactly**,
+then reads it back on the next boot and leaves it alone. The other three write nothing
+without being played, so for them the comparison says only that both machines leave a
+blank chip blank; that is stated rather than counted as a pass.
+
+### The Sega (SSF2) mapper
+
+The mapper itself is milestone 5's: `rom_titan` was added then so that Overdrive 2
+would run. What milestone 7 adds is its documentation, its own slot name, and the
+judge the brief names -- **Super Street Fighter II**.
+
+Bart Trzynadlowski's `ssf2tnc.txt` (second edition, 2000, in `md_tech.zip`) gives the
+mechanism ("views the addressable 4 megabytes of ROM as 8 512KB regions. The first
+area, 0x000000-0x07FFFF is fixed and cannot be remapped because that is where the
+vector table resides"), the seven registers and their windows, the 6-bit page number
+("bits 7 and 6 are always 0"), and -- which is what makes it a judge -- the game's own
+code, quoted from the US dump:
+
+```text
+0x003BEC:       move.b  #$08, ($A130FD)
+0x003BF4:       move.b  #$09, ($A130FF)
+0x003BFC:       lea     ($300000), a0
+```
+
+"The bankswitching hardware must be properly emulated before the game starts working.
+If it is not, the checksum will fail and the game will hang with a red screen."
+
+`.venv-pypy/bin/python scripts/run_mapper.py --titan`, 2,400 frames each:
+
+| | |
+| --- | --- |
+| Super Street Fighter II (USA), 5,242,880 bytes, `rom_ssf2` | **267 writes to $A130xx**, the first two of them `$A130FD = $08` and `$A130FF = $09` -- the checksum pair, at the value `ssf2tnc.txt` quotes -- then `$A130F1 = $02` and the seven windows set back to 1..7 |
+| the picture | the intro artwork at frame 1,200 and the **"SUPER STREET FIGHTER II - The New Challengers" title screen** at frame 2,400; no red screen |
+| Overdrive 2 (World) (Revision 2017), 8,386,056 bytes, `rom_titan` | the same registers, ending with pages 10 and 11 in the two top windows (`banks [0, 1, 2, 3, 4, 5, 10, 11]`), which is the demo reaching past the 4 MB the 68000 can see |
+
+So the game pages in its top megabyte at the address the document says, checksums it,
+and goes on to its title screen: the mapper is judged by the cartridge it was made for.
+
+### TMSS
+
+#### Decisions and their sources
+
+- **The boot ROM is something a caller fits.** `System(..., tmss_rom=...)` (and
+  `--tmss-rom` on the command line) puts a `cartridge.BootROM` on the bus in the
+  cartridge's place and makes bit 0 of $A14101 choose between them; without one the
+  cartridge is on the bus from power-on and $A14101 does nothing. That is exactly what
+  every run of milestones 1 to 6 did -- VDPFIFOTesting is scored on `genesis-tmss`
+  among nine machines -- and making the boot ROM automatic would move all of them for
+  no gain. The VDP lock is *not* optional: every TMSS machine has it.
+- **The two are swapped, not tested for.** `Board.install_tmss_rom` puts the boot ROM
+  where `self.cartridge` was and `_tmss_select` swaps them back, so a board with no
+  boot ROM pays nothing on the hottest path in the emulator.
+- **The behaviour is read out of the boot ROM's own disassembly**
+  (`reference/src/TMSS-Disassembly`, which rebuilds bit for bit): `bset #0,(a3)` with
+  a3 = $A14101 to look at the cartridge, `cmp.l (ROM_Header).w,d7` against 'SEGA' and
+  then ' SEG' with 'A' after it, the licence message for 60 iterations of a delay loop,
+  `move.l #0,(a2)` with a2 = $A14000 to lock the VDP again, and `bset #0,(a3)` for
+  good before jumping to the cartridge's start vector. CMD's 4.4 says the same in
+  three sentences.
+- **The ROM is 16 KB.** The No-Intro dump is the chip's 2,048 bytes; MAME's is those
+  same bytes and 14 KB of zeros, which the disassembly's README calls "hardware
+  padding", and the board pads the same way. Above 16 KB it reads $FFFF, as MAME does.
+
+#### The runs (2026-09-23)
+
+`.venv-pypy/bin/python scripts/run_tmss.py --png ...`, 14 s, with the local No-Intro
+boot ROM (2,048 bytes, SHA-1 `3f50b76b0529db7f79c396b5e808cc0786ffc311`):
+
+1. **Sonic The Hedgehog (USA, Europe) on `genesis-tmss`**: the licence message
+   "PRODUCED BY OR UNDER LICENSE FROM SEGA ENTERPRISES LTD." is on screen by frame 2,
+   the cartridge takes the bus at **frame 189 (3.15 s)**, and by frame 420 the picture
+   is Sonic's own SEGA screen. That is the brief's acceptance: **TMSS boots the local
+   No-Intro boot ROM to a licensed cartridge.**
+2. **MAME 0.285 `genesis_tmss` on the same cartridge at 7 emulated seconds**
+   (a detector): **71,680 of 71,680 pixels equal, 100.00 %**.
+3. **A cartridge whose header is not 'SEGA'**: the licence message never appears, the
+   cartridge never takes the bus, and $A14000 reads $00000000 -- the boot ROM switched
+   itself back in, locked the VDP and stopped in `FailLoop`, which is what the
+   disassembly's `.fail` path does.
+4. **The VDP lock, with no boot ROM fitted**: a cartridge that writes to $C00004
+   without having written "SEGA" raises the board's `Lockup` at that access.
+
+### The region and version register
+
+`.venv-pypy/bin/python scripts/run_region.py`, 126 s. The Manual's own page 72 (PDF
+page 84) gives $A10001 as MODE, VMOD, DISK, RSV, VER3-0, and all nine machines decode
+to what their fields say:
+
+| machine | $A10001 | | machine | $A10001 |
+| --- | --- | --- | --- | --- |
+| genesis | $A0 overseas NTSC ver 0 | | megadrive | $E0 overseas PAL ver 0 |
+| genesis-tmss | $A1 | | megadrive-tmss | $E1 |
+| genesis2 | $A1 | | megadrive2 | $E1 |
+| genesis3 | $A1 | | megadrive-japan | $20 domestic NTSC ver 0 |
+| | | | megadrive2-japan | $21 |
+
+A 68000 reading $A10001, $A10000 and $A10000 as a word gets the byte, the same byte and
+the byte in both halves on every machine, which is CMD's 3.0 rule.
+
+**The games.** Three that check it, each run on all nine machines for 6 emulated
+seconds; every one splits the nine into exactly the four overseas NTSC machines and the
+five that are PAL or domestic:
+
+| game | boots on | refuses on |
+| --- | --- | --- |
+| Mortal Kombat 3 (USA) | genesis, genesis-tmss, genesis2, genesis3 | megadrive, megadrive-tmss, megadrive2, megadrive-japan, megadrive2-japan |
+| Comix Zone (USA) | the same four | the same five |
+| Streets of Rage 3 (USA) | the same four | the same five |
+
+The refusal is the screen "DEVELOPED FOR USE ONLY WITH NTSC GENESIS SYSTEMS". Against
+MAME's three drivers as a detector: `megadriv` and `megadrij` **100.00 %** of pixels for
+all three games, and `genesis` 100.00 % for Mortal Kombat 3, 97.28 % for Streets of Rage
+3 and 91.23 % for Comix Zone -- the three machines where the game is actually running
+and its animation is a frame or two out of phase, the same kind of difference milestone
+3 recorded for the lockstep games.
+
+### r57shell's VDP tests, which the pad was supposed to unblock
+
+Milestones 3 and 5 recorded that "the ROM polls the pad seven times a frame -- the
+6-button handshake -- so neither the board nor MAME leaves its first screen". The
+observation was right and the conclusion was wrong: the polling *is* the handshake, but
+the ROM is navigated with the **D-pad**, and r57shell says so in the thread ("even if
+you don't see screen, you can change tests by arrows keys on pad", forum t=1585).
+RIGHT walks its eight screens with a 3-button pad just as well as with a 6-button one.
+So the blocker was a misreading, and it is recorded here as one.
+
+**What can judge them, and it is very little.** r57shell never ran the ROM on hardware
+("I didn't because I can't do that") and asked for results. The one report in the
+thread is MrTamk1s's, on an MD2 VA1.8 with a Sega 315-5708-01 (he photographed the
+chip: `reference/images/t1585-18.jpg`) plus a 32X, captured to a VCR and watched on two
+CRTs, and it is one sentence about one test: "VDP Redraw Test #4 acted differently on my
+smaller CRT and on the Big CRT. On the smaller, the screen completely rolled over, while
+on the larger, only the first few rows were flickering/rolling." His video is on YouTube
+and is not pinned; of his three pinned photographs two are of the console and the VCR
+and one is a CRT too dark and too small to read a test off. So **the MD2 report judges
+test 4 and nothing else**, and what it says is about a display losing and regaining
+sync. For the rest the only statement is the ROM's own printed expectation, which its
+author wrote from what he believed and wanted confirmed.
+
+`.venv-pypy/bin/python scripts/run_r57shell_tests.py`, 10 s, 12 frames measured per
+screen:
+
+| screen | the ROM says | the board |
+| --- | --- | --- |
+| 1 VDP Redraw Time Test 1 | MUST SEE right column of spheres | the display alternates 256x224 and 320x224 frame by frame; the right 40 columns carry **1,446 lit pixels on the wide frames and 0 on the narrow ones**, so the column is drawn, flickering at half the frame rate |
+| 2 VDP Redraw Time Test 2 | MUST NOT SEE right column of spheres | 256x224 throughout, **0 lit pixels** in the right 40 columns, nothing changing |
+| 3 VDP Redraw Time Test 3 | MUST NOT SEE glitches | 256x448 (interlace mode 2), a regular field of spheres, **identical on all 12 frames** |
+| 4 VDP Redraw Time Test 4 | MUST NOT SEE blinking of whole screen, only first rows | 320x224, **nothing changes at all**: neither the whole screen nor the first rows. The MD2 report's "only the first few rows were flickering/rolling" is a CRT losing sync, which a frame buffer cannot show. **Not reproduced**, and recorded as an open item |
+| 5 VDP Blink Test (Reg 0 bit 0) | MUST SEE blinking of whole screen | **every one of the 11 frame pairs differs**: the whole screen alternates between the text and black |
+| 6 VDP Colors Test 1 | MUST SEE only same colors within solid block | a static screen with the shadow and highlight blocks |
+| 7-8 VDP Colors Test 2 and 3 | (interactive) | static screens of the shadow/highlight priority matrix |
+
+**Test 5 needed a change to the VDP, and it is the one thing this milestone found that
+was a real gap.** Register $00 bit 0 "actually turns off all display generation, as
+opposed to the screen blanking feature which simply shows the backdrop color" (CMD
+`genvdp.txt` 17); the board did not model it, so the blink test showed a still picture.
+It now draws such a line black whatever CRAM holds (`render.py`, per row, because there
+is no CRAM entry that means "nothing"). r57shell's own note from 2013 -- "blink test
+works only in MESS" -- says how few emulators did it then.
+
+Tests 6 to 8 are the shadow/highlight priority matrix by eye, which milestone 3 already
+judged against Kabuto, CMD and Genesis Plus GX; nothing here adds to that.
+
+### Everything these changes touch, re-run (2026-09-23)
+
+Five things in `src/` moved: the pads and the I/O chip's clock, the cartridge's
+EEPROM and battery handling and the halved battery size, TMSS's bank register, the
+renderer's register $00 bit 0, and the two new constructor arguments. The battery
+size is the one that could move an earlier run -- Sonic The Hedgehog 3 and Phantasy
+Star IV are the battery games in the milestone-1 lockstep -- so their MAME traces
+were re-recorded and replayed; the rest are checked because they are cheap and
+because the working agreement says to.
+
+| Run | Result |
+| --- | --- |
+| milestone 1's replay, **Sonic The Hedgehog 3 (USA)**, trace re-recorded from MAME 0.285, 30 emulated seconds | **21,741,798 68000 and 11,837,738 Z80 instructions identical, 0 unexplained**, 251 s -- milestone 1's counts to the instruction |
+| milestone 1's replay, **Phantasy Star IV (USA)**, likewise | **21,254,417 and 13,280,703, 0 unexplained**, 251 s -- likewise |
+| Nemesis's HV/status captures, 288 dumps | **8,762,415 of 8,847,360 words**, unchanged to the word, 96 s |
+| VDPFIFOTesting, all nine machines | **122/122** on eight and **114/122** on genesis3 (its eight VSRAM tests), unchanged |
+| Nemesis's sprite masking ROM against his MD1600 | **0 of 18 result cells differ**, unchanged |
+| MoD's `gen_test_z80_bus` | 8 checks PASS, $4243 and $FFFF, delay counters 0001/0001, unchanged |
+| `scripts/run_bus_arbiter.py`, 4,000 accesses | 2.27 / **2.91** / 2.44 wait states and 481.0 clocks a raster line, unchanged |
+| `scripts/run_dma_cost.py` | one word 7.4, fit 2.37 x words + 1.7, the Manual's table 16.1/167.1/18.1/205.1, unchanged |
+| the nine milestone-3 test ROMs against MAME's frames, 3 emulated seconds each | 100.00 (`wtest`), 100.00 (`wtest_i1`), 100.00 (`stetest`), 100.00 (`vdp_tests`), 99.84 (`wbug`), 96.93 (`vctest`), 96.25 (`wtest_i2`), 69.64 (`SHLTEST`), 41.97 % (`STETEST2`) -- **every figure identical** |
+| the PSG against Nuked-PSG, ten streams | **0 of 121,279,139 input clocks differ** |
+| the YM2612 against Nuked-OPN2, eighteen streams, both variants | **0 of 110,502,778 internal cycles x 3 values x 2 variants not identical** -- 663,016,668 values, none different, so **sound is still cycle-exact** |
+| `scripts/run_nuked_md.py roms`, ten test ROMs against the die-derived referee | **every one of its ten figures unchanged** (28,921/28,921 twice, 25,307/25,307 three times, 21,828/21,832, 230/233, 22,125/28,122, 23,258/28,621, 23,259/28,622) |
+| `pytest -q`, PyPy 7.3.23 | **73 passed, 1 deselected** in 154 s, against the timing session's 49 passed: the 24 new ones are milestone 7's |
+
+**Two numbers needed running down, and both are the records' and not the board's.**
+The PSG total is 121,279,139 where the timing session recorded 121,279,196, and the
+YM2612's 110,502,778 where it recorded 110,549,790. Both were checked against a git
+worktree at this session's starting commit `fa22dcc`, run with the same interpreter
+and the same referee binaries: the PSG's ten streams come out **stream for stream
+identical** to this tree's, and `run_fm_streams.py --games`'s twelve streams are
+**identical line for line before and after**, register writes and cycle counts alike
+("BEFORE AND AFTER IDENTICAL", 12 streams, 0 comparisons not identical). So nothing
+this session changed moved either stream; the earlier figures were recorded from a
+slightly different state and are superseded by the ones here.
+
+### Open questions for the user
+
+QUESTION: **The 6-button pad's timeout is a field with CMD's figure in it.** Four
+published numbers measure three different quantities and their author says the
+parameter varies from pad to pad. The board takes CMD's "about 8192 68000 cycles from
+the last change of TH"; nothing observable turns on it, because a poll is microseconds
+and a frame is 16 ms. Keep that, or carry Terakawa's three figures as the default and
+CMD's as the alternative? (The brief said not to fit one number and call it hardware,
+which is why neither is called one.)
+
+QUESTION: **After the fourth rising edge the board's pad stops** ("From this point on,
+the standard 3-button pad values will be returned if any further TH transitions are
+done", CMD 3.2), where MAME's wraps its counter modulo 4 and starts the sequence again.
+Nothing pinned settles it and no game seen here does more than four edges in a burst.
+Accept CMD's, or is this worth a probe?
+
+QUESTION: **Eke's NBA Jam bits are corrected from MAME's code, with the game as the
+judge.** With his /SDA in on bit 0 the game rewrites its whole EEPROM on every boot;
+with MAME's bit 1 it reads its save back and writes nothing. That is as good a judge as
+exists here, but it is one game on one board. Accept, or should the other Acclaim
+boards (NBA Jam TE, NFL Quarterback Club, College Slam) be driven far enough into a
+game to save, which needs a scripted input sequence?
+
+QUESTION: **Three EEPROM boards are modelled from sources that disagree and no game
+was run on them**: the Ninja Burai Densetsu prototype (Eke's mode 1 against MAME's
+mode-2 chip) and Brian Lara Cricket and Cricket 96 (Eke's Codemasters addresses against
+MAME's $380000 pair, and his X24C01 against MAME's 24C65). All three are in the local
+romset but none writes its battery without being played. Leave them as they are with
+the disagreement named, or drop the two Brian Lara boards until something can judge
+them?
+
+QUESTION: **r57shell's VDP Redraw Time Test 4 is not reproduced and probably cannot
+be.** The only hardware statement is that a CRT rolled -- completely on a small one,
+only the first rows on a big one -- which is a display losing sync, not a picture.
+The board's frame does not change at all there. Accept that as out of reach, or is a
+"the VDP's sync went away for N lines" flag on the frame worth having for a frontend?
+
+QUESTION: **Register $00 bit 0 draws a black line.** CMD says it "turns off all display
+generation, as opposed to the screen blanking feature which simply shows the backdrop
+color", which says what it is *not* and not what a console puts out. Black is the
+obvious reading of "no display generation" and it makes r57shell's blink test behave as
+he says; nothing pinned confirms the colour. Accept?
+
+QUESTION: **The J-Cart's two extra ports answer as empty sockets.** The four J-Cart
+boards in the local romset are modelled far enough to run (the port reads all pins
+high); putting pads on them is a frontend's job, and milestone 9 is the frontend. Leave
+it, or wire them to `System(pads=...)` now?
+
+QUESTION: **MD Soft Checker v0.30 is still not available** (the local romset's symlink
+is dangling and the only link is a mega.nz page), so Sega's own diagnostic has never
+been run against the board. Worth fetching by hand before milestone 8's sweep?
+
+### What is *not* claimed
+
+- **The 6-button pad's timeout.** The four published figures do not agree and their
+  author says the parameter varies from pad to pad; the board carries one of them as a
+  field and nothing here measures it.
+- **Test 4 of r57shell's VDP tests**, which is the only one the MD2 report covers, and
+  which is a CRT losing sync rather than a picture.
+- **The three EEPROM boards no game was run on** (the Ninja Burai prototype and the two
+  Brian Lara boards): they are modelled from sources that disagree and the
+  disagreements are named, not settled.
+- **What a console puts out with register $00 bit 0 set**: the board draws black
+  because "no display generation" is not the backdrop, which is all CMD says.
+- **The J-Cart's extra ports** answer as empty sockets; no pad can be put on them yet.
+- **Nothing about the picture of Overdrive 2's four wrong frames**, which are still the
+  user's post-sweep session, and nothing about the sound path, which this milestone
+  does not touch.
+
+### Frames a second, paired against the session's starting commit
+
+Two things were added to the cartridge's read path -- the battery and the EEPROM's
+lines -- and a 68000 fetch is the hottest thing in the emulator, so it was measured
+rather than assumed. Measured first, it cost about 2 %; the two checks were then
+folded into one attribute (`Cartridge.special`, true only when there is a battery or
+something decoded), which puts a plain cartridge back where it was. 900 frames after
+120 of warm-up, `--no-sound`, by **user CPU time**, the session's starting commit
+`fa22dcc` in a git worktree and the current tree run alternately, twice each, on a
+machine shared throughout:
+
+| Game | before (s) | after (s) |
+| --- | --- | --- |
+| Sonic The Hedgehog (USA, Europe), before the fold | 20.87, 21.39 | 21.25, 21.41 |
+| Phantasy Star IV (USA), before the fold | 19.53, 19.03 | 19.93, 19.50 |
+| Sonic The Hedgehog (USA, Europe), after the fold | 19.19, 17.63 | 17.48, 18.06 |
+
+and an EEPROM cartridge costs nothing measurable against a plain one: NBA Jam 46.2
+frames a second against Sonic's 46.4 in the same conditions.
+
+### What is left for milestone 8
+
+The compatibility sweep is next and it inherits three things from here: cartridges now
+identify themselves (`Cartridge.unsupported` names a board the sweep cannot run), the
+pads can be either kind, and `--save` means a sweep can be run twice over a game that
+saves. The boards still not modelled are the unlicensed mappers, the SVP, the Game
+Genie and the Sega Pico family; the sweep will say how many images they are.
+
+### Commits
+
+| | |
+| --- | --- |
+| `851b9e7` | The cartridges: serial EEPROMs, the J-Cart's ports, and a battery that saves (`eeprom.py`, `cartridge.py`) |
+| `e94a4f3` | The 3- and 6-button pads, with TH's edges in time (`io.py`) |
+| `0229a70` | TMSS: the boot ROM on the bus, and the clock the I/O chip now needs (`board.py`) |
+| `efb7b45` | Register $00 bit 0: no display generation at all (`render.py`) |
+| `e16e3d7` | The system and the command line: a pad, a battery file and a boot ROM |
+| `9a9643a` | Six runs that judge milestone 7 (`scripts/run_{pads,battery,mapper,tmss,region,r57shell_tests}.py`) |
+| `69d836c` | Milestone 7's tests: 24 that need nothing fetched |
+| `a0d299e` | `run_mapper.py`: do not try to write a PNG of a frame not yet drawn |
+| `d6a8659` | Say exactly what a read of an EEPROM board's register gives |
+| `ef04b86` | `start-here.md`: two things it got wrong about the pads and TMSS |
+| (this one) | Milestone 7's record: the worklog, the certification record, the open items, the findings and the README |
+
+**End of milestone 7.** Stopping here, as the working agreement says; milestone 8's
+sweep is next.
+

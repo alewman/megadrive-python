@@ -145,11 +145,51 @@ source, the way sms-python does.
     put the output about 21 pixels behind the H counter -- a pipeline delay the board
     does not model. Nothing pinned measures it directly, and r57shell's redraw-timing
     tests, which would, cannot be reached until the 6-button pad exists (milestone 7).
+22. **Register $00 bit 0 turns off display generation altogether**, which is not the
+    same as blanking: "Setting bit 0 actually turns off all display generation, as
+    opposed to the screen blanking feature which simply shows the backdrop color"
+    (CMD ``genvdp.txt`` 17). The board draws such a line black, whatever CRAM holds,
+    and models nothing else about it (the sprite and plane fetches still happen).
+    r57shell's "VDP Blink Test (Reg 0 bit 0)" is what makes it visible; without it
+    that test showed nothing at all, which is why milestone 7 added it. What colour a
+    console actually puts out with all generation off is not in any pinned source.
 21. **A VSRAM read past its 40th word** returns the last word the renderer read
     from VSRAM, which follows the H counter (the column's entry, or the first two
     in full-screen vertical scroll; entries $26 AND $27 past the end): Exodus's
     model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
     with 64 words, returns the words themselves and fails those tests.
+
+## The pads and the I/O chip
+
+1. **The 6-button pad's timeout has no one value.** It is a capacitor discharging, and
+   Terakawa says so in as many words: "It seems that the time is measured by
+   discharging of a capacitor in a 6-Button-Controller. It may mean parameters differ
+   one by one controller. Please choose values you think proper for parameters."
+   The four published figures do not even measure the same quantity: CMD
+   (`gen-hw.txt` 3.2) times out "about 8192 (probably less than that) 68000 CPU
+   cycles" (1.07 ms) after TH was last *modified*; Terakawa gives 1.1 ms for the
+   second up-edge to arrive, 1.6 ms for the data to stay readable and 1.8 ms before
+   the sequence may start again, all from the *first* up-edge; MAME 0.285 uses 1.5 ms
+   from the last rising edge (`bus/sms_ctrl/md6bt.cpp`). The board takes CMD's shape
+   and figure as a field (`io.Pad6.timeout_mclk`) and claims nothing: a poll takes a
+   few microseconds and a game polls once a frame, so all four reset the pad between
+   frames and none resets it inside one.
+2. **D4 and D5 in the extra-buttons phase carry B and C**, not a fixed high. CMD
+   writes the phase as `?1CBMXYZ`; Terakawa's table shows "HI HI" there, which is
+   those two buttons released. MAME's pad agrees with CMD (`md6bt.cpp`, `case 3`).
+   The board follows CMD, and `scripts/run_pads.py` checks every one of the 4,096
+   button combinations through the whole sequence.
+3. **After the fourth rising edge the pad is a 3-button pad again**, until the
+   timeout: "From this point on, the standard 3-button pad values will be returned if
+   any further TH transitions are done" (CMD). MAME instead wraps its counter modulo
+   4, so its pad starts the sequence again on the fifth edge. Nothing pinned settles
+   which is right; the board follows CMD, who checked his on hardware.
+4. **MAME cannot be used as a detector for the 6-button pad.** Its pad reads its own
+   MODE switch in `device_reset`, and its comment says that does not work -- "TODO:
+   doesn't work - reset happens before host inputs are read for the first time" --
+   so `-ctrl1 md6button` leaves the pad in 3-button mode. r57shell's `joy_speed`
+   prints "3 Buttons Pad" for it, and for the board it prints the same although the
+   board's own read sequence is the 6-button one (docs/worklog.md, milestone 7).
 
 ## The YM2612
 
@@ -220,6 +260,42 @@ source, the way sms-python does.
 5. **The mixing ratio between the PSG and the FM** has no pinned number either; the
    board's is measured from the MDFourier recordings ([worklog.md](worklog.md),
    milestone 4).
+
+## Cartridges
+
+1. **Eke's NBA Jam entry has /SDA in and /SDA out on the wrong bits.** His
+   `gen_eeprom.pdf` gives the Acclaim type 1 board `SDA_IN: 0x200001 (bit 0)`,
+   `SDA_OUT: 0x200001 (bit 1)`, `SCL: 0x200001 (bit 1)`, which puts the data out and
+   the clock on one bit and cannot be a board. MAME's own NBA Jam device reads /SDA at
+   bit 1 and writes /SDA at bit 0 and /SCL at bit 1 (`bus/megadrive/eeprom.cpp` lines
+   606-628). **The game settles it**: with bit 1 the board writes its "Snake 1993"
+   header once and, restarted with that EEPROM, reads it back and writes nothing;
+   with bit 0 it cannot read its own save and rewrites all 256 bytes on every boot
+   (docs/worklog.md, milestone 7). The board uses bit 1.
+2. **MAME's `sram` data area is an address range, not a size.** `md_slot.cpp` sets
+   `m_nvram_end = m_nvram_start + length - 1` and allocates that many bytes as 16-bit
+   words, one per address the chip answers at, with the byte in *both* halves of each
+   word. The chip itself is eight bits wide on the odd byte (CMD `gen-hw.txt` 4.3:
+   Phantasy Star 4's "16k of battery backed RAM mapped to $200001-$203FFF. (odd
+   addresses used)"), so it holds half as many bytes as the range is wide. The board
+   keeps the chip's own bytes and halves the list's figure; `scripts/run_battery.py`
+   unpacks MAME's file to compare, and checks that its words' two halves agree.
+3. **A word read of battery RAM: what is on D15-D8 is not known.** The board reads
+   $FF there (the chip drives only the odd byte and nothing else drives the bus);
+   MAME returns the byte in both halves, because that is what it stored. No pinned
+   source says. Nothing measured here depends on it: the games that save read bytes.
+4. **Two EEPROM boards where Eke and MAME disagree, neither settled.** The Ninja
+   Burai Densetsu *prototype* (`rom_eeprom`): Eke lists the game under Sega's mode 1
+   (X24C01) and MAME fits a mode-2 24C01; the board follows the research document.
+   Brian Lara Cricket (`rom_blara95`): Eke gives it mode 1 with the Codemasters
+   addresses, MAME puts all three lines on $380000-$380001 and fits a 24C65; the
+   board takes MAME's addresses (they are what its code reads and writes) and Eke's
+   chip. Neither game was run: both are in the local romset but neither writes its
+   battery without being played.
+5. **The J-Cart's two extra ports answer with nothing plugged in.** The board decodes
+   $38FFFE and returns all pins high with bit 7 set (MAME `bus/megadrive/jcart.cpp`
+   lines 150-160), which is an empty socket. Attaching pads there is a frontend's job
+   and is not modelled.
 
 ## Known-wrong or superseded sources
 
@@ -405,6 +481,21 @@ source, the way sms-python does.
     unexplained. What remains open is only the *reason* -- no hardware source says why a
     Z80-space cycle is a clock longer, and MAME's own comment still calls it
     unverified.
+18. **The TMSS boot ROM is something a caller fits, not something a TMSS machine
+    has.** On the hardware a TMSS console powers up with its own ROM on the bus and
+    bit 0 of $A14101 chooses between it and the cartridge; the board does the same
+    *when a boot ROM is supplied* (`System(..., tmss_rom=...)`), and otherwise puts
+    the cartridge on the bus from power-on and ignores $A14101. That is what every
+    run of milestones 1 to 6 did -- VDPFIFOTesting is scored on `genesis-tmss` among
+    others -- and making the boot ROM automatic would move all of them. The VDP lock
+    ("SEGA" to $A14000) is not optional and is on for every TMSS machine.
+19. **r57shell's VDP Redraw Time Test 4 cannot be reproduced as reported.** The one
+    hardware report (MrTamk1s, an MD2 VA1.8 with a 315-5708-01, forum t=1585) is
+    "On the smaller [CRT], the screen completely rolled over, while on the larger,
+    only the first few rows were flickering/rolling" -- a display losing and regaining
+    sync, which depends on the monitor and which a frame buffer has no way to show.
+    The board's picture for that test does not change at all from frame to frame. The
+    rest of that ROM's eight screens are measured in docs/worklog.md, milestone 7.
 17. **The VDP in Mode 4.** At power-on the VDP is in Mode 4 and Nuked-MD's $C00008
     reads a constant ($9F00 in the runs made); the board reads its Mode 5 HV counter
     whatever the mode. No test ROM of milestones 2-5 reads HV before setting Mode 5,
