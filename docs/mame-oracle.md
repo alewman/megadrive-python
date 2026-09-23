@@ -109,6 +109,22 @@ Two runs of the tool gave identical counts, and the exit snapshot is the
    them. Expect the same here and measure it before comparing timing.
 9. **TMSS**: `genesis` has no TMSS; `genesis_tmss` does and needs the boot ROM
    in its romset.
+10. **Given a file, MAME's Mega Drive loader gives almost every cartridge 64 KB of
+    battery RAM it does not have.** Trap 8 above says MAME guesses the board from
+    the image; what it guesses when nothing matches is `rom_sramsafe` --
+    "Unfortunately, there are ROMs without correct info in the header, hence, when
+    loading from fullpath we do the SRAM mapping anyway" (`md_slot.cpp`
+    `get_cart_type`) -- which answers $200000-$20FFFF with RAM where the board
+    mirrors its ROM. Measured over the local romset (milestone 8): of the 1,799
+    images MAME's `megadriv` software list names, **1,523 would run on a different
+    board in MAME if handed to it as a file**, 1,347 of them exactly this way. So a
+    listed image is offered to MAME **by its software-list name**
+    (`scripts/mame_media.py`, after sms-python's), from a scratch rompath holding
+    that one image under the name the list expects; then both machines run the board
+    the list gives. An unlisted image has to be given as a file, and
+    `mame_media.mame_guess` -- a port of `get_cart_type`'s signature table -- says
+    which board MAME then puts it on, so that a difference can be attributed to that
+    rather than to the board.
 
 ## Interleaving
 
