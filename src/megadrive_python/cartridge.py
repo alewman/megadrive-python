@@ -379,9 +379,12 @@ class Cartridge:
     def _decode_read(self, address: int) -> int | None:
         """The EEPROM's /SDA or a J-Cart port, as a byte, or None for ROM.
 
-        The value carries the line at its own bit and zero elsewhere, which is what
-        MAME's handlers return (``eeprom.cpp``, ``jcart.cpp``); nothing pinned says
-        what the rest of the byte reads, and the games mask it.
+        The value carries the line at its own bit and zero elsewhere. Nothing pinned
+        says what the rest of the byte reads; MAME's own handlers differ among
+        themselves (most return the bit alone, ``md_std_eeprom_device::read`` returns
+        it in both halves of the word), and every game seen here masks it. Only the
+        byte Eke's table names is decoded, so a read of the *other* byte of the same
+        word falls through to the ROM.
         """
         board = self.eeprom_board
         if board is not None and address == board.sda_in[0]:
