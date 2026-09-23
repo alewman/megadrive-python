@@ -124,7 +124,10 @@ def test_window_bug_is_the_partial_column() -> None:
     for scroll, repeats in ((0x0000, False), (0x0006, True)):
         vdp.vram[0xFC00], vdp.vram[0xFC01] = scroll >> 8, scroll & 0xFF
         fetched.clear()
-        vdp.renderer._planes(line, [0] * 320, 320, 0, 0, False)
+        vdp.renderer._line_a = line
+        vdp.renderer._line_b = [0] * 320
+        vdp.renderer._spans = vdp.renderer._plane_setup(320, 0, 0, False)
+        vdp.renderer._plane_span(0, 320)
         around = [cell for x, cell in fetched if edge - 16 <= x < edge + 16]
         assert len(around) == 4, (scroll, fetched[:8])
         if repeats:

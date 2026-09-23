@@ -202,6 +202,19 @@ class HMode:
         self.first_high = first_high
         self.slots_active: list[int] = []
         self.slots_idle: list[int] = []
+        #: Where display pixel 0 falls in ``hvals``, so that ``position(offset) -
+        #: display_at`` is the screen X a master clock lands on.  The active display is
+        #: external H $00-$9F in H40 and $00-$7F in H32 -- internal H $000 onwards,
+        #: 320 or 256 pixels (CMD ``genvdp.txt``; the V counter increments after it, at
+        #: external $A5/$85, and Kabuto's access-slot groups fall in place around it:
+        #: his 15 "mid-tiles" slots are the ones inside $000-$13F, his 2
+        #: "between-tiles-and-sprites" ones are $140 and $142 just past it, and his
+        #: single "mid-sprite" one is $1CE, in the blanking).  What is *not* modelled
+        #: is his statement that the second mid-tiles slot lands "at the pixel with
+        #: X=-3 (display area coordinates)", which would put the output about 21 pixels
+        #: behind the H counter: a mid-line write here lands at the pixel its access
+        #: slot's own H counter names (docs/undocumented-behavior.md).
+        self.display_at = 0
 
     def position(self, offset: int) -> int:
         """The index of the pixel under way ``offset`` MCLK into the line."""
@@ -283,9 +296,13 @@ def _idle_slots(mode: HMode) -> list[int]:
     return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in refresh)
 
 
+#: Internal H of display pixel 0 (``HMode.display_at``).
+_DISPLAY_START = {"H32": 0x000, "H40": 0x000}
+
 for _mode in (H32, H40, H40_VSYNC, H40_LONG, H40_SHORT):
     _mode.slots_active = sorted(_mode.offset_of[h] for h in _ACTIVE_SLOTS[_mode.name])
     _mode.slots_idle = _idle_slots(_mode)
+    _mode.display_at = _mode.hvals.index(_DISPLAY_START[_mode.name])
 
 
 # -- the vertical scan -----------------------------------------------------------------
@@ -448,6 +465,10 @@ class VDP:
         return self.registers[23] >> 6
 
     def _write_register(self, number: int, value: int) -> None:
+        # A register write reaches the VDP at once, not through the FIFO, so it too
+        # lands part way along the line being drawn.
+        if self.renderer.pending:
+            self.renderer.catch_up(self.mclk - self.line_start)
         old = self.registers[number]
         self.registers[number] = value
         if number == 0 and (value ^ old) & 0x02 and value & 0x02:
@@ -545,13 +566,17 @@ class VDP:
                 self.z80_irq_end = self.mclk + MCLK_PER_LINE
             elif kind == 5:
                 self.render_at = -1
-                self.renderer.render_line(self.v)
+                self.renderer.begin_line(self.v)
             else:
                 self._odd_done = True
                 if self.interlace:
                     self.odd = not self.odd
 
     def _next_line(self) -> None:
+        # The line is over: whatever is left of its picture is drawn from the state it
+        # ends with, before the next line can change anything.
+        if self.renderer.pending:
+            self.renderer.finish_line()
         vmode = self.vmode
         new_v = vmode.next(self.v, self.interlace, self.odd)
         self.previous_v = self.v
@@ -726,7 +751,13 @@ class VDP:
         return fifo[self.fifo_read][4] and fifo[(self.fifo_read + 3) & 3][4]
 
     def _slot(self) -> None:
-        """One access slot (Exodus ``UpdateInternalState``, General.cpp 1773-1878)."""
+        """One access slot (Exodus ``UpdateInternalState``, General.cpp 1773-1878).
+
+        Anything written here lands part way along the line being drawn, so the
+        renderer is brought up to this slot's pixel first (milestone 5).
+        """
+        if self.renderer.pending:
+            self.renderer.catch_up(self.mclk - self.line_start)
         dmd = self.registers[23] >> 6
         fifo = self.fifo
         while (
@@ -814,6 +845,7 @@ class VDP:
         elif target == WRITE_CRAM:
             self.cram[(address & 0x7E) >> 1] = data & 0x0EEE
             self.renderer.cram_dirty = True
+            self.renderer.cram_dot(data & 0x0EEE)
             entry[4] = False
         elif target == WRITE_VSRAM:
             index = (address & 0x7E) >> 1
@@ -888,6 +920,7 @@ class VDP:
         elif target == WRITE_CRAM:
             self.cram[(last[1] & 0x7E) >> 1] = fifo[self.fifo_read][2] & 0x0EEE
             self.renderer.cram_dirty = True
+            self.renderer.cram_dot(fifo[self.fifo_read][2] & 0x0EEE)
         elif target == WRITE_VSRAM:
             index = (last[1] & 0x7E) >> 1
             if index < self.vsram_words:

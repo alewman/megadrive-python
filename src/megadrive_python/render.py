@@ -1,10 +1,26 @@
 """The VDP's picture: planes A and B, the window, sprites, priority, shadow/highlight.
 
-One line at a time. :meth:`Renderer.render_line` is called by the VDP when a line's
-active display begins (its HBlank-clear point), so a raster effect written in that
-line's horizontal blank -- where an H interrupt handler runs -- is already in the
-registers. What the line needs is then read in one go: the scroll values, the two
-planes' name tables and patterns, and the sprites.
+A line at a time, drawn in pieces. :meth:`Renderer.begin_line` is called by the VDP
+when a line's active display begins (its HBlank-clear point), so a raster effect
+written in that line's horizontal blank -- where an H interrupt handler runs -- is
+already in the registers. What the line needs *for the whole line* is read there: the
+scroll values, the window's columns, and the sprites, which the hardware fetched
+during the preceding horizontal blank (Kabuto, phase 3).
+
+The pixels themselves are drawn lazily. Whenever the VDP is about to change something
+the rest of the line would be drawn from -- a FIFO write landing at an access slot, a
+DMA fill or copy, a register write -- it calls :meth:`catch_up` with the master clock
+of that access slot, and the line is drawn up to the pixel the slot falls on before
+the change lands (milestone 5). So plane names, patterns, scroll and the palette are
+read where the hardware reads them, and a write made part way along a line shows from
+that point on rather than from the next line. With nothing written mid-line the line
+is drawn in one piece, exactly as before, which is what keeps it affordable.
+
+Two effects come out of that machinery: r57shell's redraw-timing tests, which want
+VRAM writes to land inside the line being drawn, and the **CRAM dots** -- a CRAM write
+during the active display shows the colour written, for one pixel, at its access slot
+(docs/undocumented-behavior.md; BlastEm's ``write_cram``, ``vdp.c`` lines 429-451, is
+the only implementation pinned here, and is a detector).
 
 Where each rule comes from (docs/validation.md ranks the sources):
 
@@ -25,12 +41,13 @@ Where each rule comes from (docs/validation.md ranks the sources):
   line) and Nemesis's rules in forum t=541 start=30, which his sprite masking ROM
   checks on an MD1600.
 
-What this module does *not* model, and why (docs/worklog.md, milestone 3): the sprite
-phases are all evaluated when the line is rendered rather than spread over the two
+What this module does *not* model, and why (docs/worklog.md, milestones 3 and 5): the
+sprite phases are all evaluated when the line begins rather than spread over the two
 preceding lines, so a sprite table changed between a line's phase 1 and its phase 3
-takes effect a line or two early; mid-line register and CRAM writes (CRAM dots) land
-at the line's start; and with the display disabled the line shows the backdrop colour
-rather than the bus garbage Kabuto describes.
+takes effect a line or two early; a mid-line change lands at the access slot that
+carried it, not at the pixel the VDP would have been fetching for (the plane fetches
+run several pixels ahead of the pixels they feed); and with the display disabled the
+line shows the backdrop colour rather than the bus garbage Kabuto describes.
 """
 
 from __future__ import annotations
@@ -107,13 +124,30 @@ class Renderer:
         #: settles at a few thousand of them (Sonic: 12,208 after a minute); the cache
         #: is emptied if one ever churns through :data:`TILE_CACHE_LIMIT`.
         self._tiles: dict[int, tuple] = {}
-        #: The palette each row was drawn with (normal, shadow and highlight RGB for
-        #: every CRAM entry). A game that rewrites CRAM part way down the frame -- as
-        #: CMD's shadow/highlight tests do, a band at a time -- gets a row of its own.
-        self._palettes: list[tuple | None] = [None] * 480
+        #: The palettes each row was drawn with (normal, shadow and highlight RGB for
+        #: every CRAM entry), as ``(first pixel, palette)`` in order: a game that
+        #: rewrites CRAM part way down the frame -- as CMD's shadow/highlight tests do,
+        #: a band at a time -- gets a row of its own, and one that rewrites it part way
+        #: *along* a line gets an entry from that pixel on.
+        self._palettes: list[list[tuple[int, tuple]]] = [[] for _ in range(480)]
         self._palette: tuple = ()
-        #: Set by the VDP on a CRAM write: the next row drawn takes a fresh palette.
+        #: Set by the VDP on a CRAM write: the next pixels drawn take a fresh palette.
         self.cram_dirty = True
+        #: CRAM dots: ``(pixel, RGB)`` per row, from a CRAM write during the display.
+        self._dots: list[list[tuple[int, int]]] = [[] for _ in range(480)]
+        #: The line being drawn (``begin_line``): where it starts in master clocks, how
+        #: much of it has been drawn, and everything its remaining pixels need.
+        self.pending = False
+        self._line_start = -1
+        self._drawn = 0
+        self._row = 0
+        self._width = 320
+        self._backdrop = 0
+        self._out = self.pixels[0]
+        self._line_a: list[int] = []
+        self._line_b: list[int] = []
+        self._line_s: list[int] = []
+        self._spans: tuple = ()
         #: The sprite cache: the Y and size/link words of each of the 80 sprites,
         #: written through by VRAM writes that land in the sprite table (Kabuto,
         #: "General"). Moving the table does not fill it, as on the hardware.
@@ -205,8 +239,9 @@ class Renderer:
             x += 8
 
     def _window_line(self, line: list[int], width: int, row: int, first: int, last: int,
-                     im2: bool) -> None:  # fmt: skip
-        """The window's cells ``first``..``last``, unscrolled.
+                     im2: bool, left: int = 0, right: int = 1 << 30) -> None:  # fmt: skip
+        """The window's cells ``first``..``last``, unscrolled, clipped to the screen
+        pixels ``left``..``right`` - 1.
 
         Its name table is 32 cells wide in H32 and 64 in H40 ("The name table for plane
         W is 32x32 in 32-cell mode, and 64x32 in 40-cell mode", CMD ``genvdp.txt``).
@@ -221,7 +256,7 @@ class Renderer:
         pattern_mask, pattern_bytes = (0x3FF, 64) if im2 else (0x7FF, 32)
         name_row = base + (row // tile_rows) * columns * 2
         pattern_row = row & (tile_rows - 1)
-        for cell in range(first, last + 1):
+        for cell in range(max(first, left >> 3), min(last, (right - 1) >> 3) + 1):
             entry = (name_row + cell * 2) & 0xFFFF
             name = (vram[entry] << 8) | vram[entry + 1]
             pattern_line = (tile_rows - 1 - pattern_row) if name & 0x1000 else pattern_row
@@ -242,9 +277,14 @@ class Renderer:
             return (horizontal, cells - 1) if horizontal < cells else (0, -1)
         return (0, min(horizontal, cells) - 1) if horizontal else (0, -1)
 
-    def _planes(self, line_a: list[int], line_b: list[int], width: int, v: int,
-                screen_row: int, im2: bool) -> tuple[int, int]:  # fmt: skip
-        """Draw planes A (with the window over it) and B; return the window's cells."""
+    def _plane_setup(self, width: int, v: int, screen_row: int, im2: bool) -> tuple:
+        """What both planes and the window need for the whole of line ``v``, read where
+        the hardware reads it -- at the line's start.
+
+        The horizontal scroll entry is fetched once a line (Kabuto's "H" access is the
+        first of the line), and so are the window's columns, so a mid-line write to
+        either does not move the line being drawn.
+        """
         vdp = self.vdp
         registers = vdp.registers
         vram = vdp.vram
@@ -262,7 +302,6 @@ class Renderer:
         entry = (table + (v & mask) * 4) & 0xFFFF
         scroll_a = ((vram[entry] << 8) | vram[entry + 1]) & 0x3FF
         scroll_b = ((vram[entry + 2] << 8) | vram[entry + 3]) & 0x3FF
-        size = registers[16]
         window_first, window_last = self._window_columns(cells, v)
 
         window_bug = -1
@@ -280,33 +319,44 @@ class Renderer:
             # plus the fine scroll; its two cells then repeat in the column after it,
             # which is CMD's "1 column that has identical patterns as the next column".
             window_bug = (window_last + 1) * 8 - 16 + (scroll_a & 0x0F)
+        return (scroll_a, scroll_b, window_first, window_last, window_bug,
+                screen_row, im2, width)  # fmt: skip
 
+    def _plane_span(self, first: int, last: int) -> None:
+        """Draw planes A (with the window over it) and B over the screen pixels
+        ``first``..``last`` - 1, reading VRAM, VSRAM and the registers as they stand."""
+        (scroll_a, scroll_b, window_first, window_last, window_bug,
+         screen_row, im2, width) = self._spans  # fmt: skip
+        vdp = self.vdp
+        registers = vdp.registers
+        size = registers[16]
         two_cell = bool(registers[11] & 4)
         vsram = vdp.vsram
         words = vdp.vsram_words
         # Register 2 bits 5-3 are plane A's A15-A13 and register 4 bits 2-0 plane B's
         # (CMD ``genvdp.txt``), so both bases mask to 0xE000.
         for line, base, scroll, plane in (
-            (line_a, (registers[2] << 10) & 0xE000, scroll_a, 0),
-            (line_b, (registers[4] << 13) & 0xE000, scroll_b, 1),
+            (self._line_a, (registers[2] << 10) & 0xE000, scroll_a, 0),
+            (self._line_b, (registers[4] << 13) & 0xE000, scroll_b, 1),
         ):
             if two_cell:
                 # Two-cell column vertical scroll: each 16-pixel column of the display
                 # has its own VSRAM entry (CMD ``genvdp.txt``, register $0B bit 2).
-                x = 0
-                while x < width:
+                x = first & ~15
+                while x < last:
                     index = (x >> 4) * 2 + plane
                     vscroll = vsram[index] if index < words else 0
                     self._plane_columns(line, base, screen_row + vscroll, size, scroll,
-                                        im2, window_bug, x, min(x + 16, width))  # fmt: skip
+                                        im2, window_bug, max(x, first),
+                                        min(x + 16, last))  # fmt: skip
                     x += 16
             else:
                 self._plane_columns(line, base, screen_row + vsram[plane], size, scroll,
-                                    im2, window_bug, 0, width)  # fmt: skip
+                                    im2, window_bug, first, last)  # fmt: skip
         if window_last >= window_first:
             # "Plane A is not shown in any column where plane W is shown" (CMD).
-            self._window_line(line_a, width, screen_row, window_first, window_last, im2)
-        return window_first, window_last
+            self._window_line(self._line_a, width, screen_row, window_first, window_last,
+                              im2, first, last)  # fmt: skip
 
     # -- sprites ------------------------------------------------------------------
 
@@ -415,8 +465,10 @@ class Renderer:
 
     # -- one line -----------------------------------------------------------------
 
-    def render_line(self, v: int) -> None:
-        """Draw display line ``v``, the V counter's value for it."""
+    def begin_line(self, v: int) -> None:
+        """Start display line ``v``, the V counter's value for it: finish the line
+        before it, then read everything this one needs for its whole length."""
+        self.finish_line()
         vdp = self.vdp
         width = 320 if vdp.hmode.name == "H40" else 256
         im2 = vdp.interlace_double
@@ -427,7 +479,9 @@ class Renderer:
         if self.cram_dirty or not self._palette:
             self._palette = self._make_palette()
             self.cram_dirty = False
-        self._palettes[row] = self._palette
+        self._palettes[row] = [(0, self._palette)]
+        if self._dots[row]:
+            self._dots[row] = []
         self.width = width
         if row + 1 > self.rows:
             self.rows = row + 1
@@ -443,18 +497,86 @@ class Renderer:
                 out[x] = backdrop
             self.last_x_nonzero = False  # no sprites are fetched with the display off
             return
-        line_a = [0] * width
-        line_b = [0] * width
-        line_s = [0] * width
-        self._planes(line_a, line_b, width, v, row, im2)
-        self._sprites(line_s, width, row, im2)
-        self._mix(out, line_a, line_b, line_s, width, backdrop)
+        self._line_a = [0] * width
+        self._line_b = [0] * width
+        self._line_s = [0] * width
+        # The sprites of a line are fetched and drawn into the line buffer during the
+        # horizontal blank before it (Kabuto, phase 3), so a mid-line write cannot
+        # change them: they are done once, here.
+        self._sprites(self._line_s, width, row, im2)
+        self._spans = self._plane_setup(width, v, row, im2)
+        self._out = out
+        self._row = row
+        self._width = width
+        self._backdrop = backdrop
+        self._drawn = 0
+        self._line_start = vdp.line_start
+        self.pending = True
+
+    def catch_up(self, offset: int) -> None:
+        """Draw the line under way up to the pixel ``offset`` master clocks into it.
+
+        Called by the VDP before anything the rest of the line is drawn from changes
+        (:mod:`megadrive_python.vdp`, ``_slot`` and ``_write_register``).
+        """
+        if not self.pending or self.vdp.line_start != self._line_start:
+            return
+        mode = self.vdp.hmode
+        self._draw_to(mode.position(offset) - mode.display_at)
+
+    def finish_line(self) -> None:
+        """Draw whatever is left of the line under way."""
+        if self.pending:
+            self._draw_to(self._width)
+            self.pending = False
+
+    def cram_dot(self, colour: int) -> None:
+        """A CRAM write landing at an access slot during the active display shows the
+        colour it wrote, for the one pixel of that slot (docs/undocumented-behavior.md,
+        "The VDP" item 5; BlastEm ``write_cram``, ``vdp.c`` lines 443-451, writes the
+        new colour into the pixel at its own slot). The caller has already drawn the
+        line up to that pixel."""
+        x = self._drawn
+        if self.pending and 0 <= x < self._width:
+            levels = LEVELS[0]
+            self._dots[self._row].append(
+                (x, (levels[(colour >> 1) & 7] << 16)
+                    | (levels[(colour >> 5) & 7] << 8)
+                    | levels[(colour >> 9) & 7])
+            )  # fmt: skip
+
+    def _draw_to(self, x: int) -> None:
+        """Draw the line's pixels from where it had got to up to ``x``."""
+        first = self._drawn
+        last = min(x, self._width)
+        if last <= first:
+            return
+        if not self.vdp.display_enabled:
+            # The display was turned off part way along the line: the rest is the
+            # backdrop, as the border stage gives (Kabuto, "Effects of 'disable
+            # display'"; what the planes really show there is not modelled).
+            backdrop = self._backdrop
+            out = self._out
+            for x in range(first, last):
+                out[x] = backdrop
+            self._drawn = last
+            return
+        if self.cram_dirty:
+            # CRAM changed part way along the line: the rest of it is drawn with the
+            # new colours, and the pixels already drawn keep the ones they had.
+            self._palette = self._make_palette()
+            self.cram_dirty = False
+            self._palettes[self._row].append((first, self._palette))
+        self._plane_span(first, last)
+        self._mix(self._out, self._line_a, self._line_b, self._line_s, first, last,
+                  self._backdrop)  # fmt: skip
+        self._drawn = last
 
     # -- the mixer ----------------------------------------------------------------
 
     def _mix(self, out: bytearray, line_a: list[int], line_b: list[int], line_s: list[int],
-             width: int, backdrop: int) -> None:  # fmt: skip
-        """Priority and shadow/highlight, pixel by pixel.
+             first: int, last: int, backdrop: int) -> None:  # fmt: skip
+        """Priority and shadow/highlight, pixel by pixel, over ``first``..``last`` - 1.
 
         Priority (CMD ``genvdp.txt`` 14): backdrop < B low < A low < sprite low <
         B high < A high < sprite high. Shadow/highlight (Kabuto, "S/H"): the three
@@ -464,7 +586,7 @@ class Renderer:
         debug = self.vdp.debug_register
         force = (debug >> 7) & 3
         blank = bool(debug & 0x40)
-        for x in range(width):
+        for x in range(first, last):
             av = line_a[x]
             bv = line_b[x]
             sv = line_s[x]
@@ -528,6 +650,7 @@ class Renderer:
 
     def start_frame(self) -> None:
         """A new frame begins: the rows drawn so far are the finished picture."""
+        self.finish_line()
         if self.rows:
             self.height = self.rows
         self.rows = 0
@@ -558,13 +681,23 @@ class Renderer:
         )
 
     def frame_rgb(self) -> list[list[int]]:
-        """The picture as rows of RGB888, each row through the palette it was drawn
+        """The picture as rows of RGB888, each pixel through the palette it was drawn
         with: a game that rewrites CRAM part way down a frame (CMD's shadow/highlight
-        tests do, a band at a time) keeps each band's colours."""
+        tests do, a band at a time) keeps each band's colours, and one that rewrites it
+        part way along a line keeps each part's. CRAM dots are laid over the result."""
         width, _height, rows = self.frame()
-        current = self._palette or self._make_palette()
+        default = [(0, self._palette or self._make_palette())]
         out = []
         for index, row in enumerate(rows):
-            palette = self._palettes[index] or current
-            out.append([palette[value >> SHADE_SHIFT][value & 0x3F] for value in row[:width]])
+            palettes = self._palettes[index] or default
+            line = [0] * width
+            for span, (start, palette) in enumerate(palettes):
+                stop = palettes[span + 1][0] if span + 1 < len(palettes) else width
+                for x in range(start, min(stop, width)):
+                    value = row[x]
+                    line[x] = palette[value >> SHADE_SHIFT][value & 0x3F]
+            for x, colour in self._dots[index]:
+                if x < width:
+                    line[x] = colour
+            out.append(line)
         return out
