@@ -78,12 +78,13 @@ class Lockup(Exception):
 class Board:
     """Memory maps and devices for one :class:`Machine`."""
 
-    def __init__(self, machine: Machine, cartridge: Cartridge | None) -> None:
+    def __init__(self, machine: Machine, cartridge: Cartridge | None, *,
+                 pads: tuple[object, object] | None = None) -> None:  # fmt: skip
         self.machine = machine
         self.cartridge = cartridge if cartridge is not None else Cartridge(b"")
         self.ram = bytearray(0x10000)
         self.z80_ram = bytearray(0x2000)
-        self.io = IOChip(machine.version_register)
+        self.io = IOChip(machine.version_register, pads)  # type: ignore[arg-type]
         self.vdp = VDP(machine, self)
         #: The two sound chips.  Both are lazy: they catch up to the master clock of
         #: an access before it, and to the board's own clock when a caller drains
@@ -104,6 +105,11 @@ class Board:
         self.z80_bus_requested = False
         #: TMSS: the VDP is locked until "SEGA" is written to $A14000 (Manual p. 94).
         self.tmss_register = 0
+        #: The boot ROM, when one is fitted (:meth:`install_tmss_rom`), and the
+        #: cartridge it stands in for. Bit 0 of $A14101 chooses between them.
+        self.tmss_rom: object | None = None
+        self.tmss_cartridge: Cartridge | None = None
+        self.tmss_cart_selected = True
         self.m68k: M68000CPU | None = None  # set by the system; read for open bus
         #: The master clock at which the current CPU step started, set by the system.
         self.step_start = 0
@@ -152,6 +158,44 @@ class Board:
         self.z80_busack: Callable[[int], int] = lambda mclk: mclk
         #: Called when the Z80's reset line is released or asserted (True = held).
         self.on_z80_reset: Callable[[bool], None] = lambda held: None
+
+    # -- TMSS ------------------------------------------------------------------
+
+    def install_tmss_rom(self, image: bytes) -> None:
+        """Fit the TMSS boot ROM, which a TMSS console powers up running.
+
+        A TMSS console has a 16 KB ROM of its own where the cartridge would be, and
+        bit 0 of $A14101 chooses between the two; the boot program switches to the
+        cartridge to look at its header, back to itself to draw the licence screen,
+        and to the cartridge for good before jumping to its start vector
+        (``reference/src/TMSS-Disassembly``, ``RAM_Code``). The two are swapped here
+        rather than tested for on every access, so a board without a boot ROM costs
+        nothing -- which is also why a boot ROM is something a caller asks for: every
+        run before milestone 7 put the cartridge on the bus from power-on, and the
+        acceptance runs of milestones 1 to 6 would all move if that changed.
+        """
+        from .cartridge import BootROM
+
+        self.tmss_rom = BootROM(image)
+        self.tmss_cartridge = self.cartridge
+        self.cartridge = self.tmss_rom  # type: ignore[assignment]
+        self.tmss_cart_selected = False
+
+    @property
+    def game_cartridge(self) -> Cartridge:
+        """The cartridge, whichever of it and the boot ROM is on the bus now."""
+        if self.tmss_cartridge is not None:
+            return self.tmss_cartridge
+        return self.cartridge
+
+    def _tmss_select(self, cartridge: bool) -> None:
+        """Bit 0 of $A14101: 1 puts the cartridge on the bus, 0 the boot ROM."""
+        if self.tmss_rom is None or cartridge == self.tmss_cart_selected:
+            return
+        self.tmss_cart_selected = cartridge
+        self.cartridge = (  # type: ignore[assignment]
+            self.tmss_cartridge if cartridge else self.tmss_rom
+        )
 
     # -- time ----------------------------------------------------------------
 
@@ -517,7 +561,7 @@ class Board:
     def _system_read_word(self, address: int) -> int:
         offset = address & 0xFFFF
         if offset < 0x20:
-            value = self.io.read(address | 1)
+            value = self.io.read(address | 1, self.m68k_access_clock())
             return value | (value << 8)
         if offset & 0xFF00 == 0x1100:
             # Bit 0 of the MSB is 1 while the 68000 cannot use the Z80's bus; the
@@ -536,11 +580,17 @@ class Board:
                 return value | (value << 8)
         return self.open_bus_msb()
 
-    def _system_write(self, address: int, high: int, low: int, *, word: bool) -> None:
-        """A write to $A1xxxx: ``high`` is what D15-D8 carry, ``low`` D7-D0."""
+    def _system_write(self, address: int, high: int, low: int, *, word: bool,
+                      mclk: int | None = None) -> None:  # fmt: skip
+        """A write to $A1xxxx: ``high`` is what D15-D8 carry, ``low`` D7-D0.
+
+        ``mclk`` is when the write happens; the I/O chip needs it because a 6-button
+        pad counts the *edges* of TH (:mod:`megadrive_python.io`). It defaults to the
+        68000's own access clock; the Z80's bank window passes its own.
+        """
         offset = address & 0xFFFF
         if offset < 0x20:
-            self.io.write(address, low)
+            self.io.write(address, low, self.m68k_access_clock() if mclk is None else mclk)
         elif offset & 0xFF00 == 0x1100:
             request = bool(high & 1)
             t = self.m68k_access_clock()
@@ -572,6 +622,12 @@ class Board:
                 self.on_z80_reset(held)
         elif offset & 0xFF00 == 0x3000:
             self.cartridge.write_time(address | 1, low)
+        elif offset & 0xFF00 == 0x4100:
+            # $A14101 bit 0: the cartridge (1) or the TMSS boot ROM (0). The boot
+            # program reaches it with BSET and BCLR, so only bit 0 of the byte
+            # written matters (the disassembly's ``RAM_Code``); MAME watches the
+            # same word (``mdconsole.cpp`` ``tmss_swap_w``).
+            self._tmss_select(bool(low & 1))
         elif offset & 0xFFFC == 0x4000:
             # The TMSS register takes "SEGA" as a long, two words or four bytes.
             if word:
@@ -637,7 +693,7 @@ class Board:
         if top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         if top == 0xA1 and address & 0xFFFF < 0x20:
-            return self.io.read(address)
+            return self.io.read(address, self.step_start)
         if 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")
         return 0xFF
@@ -655,6 +711,6 @@ class Board:
         elif top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         elif top == 0xA1:
-            self._system_write(address, value, value, word=False)
+            self._system_write(address, value, value, word=False, mclk=self.step_start)
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")
