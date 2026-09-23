@@ -373,6 +373,20 @@ READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
 DMA_READ_MCLK = 16
 #: A 68000 bus cycle without wait states: 4 clocks.
 WRITE_CYCLE_MCLK = 28
+#: A 68000-memory transfer's fixed start-up, before its first word is read.
+#:
+#: Kabuto ("DMA speed", hardware-measured research) states the cost of a fast transfer
+#: as ``words * 2.4 + 5.6`` 68000 cycles: the board reproduced his slope within 2 % and
+#: had no mechanism at all for his **+5.6**, so a one-word transfer cost it about one
+#: cycle where his formula says eight (milestone 5, open item 15).  Nuked-MD
+#: (die-derived) then measured the same transfer on the die: 11.0 68000 cycles for one
+#: word and +8.0 fitted over 1 to 512 (milestone 6), which corroborates that the
+#: start-up is real and puts it on Kabuto's side of the question rather than the
+#: board's.  The two disagree in size, so the **hardware source is the judge**: the
+#: board charges Kabuto's own 5.6 cycles, 39 MCLK (5.57 cycles, the rounding to whole
+#: master clocks), and the referee's remaining 2.4 cycles are named rather than fitted
+#: away (docs/worklog.md, the timing session).
+DMA_STARTUP_MCLK = 39
 #: A read of the HV counter (or the status register) sees the counters as they stand at
 #: the first pixel-clock edge at or after this many MCLK into the 68000's bus cycle.
 #: Fitted to Nemesis's logic-analyser captures (docs/timing.md, "HV counter
@@ -1095,8 +1109,9 @@ class VDP:
         self.transfer_active = True
         self.transfer_cached = False
         # The first word is fetched once the write that started the transfer is over,
-        # not from where it began: "the VDP takes the bus once the write ... is over".
-        self.transfer_next_read = mclk + WRITE_CYCLE_MCLK - DMA_READ_MCLK
+        # not from where it began ("the VDP takes the bus once the write ... is over"),
+        # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
+        self.transfer_next_read = mclk + WRITE_CYCLE_MCLK + DMA_STARTUP_MCLK - DMA_READ_MCLK
         self._advance(mclk, lambda: not self.transfer_active)
         return max(0, self.mclk - (mclk + WRITE_CYCLE_MCLK))
 

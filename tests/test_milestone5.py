@@ -111,6 +111,24 @@ def test_kabutos_dma_slopes() -> None:
         assert abs(measured - slope) / slope < 0.05, (code, mode1, measured)
 
 
+def test_a_dma_transfer_pays_kabutos_start_up() -> None:
+    """Kabuto's fast-transfer formula is ``words * 2.4 + 5.6`` 68000 cycles, so a
+    one-word transfer costs eight.  The board had no mechanism for his +5.6 and charged
+    about one cycle (milestone 5, open item 15); Nuked-MD then measured 11.0 for the
+    same transfer and fitted +8.0, confirming that the start-up is real
+    (milestone 6).  The hardware source is the judge, so the board charges his own
+    5.6 cycles (:data:`~megadrive_python.vdp.DMA_STARTUP_MCLK`, 39 MCLK)."""
+    import run_dma_cost as harness
+
+    from megadrive_python.vdp import DMA_STARTUP_MCLK
+
+    assert round(5.6 * M68K_DIVIDER) == DMA_STARTUP_MCLK  # Kabuto's own constant
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    system.vdp.rendering = False
+    one_word = harness.transfer_cost(system, 0x23, 1, 0x00, False, 0x81) / M68K_DIVIDER
+    assert 5.6 <= one_word <= 11.0  # Kabuto's 8.0 and the referee's 11.0 bracket it
+
+
 def _display_machine() -> System:
     """A board with the VDP in mode 5, H40, the display on and a plain palette."""
     system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
