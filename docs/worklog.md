@@ -2042,3 +2042,31 @@ cause, or a real difference in what the ROM does on an FC1004), or leave it?
 | `0ae7a6a` | Milestone 6's record: the worklog, the certification record, and the open items in `undocumented-behavior.md`, `timing.md`, `polish.md` and `README.md` |
 
 **End of milestone 6.** Stopping here, as the working agreement says.
+
+## Decisions (the user, 2026-09-23), answering milestone 6's questions
+
+A focused **timing session** takes these together, before milestone 7 and before
+milestone 8's sweep: the sweep compares thousands of frames against MAME, and
+every timing change moves its results, so the sweep runs once, on corrected
+timing.
+
+1. **Adopt the one extra 68000 clock on $A00000-$A0FFFF accesses.** Nuked-MD
+   (die-derived) and MAME agree, which is as close to a judge as this has; it
+   also deletes a named lockstep difference class. Re-record the MAME traces and
+   re-run the milestone-1 replay.
+2. **Adopt the arbiter's propagation on the bus grant** (the referee's ~7.4
+   68000 cycles), keeping UM0080's machine-cycle rule underneath it: the
+   specification says *when* the Z80 lets go, the referee says how long the
+   arbiter takes to say so. Label it die-derived.
+3. **The work-RAM refresh rule is investigated, with a limit.** It is fitted
+   machinery that does not generalise (806-819 in a dense loop, 694-699 in
+   `wtest`, nothing in 600-1400 for the capture ROM). Try to find the real
+   mechanism from the referee; if a rule cannot be found that fits the referee
+   *and* keeps milestone 2's capture agreement, keep 805 with the difference
+   named, and say what was tried. Do not spend the session on it.
+4. **Adopt the DMA start-up cost** from the referee, checked against Kabuto's
+   +5.6 and re-run against VDPFIFOTesting and `run_dma_cost.py`.
+5. **Chase the Z80 wait-state bias** (board 3.55, referee 2.74, MoD's hardware
+   2.93) in the same pass: it is the same arbiter arithmetic as 2.
+6. **Leave `SpriteMaskingTestRom.bin` stalling the referee**: it looks like the
+   referee's own limitation, and the ROM is judged by Nemesis's photographs.
