@@ -2463,6 +2463,20 @@ milestone 8's triage looks for?
 | `7558425` | How long the 68000 really holds the bus |
 | `3ae1498` | The grant's propagation applies with the Z80 held too |
 | `647c283` | The timing session's record (worklog, certification record, open items, polish, timing, README) |
+| `23837e5` | The rest of the record: speed, Overdrive 2, the picture, and the questions |
+| `ccdb63b` | Re-fit the grant's propagation on the corrected release rule |
+
+The last of those is worth reading as a lesson rather than a change: the
+propagation constant had been fitted while the board still charged the whole
+four-clock bus cycle for Kabuto's `a`, and correcting that moved the quantity it
+was fitted to. It was caught by re-running every acceptance script **at the final
+commit** rather than trusting the number each change was measured with, which is
+worth doing whenever a session changes two things that touch the same clock.
+Re-run there: the 288 HV/status capture dumps (8,762,415 of 8,847,360 words, to
+the word), the sprite masking ROM (0 of 18), VDPFIFOTesting on all nine machines
+(122/122, 114/122 on genesis3), `gen_test_z80_bus`, `run_bus_arbiter.py`,
+`run_nuked_md.py` `arbiter`, `busack` and `roms`, Overdrive 2's DAC rate and the
+suite.
 
 **End of the timing session.** Milestone 7 next, then milestone 8's sweep on this
 timing.
