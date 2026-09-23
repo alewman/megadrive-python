@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from .arbiter import BUS_CYCLE, LOOKAHEAD, MAX_RELEASE, bank_access_delay
+from .arbiter import AS_LOW_MCLK, MAX_RELEASE, bank_access_delay
 from .cartridge import Cartridge
 from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
@@ -125,9 +125,10 @@ class Board:
         #: this off along with ``refresh_enabled``, which it also needs for the 68000's
         #: access grid.
         self.arbiter_enabled = True
-        #: The master clock of each 68000 bus cycle started in the step under way, in
-        #: order: the arbiter reads it to find how long the 68000 still needs the bus.
-        self.m68k_accesses: list[int] = []
+        #: Each 68000 bus cycle started in the step under way, in order, as
+        #: ``[master clock /AS fell, master clocks it stays down]``: the arbiter reads
+        #: it to find how long the 68000 still needs the bus (:meth:`_m68k_release`).
+        self.m68k_accesses: list[list[int]] = []
         #: Master clocks the Z80 has been held during its current step, and master
         #: clocks the 68000 owes for Z80 bank accesses made in its wake (they are added
         #: to its next step: the Z80 runs behind it, so the instruction they really fell
@@ -196,13 +197,23 @@ class Board:
         """
         self.stall += Z80_SPACE_STALL
         self.z80_space_stall += Z80_SPACE_STALL
+        if self.arbiter_enabled and self.m68k_accesses:
+            # The bus cycle itself is that much longer, as it is for a refresh stretch.
+            # (Nothing turns on it: the Z80 is stopped whenever the 68000 reaches its
+            # space, so no bank access can be waiting for this one to end.)
+            self.m68k_accesses[-1][1] += Z80_SPACE_STALL
 
     def _bus_cycle(self, address: int) -> None:
         """One 68000 bus cycle about to start at ``address``: its refresh stalls, and
-        its place in the grid the arbiter reads (:meth:`_m68k_release`)."""
+        its place in the grid the arbiter reads (:meth:`_m68k_release`).
+
+        The grid holds ``[start, span]``: the master clock /AS fell and how long it
+        stays down, which a refresh stretch lengthens.
+        """
         t = self.m68k_access_clock()
-        if self.arbiter_enabled:
-            self.m68k_accesses.append(t)
+        grid = self.m68k_accesses if self.arbiter_enabled else None
+        if grid is not None:
+            grid.append([t, AS_LOW_MCLK])
         if t >= self.cart_refresh_due:
             self.cart_refresh_due += (
                 (t - self.cart_refresh_due) // CART_REFRESH_MCLK + 1
@@ -210,28 +221,34 @@ class Board:
             if address < 0x800000:
                 self.stall += CART_REFRESH_STALL
                 t += CART_REFRESH_STALL
+                if grid is not None:
+                    grid[-1][1] += CART_REFRESH_STALL
         if address >= 0xE00000 and t >= self.ram_refresh_due:
             self.stall += RAM_REFRESH_STALL
             self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
+            if grid is not None:
+                grid[-1][1] += RAM_REFRESH_STALL
 
     # -- the arbiter ---------------------------------------------------------
 
     def _m68k_release(self, t: int) -> int:
-        """Kabuto's ``a``: the 68000 cycles until the 68000 has finished the bus cycle
-        it is on, for a Z80 request at master clock ``t``.
+        """Kabuto's ``a``: the 68000 cycles until the 68000 lets go of the bus, for a
+        Z80 request at master clock ``t``.
 
-        "If the next 68k access 2 cycles ahead or less or already ongoing the 68k will
-        finish it first ... Thus there is an initial delay of 1 to 6 cycles" (Kabuto,
-        footnote 1). The board knows where each of the step's accesses began
-        (:meth:`_bus_cycle`); each takes four 68000 clocks, m68000-python modelling no
-        wait states of its own.
+        "Thus there is an initial delay of 1 to 6 cycles. (Typically 1 to 4; up to 6
+        cycles if the last access is delayed by the refresh logic.)" (Kabuto, footnote
+        1). The board knows where each of the step's bus cycles began and how long it
+        held /AS (:meth:`_bus_cycle`, :data:`~megadrive_python.arbiter.AS_LOW_MCLK`
+        plus whatever the refresh stretched it by). An access the 68000 has not begun
+        holds nothing: the bus is free in the 10 MCLK between one cycle's /AS rising
+        and the next one's falling, which is what Nuked-MD's bus log shows and what
+        makes Kabuto's own range come out (docs/worklog.md, the timing session).
         """
         release = 1
-        span = BUS_CYCLE * M68K_DIVIDER
-        for start in self.m68k_accesses:
+        for start, span in self.m68k_accesses:
             if start + span <= t:
                 continue
-            if start - t > LOOKAHEAD * M68K_DIVIDER:
+            if start > t:
                 break
             left = -(-(start + span - t) // M68K_DIVIDER)
             if left > release:

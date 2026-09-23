@@ -28,6 +28,18 @@ What is modelled here, and from where (docs/validation.md ranks the sources):
       delay the 68k will effectively get before it can keep on doing its business
       again:  68k delay = ((Z80 delay) * 15 + subcycle + 46) / 7 - a."
 
+  What the timing session changed in that arithmetic is not the formula but the
+  ``a`` it is given: the 68000 holds the bus for the /AS-low part of its cycle
+  (:data:`AS_LOW_MCLK`), not for all four of its clocks, and an access it has not
+  started yet holds nothing.  Kabuto's "If the next 68k access 2 cycles ahead or less
+  ... the 68k will finish it first" was modelled as a look-ahead and made ``a`` too
+  large: in his own ``jmp (a0)`` case it produced 5s and 6s that neither Nuked-MD nor
+  MoD sees, a mean of 3.56 wait states against the referee's 2.74 and MoD's 2.93.
+  With the /AS-low span and no look-ahead the board reproduces the referee's whole
+  distribution (docs/worklog.md, the timing session).  Kabuto's own sentence is not
+  contradicted: a 68000 cycle is four clocks, and the next one does begin within two
+  -- the bus is simply free for the 10 MCLK in between.
+
   MoD's logic analyser on a Genesis 2 (forum t=1661; hardware-captured) measures the
   same thing from the other end and is what the model is judged against:
   "!BG will go low 2 68K cycles later ... The total number of wait states that results
@@ -39,12 +51,15 @@ What is modelled here, and from where (docs/validation.md ranks the sources):
 - **The bus grant to the 68000** (BUSREQ at $A11100 to BUSACK): the Z80 samples BUSREQ
   "with the rising edge of the last clock period of any machine cycle" and releases
   the bus after it (Zilog UM0080, "Bus Request/Acknowledge Cycle"; specification
-  tier), so the grant falls at the end of the machine cycle in progress. No hardware
+  tier), so the Z80 lets go at the end of the machine cycle in progress.  No hardware
   measurement of the Mega Drive's own delay is published: MoD's ``gen_test_z80_bus``
   counts it twice but his numbers are not in the pinned material, and his t=1661
-  measurement is of the other direction. :func:`busack_grant` is therefore the
-  specification's rule and nothing more, and what it makes that test ROM print is
-  recorded rather than claimed (docs/undocumented-behavior.md, open item 8).
+  measurement is of the other direction.  Milestone 5 therefore modelled the
+  specification's rule and nothing else, and milestone 6 measured what that leaves
+  out: the arbiter's own propagation, which Nuked-MD puts at about 7.15 68000 cycles.
+  :func:`busack_grant` is the two together -- the specification says *when* the Z80
+  lets go, the referee says how long the board takes to say so
+  (:data:`BUSACK_PROPAGATION_MCLK`; docs/undocumented-behavior.md, open item 8).
 
 None of this is modelled by MAME, which grants the bus at once and adds one 68000
 clock to each $A00000-$A0FFFF access instead, so :attr:`Board.arbiter_enabled` turns
@@ -57,11 +72,19 @@ from __future__ import annotations
 #: The longest the 68000 is given to finish the access it is on before it lets go
 #: (Kabuto's ``a``, "1 to 6").
 MAX_RELEASE = 6
-#: An access the 68000 has not started yet still delays the grant if it begins within
-#: this many 68000 cycles ("If the next 68k access 2 cycles ahead or less").
-LOOKAHEAD = 2
-#: A 68000 bus cycle without wait states, in 68000 clocks.
-BUS_CYCLE = 4
+#: How long the 68000 actually holds the bus for one bus cycle, in master clocks.
+#:
+#: A 68000 bus cycle is four clocks (28 MCLK), but the bus belongs to the 68000 only
+#: while /AS is asserted: a requester takes it once /AS and /DTACK are negated (68000
+#: UM, "Bus Arbitration").  The board charged the whole 28 MCLK until the timing
+#: session, which made the 68000 look continuously on the bus in a tight loop and
+#: Kabuto's ``a`` come out systematically too large.  Nuked-MD's bus log measures the
+#: real figure directly: in a ``jmp (a0)`` loop 1,706 of its 1,766 68000 cycles hold
+#: /AS low for exactly **18 MCLK** with a 10-MCLK gap to the next, and the other 60
+#: hold it 32 -- 18 plus the cartridge refresh's 14, which is Kabuto's "up to 6 cycles
+#: if the last access is delayed by the refresh logic" (docs/worklog.md, the timing
+#: session).
+AS_LOW_MCLK = 18
 #: "After the last access finished there's a delay of 3 cycles for the bus to be
 #: granted", and "The access itself takes 2 cycles" (Kabuto, footnote 1).
 GRANT = 3

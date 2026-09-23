@@ -15,7 +15,12 @@ from __future__ import annotations
 import pytest
 from conftest import ROOT  # noqa: F401  (puts scripts/ on the path)
 
-from megadrive_python.arbiter import BUSACK_PROPAGATION_MCLK, bank_access_delay, busack_grant
+from megadrive_python.arbiter import (
+    AS_LOW_MCLK,
+    BUSACK_PROPAGATION_MCLK,
+    bank_access_delay,
+    busack_grant,
+)
 from megadrive_python.cartridge import Cartridge
 from megadrive_python.machine import M68K_DIVIDER, MACHINES, MCLK_PER_LINE
 from megadrive_python.system import System
@@ -53,6 +58,27 @@ def test_bus_grant_waits_for_the_end_of_the_machine_cycle() -> None:
     assert busack_grant(60, ends) == 60 + p
     assert busack_grant(61, ends) == 105 + p
     assert busack_grant(200, ends) == 200 + p
+
+
+def test_the_68000_holds_the_bus_only_while_as_is_low() -> None:
+    """A 68000 bus cycle is four clocks but the bus is the 68000's only while /AS is
+    asserted (68000 UM, "Bus Arbitration"), which Nuked-MD measures as 18 of the 28
+    MCLK.  So Kabuto's ``a`` is 3 at the start of a cycle, 1 at its end, and 1 again in
+    the 10 MCLK before the next one begins -- never the 4, 5 and 6 the board charged
+    while it held the whole cycle and looked ahead to the next
+    (docs/worklog.md, the timing session)."""
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    board = system.board
+    board.m68k_accesses = [[0, AS_LOW_MCLK], [28, AS_LOW_MCLK]]
+    assert board._m68k_release(0) == 3  # the whole of the first cycle is left
+    assert board._m68k_release(14) == 1  # 4 MCLK of it left
+    assert board._m68k_release(18) == 1  # /AS has risen: the bus is free
+    assert board._m68k_release(24) == 1  # still free, 4 MCLK before the next cycle
+    assert board._m68k_release(28) == 3  # the second cycle has begun
+    # A refresh stretch lengthens the cycle, which is Kabuto's "up to 6 cycles if the
+    # last access is delayed by the refresh logic".
+    board.m68k_accesses = [[0, AS_LOW_MCLK + 21]]
+    assert board._m68k_release(0) == 6
 
 
 def test_the_arbiter_charges_mods_measured_delays() -> None:
