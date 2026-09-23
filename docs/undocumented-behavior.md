@@ -67,8 +67,13 @@ source, the way sms-python does.
    before line 240 makes the VDP forget the bottom border, giving up to 243
    stable lines on NTSC (Kabuto, "V28/V30 tricks").
 5. **CRAM dots**: a CRAM write during the display shows the written colour for
-   a pixel at the access slot's position. BlastEm emulates it. Kabuto's
-   "Access timing" says which slots fall in visible pixels.
+   a pixel at the access slot's position. BlastEm emulates it (``vdp.c``
+   ``write_cram``, lines 443-451: it puts the newly written colour into the one
+   output pixel of the current slot), and is the only implementation pinned here,
+   so this is emulator-derived. Kabuto's "Access timing" says which slots fall in
+   visible pixels; he describes the dots only in passing ("Writing the debug
+   register can also cause a glitched pixel, similar to a CRAM dot") and never
+   says what colour one shows. Modelled in milestone 5.
 6. **The debug register** $C0001C: layers can be forced, disabled or mixed, and
    the PSG can be made louder; writes can corrupt VRAM, sprites and reads.
    Overdrive 2 depends on parts of it (Kabuto, "The mighty debug register";
@@ -120,7 +125,23 @@ source, the way sms-python does.
     shadowed", with G in his mixer), CMD's `ste.htm` and Genesis Plus GX all say so;
     MAME's backdrop stays at normal intensity, which is most of what the board and MAME
     differ by on the S/H test ROMs (milestone 3).
-19. **A VSRAM read past its 40th word** returns the last word the renderer read
+19. **An idle line has one access slot fewer per refresh, not two.** Exodus's
+    ``GetPixelClockTicksUntilNextAccessSlot`` jumps from a refresh block's start to
+    six pixels past it, losing two slots each and leaving 161 (H32) and 198 (H40)
+    slots on a line with the display off. Kabuto's access pattern has one ``r`` per
+    group, and the Manual's DMA transfer capacity table (PDF page 44) gives 167 and
+    205 bytes a line in blanking, which is 171 - 4 and 210 - 5: one slot per
+    refresh. The board follows the two hardware-tier sources, which puts its DMA
+    rates on Kabuto's measured formulas and reproduces the Manual's whole table
+    ([timing.md](timing.md); milestone 5).
+20. **Where a mid-line write lands.** The board draws a line in pieces and lets a
+    write take effect from the pixel its access slot's H counter names (the active
+    display being internal H $000 onwards). Kabuto places the second of a line's
+    mid-tiles slots "at the pixel with X=-3 (display area coordinates)", which would
+    put the output about 21 pixels behind the H counter -- a pipeline delay the board
+    does not model. Nothing pinned measures it directly, and r57shell's redraw-timing
+    tests, which would, cannot be reached until the 6-button pad exists (milestone 7).
+21. **A VSRAM read past its 40th word** returns the last word the renderer read
     from VSRAM, which follows the H counter (the column's entry, or the first two
     in full-screen vertical scroll; entries $26 AND $27 past the end): Exodus's
     model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
@@ -245,22 +266,42 @@ source, the way sms-python does.
    twice (with the Z80 running 4-T-state and 6-T-state machine cycles) but its
    hardware values are not published in the pinned material; his logic-analyser
    measurement of 2 68000 cycles from /BR to /BG (forum t=1661) is of the other
-   direction, the Z80 reaching the 68000's bus. The board grants at once, as MAME
-   does, so both counts read 0000. A model of the real delay (the Z80 finishing its
-   machine cycle, the 68000 held by the arbiter until BUSACK) was written and tried in
-   milestone 3: it moves the Z80/68000 interleaving off MAME's, which the milestone-1
-   lockstep replays instruction for instruction, so it waits for milestone 5's
-   arbiter work ([worklog.md](worklog.md)).
+   direction, the Z80 reaching the 68000's bus. **Modelled in milestone 5** from the
+   specification alone: BUSREQ "is sampled by the CPU with the rising edge of the last
+   clock period of any machine cycle" and the bus is released after it (Zilog UM0080),
+   so the grant falls at the end of the machine cycle in progress, and a 68000 access
+   to the Z80's space before then is held by the arbiter rather than failing. On MoD's
+   ROM the delays that gives are 0 to 9 68000 cycles, all shorter than the 8-cycle
+   `move.b (a2),dN` the ROM measures with, so **both its counters still print 0000** --
+   the same result as before it was modelled, and still not comparable with hardware.
+   MAME grants at once and models no arbiter, so the milestone-1 lockstep turns the
+   whole arbiter off (`Board.arbiter_enabled`), as it already does the refresh.
 9. **What a VRAM write in 128 KB mode does to the picture.** The board models the
    write path from Kabuto's formulas (one byte per word, the address bits rearranged)
    but keeps reading VRAM as in 64 KB mode, where the hardware shows garbage. Nothing
    pinned judges either half; Overdrive 2 is the case.
-10. **Mid-line VDP writes.** The board renders a line at the point its active display
-   begins, so a VRAM, CRAM or register write made *along* a line lands at the next
-   line. r57shell's redraw-timing tests depend on the hardware's behaviour here and do
-   not pass; CRAM dots (milestone 5) are the same machinery.
+10. ~~**Mid-line VDP writes**~~: modelled in milestone 5. A line is set up where its
+    active display begins and then drawn in pieces, each write landing at the pixel of
+    its own access slot, and a CRAM write in the display leaves its dot. What is still
+    open is the pipeline offset (item 20 of "The VDP") and judging any of it:
+    r57shell's redraw-timing tests poll the pad seven times a frame -- the 6-button
+    handshake -- so neither the board nor MAME leaves their first screen until
+    milestone 7 fits that pad.
 11. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
-   romset's symlink is broken, and the forum link is a mega.nz page.
+    romset's symlink is broken, and the forum link is a mega.nz page.
 12. **The analogue path's corner frequency and the PSG/FM mixing ratio** are fitted
-   to the MDFourier recordings, not read from a document; no source gives either.
+    to the MDFourier recordings, not read from a document; no source gives either.
 13. **What a discrete YM2612's ports 1-3 read** (above, "The YM2612" item 7).
+14. **Where a Z80 bus access falls inside its instruction.** z80-python reports only
+    an instruction's total, so the arbiter places each bank access at the Z80 step's
+    start plus the delays already charged. MoD measured that on a `POP` the 68000
+    "manages to sneak in a bus operation in between the first and second Z80 read", so
+    the second read "seems to always have at least 4 wait states" and the pair averages
+    3.5; the board, placing both reads almost together, charges 2.53 wait states on
+    that experiment where it charges 3.36 on his single-read one
+    ([worklog.md](worklog.md), milestone 5). A core-side accessor would settle it
+    ([polish.md](polish.md)).
+15. **The DMA's start-up cost.** Kabuto's fast-transfer formula has a +5.6-cycle
+    intercept, so a one-word transfer costs 8 68000 cycles on his hardware; the board
+    charges about 1, having no mechanism for a start-up. Its slopes are within 2 % of
+    his ([timing.md](timing.md), "DMA").

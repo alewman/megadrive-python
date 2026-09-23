@@ -190,11 +190,34 @@ H32: Hssss AsaaBsbb ((A~aaBSbb)*3 AraaBSbb)*4 ~~ s*13 ~ s*13 ~
 
 So H40 has 18 external slots a line in the active display, H32 16 (MoD, forum
 t=1291: 171 slots, 4 refresh, 16 CPU). With the display disabled, and during
-vertical blanking, every slot except the refresh slots is external (Kabuto).
-Where the external slots fall matters for the FIFO: a 68000 write that finds
-the FIFO full waits for the next external slot. Kabuto lists which slots land
-in visible pixels ("Access timing"), which is what CRAM writes during the
-display (the "CRAM dots") depend on.
+vertical blanking, every slot except the refresh slots is external (Kabuto:
+"When display is disabled the VDP still does those refresh cycles and uses all
+other cycles as access slots"). Where the external slots fall matters for the
+FIFO: a 68000 write that finds the FIFO full waits for the next external slot.
+
+**How many slots an idle line has** (settled in milestone 5). Exodus's
+`GetPixelClockTicksUntilNextAccessSlot` skips *two* slots per refresh, which
+leaves 161 in H32 and 198 in H40. Two hardware sources say one: Kabuto's
+pattern above has a single `r` per group, and the Manual's DMA transfer
+capacity table (below) gives 167 and 205 bytes a line in blanking, which is
+171 − 4 and 210 − 5. The board takes one slot per refresh, at the H counter
+values Exodus's own tables name as the refresh slots — five in H32 and six in
+H40, "one more than there is during an active line" (Exodus), the extra one
+falling in the horizontal blank. That gives **166 and 204**, and reproduces
+every figure of the Manual's table to one byte
+(`scripts/run_dma_cost.py`).
+
+**Where the display's pixels are.** The active display is external H $00–$9F
+in H40 and $00–$7F in H32 — internal H $000 onwards, 320 or 256 pixels (CMD
+`genvdp.txt`; the V counter increments after it, at external $A5/$85). Kabuto's
+slot groups fall into place around that: his 15 "mid-tiles" slots are the ones
+inside $000–$13F, his two "between-tiles-and-sprites" ones are $140 and $142
+just past it, and his single "mid-sprite" one is $1CE, in the blanking. What
+the board does **not** model is his statement that the second mid-tiles slot
+lands "at the pixel with X=-3 (display area coordinates)", which would put the
+output about 21 pixels behind the H counter; a mid-line write lands at the pixel
+its access slot's own H counter names (milestone 5). CRAM writes during the
+display (the "CRAM dots") appear there too.
 
 ## DMA
 
@@ -221,6 +244,19 @@ page 44) agrees with the slot counts:
 183-page scan.) With the display disabled, the blanking figure applies on
 every line.
 
+**What the board gives** (milestone 5, `scripts/run_dma_cost.py`, display off,
+68000 memory to VRAM): 16.1, 167.4, 18.1 and 205.9 bytes a line, against the
+Manual's 16, 167, 18 and 205. Per word, fitted over 64 to 512 words in H40:
+**2.38 68000 cycles** for a fast transfer (CRAM, VSRAM, VRAM in 128 KB mode)
+against Kabuto's 2.4, and **4.78** for a slow one (VRAM in 64 KB mode) against
+his 4.7. His intercepts are not reproduced: he measures +5.6 cycles of start-up
+on a fast transfer where the board charges −3.5, so a one-word transfer costs
+him 8 cycles and the board about 1. The board holds the 68000 from the end of
+the control write that starts the transfer until the last word is *read*, which
+is where his "the DMA ends while there is still data in the FIFO to be
+processed, this is why there are seemingly negative costs" comes from; the
+start-up he measured has no mechanism here and is left open.
+
 ## Bus sharing
 
 - **Z80 access to the 68000's bus** (the bank window): "delayed by 2 to 5
@@ -229,6 +265,16 @@ every line.
   measured it with a logic analyser on a Genesis 2 (forum t=1661): with the
   68000 stopped, 2–3 wait states and 2 cycles from /BR to /BG; with it running,
   4 wait states; an average just under 3 over 16 accesses.
+  Modelled in milestone 5 from Kabuto's footnote 1, which gives the arithmetic
+  behind his averages (`src/megadrive_python/arbiter.py`); the board's figures
+  are in [worklog.md](worklog.md) and `scripts/run_bus_arbiter.py` measures them
+  by running MoD's two experiments.
+- **The bus grant to the 68000** ($A11100 to BUSACK): the Z80 samples BUSREQ
+  "with the rising edge of the last clock period of any machine cycle" and lets
+  go after it (Zilog UM0080), so the grant falls at the end of the machine cycle
+  in progress and a 68000 access to the Z80's space before then is held by the
+  arbiter. No hardware measurement of the Mega Drive's own delay is published
+  ([undocumented-behavior.md](undocumented-behavior.md), open item 8).
 - **A refresh steals 2 of every 128 68000 cycles**: "every time 128 cycles
   have passed the next bus access is slowed down by 2 cycles" (Kabuto), except
   when the 68000 is writing to the VDP. After all slow-downs "the 68K seems to be
@@ -242,6 +288,11 @@ every line.
   21 MCLK, and the next falls due 805 MCLK after that access started (Nuked-MD
   allows 743-826 for the capture loop; which is right is open). In the capture
   loop that gives 143.588 MCLK per `MOVE.L (A0),(A1)+`, as the hardware.
+  With every stall the board charges, a 68000 in a `jmp (a0)` loop with the Z80
+  reading ROM keeps **481.0** of a raster line's 488.6 clocks for its own
+  instructions, which is Kabuto's "roughly 480 cycles per raster line instead of
+  the theoretical 488+4/7 ones" (`scripts/run_bus_arbiter.py --cartridge`;
+  the six lockstep games, which also pay VDP stalls, run at 468 to 475).
 - **VDP stalls**: a 68000 write to a full FIFO, or a read of VRAM/CRAM/VSRAM,
   holds the 68000 until the VDP's next external slot; a 68000-memory DMA holds
   it for the transfer. A Z80 bank access during either waits too (Kabuto).

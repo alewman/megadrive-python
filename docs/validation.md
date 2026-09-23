@@ -297,3 +297,67 @@ noise channel 1.72 dB quiet, which is left open. Per block, everything is inside
 
 **Speed** (the brief asks for the FM's cost per emulated second): see
 [worklog.md](worklog.md), milestone 4.
+
+### Milestone 5: bus timing
+
+The judges here are MoD's logic-analyser measurements on a Genesis 2 (forum t=1661;
+hardware-captured), Kabuto's own measurements (hardware-measured research), the
+Manual's DMA transfer capacity table (specification) and Nemesis's VDPFIFOTesting
+(hardware-corrected). Overdrive 2 is a stress case, never a pass/fail judge: its
+correct output depends on the VDP revision.
+
+**The arbiter's delays** (`python scripts/run_bus_arbiter.py --accesses 4000`, commit
+`21038dd`, seconds): MoD's two experiments, built as small 68000 and Z80 programs and
+run on the board.
+
+| Experiment | board, Z80 wait states | hardware | board, 68000 delay |
+| --- | --- | --- | --- |
+| 68000 in `stop #$2700`, Z80 reading the bank window | 2-3, mean 2.27 | MoD: "2-3" | 10-12, mean 10.54 |
+| 68000 in his `jmp (a0)` loop, Z80 reading | 3-4, mean 3.36 | MoD: 2-4, "about 2.93"; Kabuto: 2-5, mean 3.3 | 10-13, mean 10.95 |
+| the same, Z80 `pop`ping (his sound drivers' case) | 2-4, mean 2.53 | MoD: "at least 4 wait states" on the second read, mean 3.5 | 10-13, mean 10.43 |
+
+Kabuto's average 68000 delay is "around 11 68k cycles"; the board's is 10.4 to 11.0.
+The `pop` case is the one that does not agree, and the reason is measured rather than
+argued: the board cannot say where inside a Z80 instruction an access falls, so both
+of a `pop`'s reads land at almost the same clock, where MoD saw the 68000 "sneak in a
+bus operation" between them ([undocumented-behavior.md](undocumented-behavior.md),
+open item 14; a core change would settle it, [polish.md](polish.md)).
+
+**The 68000's own rate**, with every stall the board charges: **481.0** of a raster
+line's 488.6 clocks are left for instructions in the `jmp (a0)` harness, against
+Kabuto's "roughly 480 cycles per raster line instead of the theoretical 488+4/7 ones".
+The six lockstep games, which also pay VDP stalls, run at 468 to 475.
+
+**The bus grant** ($A11100 to BUSACK) now waits for the end of the Z80's machine cycle
+(Zilog UM0080). `python scripts/run_z80_bus_test.py`: all eight of MoD's checks still
+PASS and its two delay counters still read **0000** -- the delays the model produces on
+that ROM are 0 to 9 68000 cycles, shorter than the 8-cycle instruction it measures
+with, so the ROM cannot see them. Its hardware values are unpublished, so this is
+recorded, not claimed.
+
+**DMA cost** (`python scripts/run_dma_cost.py`, 30 s). Kabuto's formulas, fitted over
+64 to 512 words with the display off in H40: the board's **2.38** 68000 cycles a word
+for a fast transfer (CRAM, VSRAM, VRAM in 128 KB mode) against his 2.4, and **4.78**
+for a slow one (VRAM in 64 KB mode) against his 4.7 -- both inside 2 %. His intercepts
+are not reproduced (+5.6 against -3.5 on a fast transfer), so a one-word transfer costs
+8 cycles on his hardware and about 1 here; left open. The Manual's DMA transfer
+capacity table for 68000 memory to VRAM is reproduced to one byte: **16.1 / 167.4 /
+18.1 / 205.9** bytes a raster line against its 16 / 167 / 18 / 205 (H32 and H40, display
+on and off). Getting there took one correction to the idle line's access slots
+([undocumented-behavior.md](undocumented-behavior.md), "The VDP" item 19).
+
+**VDPFIFOTesting's timing tests**: `python scripts/run_vdpfifotesting.py --machine M`,
+7-8 s each, **122 of 122** on genesis, genesis-tmss, genesis2, megadrive,
+megadrive-tmss, megadrive2, megadrive-japan and megadrive2-japan, and 114 of 122 on
+genesis3 (the eight DMA Fill to VSRAM tests), unchanged from milestone 2. The timing
+tests among them -- FIFO Buffer Size, FIFO Wait States, DMA Transfer Bus Locking, FIFO
+Full Before DMA Transfer, and the seven DMA Busy Flag tests -- all pass.
+
+**Overdrive 2** (a stress case): see [worklog.md](worklog.md), milestone 5.
+
+**Milestones 1 to 4, unchanged**: the milestone-1 lockstep re-recorded and replayed for
+Sonic The Hedgehog (23,286,815 68000 and 12,728,465 Z80 instructions, 0 unexplained);
+the 288 HV/status capture dumps at the same 8,762,415 of 8,847,360 words; Nemesis's
+sprite masking ROM 0 of 18 cells differing; the nine milestone-3 test ROMs against
+MAME's frames to the same percentage as milestone 3; MAME's exit frames for the six
+lockstep games at 20 s within the same band.

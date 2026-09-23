@@ -9,7 +9,7 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 to 4 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 5 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
 (119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
@@ -25,7 +25,15 @@ models cycle by cycle: 524 million values of the YM2612's two DAC pins and its s
 byte over eighteen register streams, and 80 million input clocks of the PSG's, none
 different. `--wav` writes what a console would have played; the FM costs about three
 seconds of wall time per emulated second on PyPy, which is most of why the board runs
-at 17 to 21 frames a second with sound and 138 to 205 without. Around the code, the
+at 17 to 21 frames a second with sound and 138 to 205 without. Bus timing is in as
+well: the arbiter charges a Z80 bank access the 2 to 5 cycles Kabuto's footnote 1
+gives and the 68000 about 11, which reproduces MoD's logic-analyser range exactly with
+the 68000 off the bus and brackets his mean with it on the bus; the bus grant waits for
+the end of the Z80's machine cycle; the DMA costs 2.38 and 4.78 68000 cycles a word
+against Kabuto's measured 2.4 and 4.7, and moves the Manual's 16, 167, 18 and 205
+bytes a raster line to within one byte; and after every stall the 68000 keeps 481 of a
+line's 488.6 clocks, which is Kabuto's "roughly 480". The picture is now drawn a piece
+at a time, so a write part way along a line lands there, CRAM dots and all. Around the
 groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
@@ -74,6 +82,8 @@ See [docs/README.md](docs/README.md).
 | `scripts/run_psg_compare.py` | Milestone 4: the PSG against Nuked-PSG, input clock by input clock | yes |
 | `scripts/run_ssg_eg.py` | Milestone 4: Nemesis's SSG-EG test against his MD1600 recording, by measurement | yes |
 | `scripts/run_mdfourier.py` | Milestone 4: the MDFourier signal against the hardware recordings (a detector) | yes |
+| `scripts/run_bus_arbiter.py` | Milestone 5: MoD's two logic-analyser experiments, and the 68000's rate | yes |
+| `scripts/run_dma_cost.py` | Milestone 5: DMA cost per word and per raster line, against Kabuto and the Manual | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |

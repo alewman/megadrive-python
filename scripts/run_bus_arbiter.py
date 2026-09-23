@@ -24,8 +24,13 @@ small Z80 program into the Z80's RAM, lets the Z80 go, and then holds the 68000 
 state the experiment wants. The board's own arbiter then runs, and every delay it
 charges is recorded.
 
+It also measures what all the board's bus stalls together do to the 68000's rate,
+against Kabuto's other number: "After all these slowdowns the 68K seems to be running
+at roughly 480 cycles per raster line instead of the theoretical 488+4/7 ones."
+
     python scripts/run_bus_arbiter.py
     python scripts/run_bus_arbiter.py --accesses 20000
+    python scripts/run_bus_arbiter.py --cartridge "/data/emu/roms/megadrive/GAME.zip"
 """
 
 from __future__ import annotations
@@ -38,8 +43,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from megadrive_python.cartridge import Cartridge  # noqa: E402
-from megadrive_python.machine import MACHINES  # noqa: E402
+from megadrive_python.cartridge import Cartridge, load_image  # noqa: E402
+from megadrive_python.io import START  # noqa: E402
+from megadrive_python.machine import M68K_DIVIDER, MACHINES, MCLK_PER_LINE  # noqa: E402
 from megadrive_python.system import System  # noqa: E402
 
 # -- the 68000 programs ---------------------------------------------------------------
@@ -49,7 +55,7 @@ M68K_STOP = bytes.fromhex("4e722700")
 #: ``lea (0,pc),a0`` (pointing at the next instruction) then ``jmp (a0)``, which is
 #: MoD's second experiment verbatim: "an infinite loop using jmp (a0). This instruction
 #: takes 8 cycles and consists of 2 reads so the 68K is constantly on the bus".
-M68K_SPIN = bytes.fromhex("41fa00004ed0")
+M68K_SPIN = bytes.fromhex("41fa00024ed0")
 
 # -- the Z80 programs -----------------------------------------------------------------
 
@@ -121,9 +127,37 @@ def report(name: str, log: list[tuple[int, int]], expected: str) -> None:
     print(f"  hardware        : {expected}")
 
 
+def cycles_per_line(cartridge: str | None, machine: str, frames: int) -> tuple[float, str]:
+    """The 68000 clocks a raster line leaves for instructions, after every stall the
+    board charges: 3,420 / 7 master clocks a line less the stalls (Kabuto's "roughly
+    480 cycles per raster line instead of the theoretical 488+4/7")."""
+    if cartridge is None:
+        image, name = _rom(Z80_READ, M68K_SPIN), "the jmp (a0) harness"
+    else:
+        image, name = load_image(cartridge), Path(cartridge).stem
+    system = System(MACHINES[machine], Cartridge.from_image(image))
+    system.board.fm.enabled = False
+    pad = system.board.io.ports[0].device
+    stalled = 0
+    for frame in range(frames):
+        if frame == frames // 4:
+            pad.pressed = START
+        lines = system.vdp.frame
+        while system.vdp.frame == lines:
+            before = system.board.m68k_pending_stall
+            system.step()
+            stalled += system.board.stall + system.board.m68k_pending_stall - before
+    lines_run = frames * system.machine.lines_per_frame
+    per_line = (MCLK_PER_LINE - stalled / lines_run) / M68K_DIVIDER
+    return per_line, name
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--accesses", type=int, default=2000)
+    parser.add_argument("--cartridge", help="measure the 68000's rate on this image")
+    parser.add_argument("--machine", default="genesis", choices=sorted(MACHINES))
+    parser.add_argument("--frames", type=int, default=240)
     args = parser.parse_args()
     report(
         "68000 stopped, Z80 reading the bank window (MoD's first experiment)",
@@ -142,6 +176,11 @@ def main() -> int:
         'MoD: "the second read from the POP seems to always have at least 4 wait '
         'states ... The average across 10 reads was 3.5 cycles"',
     )
+    per_line, name = cycles_per_line(args.cartridge, args.machine, args.frames)
+    print(f"the 68000's rate on {name} ({args.frames} frames): {per_line:.1f} clocks a "
+          f"raster line for instructions, of 488.6")  # fmt: skip
+    print('  hardware        : Kabuto, "roughly 480 cycles per raster line instead of '
+          'the theoretical 488+4/7 ones"')  # fmt: skip
     print(f"{sys.implementation.name} {sys.version.split()[0]}")
     return 0
 

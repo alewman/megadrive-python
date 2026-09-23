@@ -1209,3 +1209,391 @@ whether or not it was this one.
 Also decided: **the FM's speed is its own milestone after the board is complete**.
 This pipeline stays as the reference implementation; any faster path is measured
 against it, and the cycle-exact comparison is the gate it must pass.
+
+## Session 4 (2026-09-22): milestone 5, bus timing
+
+### How the brief was read
+
+Scope is milestone 5 only: the arbiter's delays for Z80 bank accesses (Kabuto; MoD's
+logic analyser), the refresh steal, VDP stalls and DMA speed by the slot table, judged
+by VDPFIFOTesting's timing tests, Kabuto's DMA-cost formulas "reproduced within their
+stated form", and Overdrive 2 as a stress case against Kabuto's notes rather than
+pass/fail. Plus the two items earlier milestones deferred here: the Z80 bus-grant
+(BUSACK) delay, and the per-slot renderer with the CRAM dots, the latter to be kept or
+dropped on measured frames per second. Then stop.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K. The machine was
+shared throughout, which the frame-rate numbers below reflect and which is why the
+renderer's cost is also measured a second, deterministic way.
+
+### The arbiter
+
+`src/megadrive_python/arbiter.py` (95 lines) carries the two formulas and the
+quotations behind them; `board.py` and `system.py` wire them in;
+`scripts/run_bus_arbiter.py` (189 lines) measures them.
+
+#### What a Z80 bank access costs, and how it is modelled
+
+Kabuto's "The bus system" gives the averages ("delayed by 2 to 5 cycles ... The
+average Z80 delay is around 3.3 Z80 cycles, whereas the average 68k delay is around
+11 68k cycles") and his **footnote 1** gives the arithmetic behind them, measured on
+his Model 1:
+
+```text
+readdelay = a + 3 + b + 2
+Z80 delay = ((readdelay*7 + 4 - subcycle)/15
+68k delay = ((Z80 delay) * 15 + subcycle + 46) / 7 - a
+```
+
+with `a` "time until 68k finishes its last access before releasing the bus (1 to 6; 1
+to 4 if there are no refresh delays)", `b` "2 if the z80->ROM access is prolonged by a
+refresh delay, 0 if not", and `subcycle` (0 to 6) "how much ahead of the starting 68k
+cycle the z80's request was to begin with". That is `bank_access_delay`, verbatim.
+
+What the board has to supply is `a`, `b` and `subcycle`:
+
+- **`a`** needs to know where the 68000's bus cycles fall. `Board._bus_cycle` -- the
+  hook the refresh already used for every 68000 access -- now records each access's
+  master clock for the step in progress, and `_m68k_release` walks them: an access
+  under way, or one starting within Kabuto's "2 cycles ahead or less", is finished
+  first, so `a` is the clocks left of it (1 to 6).
+- **`b`** is the cartridge refresh grid ticking inside the Z80's own access. The tick
+  is *read*, not consumed: the 68000's accesses walk the same grid in `_bus_cycle`
+  and, running ahead of the Z80 in this scheduler, would otherwise always have taken
+  it first. That makes it about 14 MCLK in 896, 1.6 % of accesses.
+- **`subcycle`** is the access's master clock against the 68000's 7-MCLK grid.
+
+The Z80's share is added to its current step; **the 68000's share is owed to its next
+step** (`Board.m68k_pending_stall`), because the Z80 runs in the 68000's wake, so the
+instruction the delay really fell inside has already been executed. That is an
+approximation and is labelled as one.
+
+The access itself is placed at the Z80 step's start plus whatever it has already been
+held, because z80-python reports only an instruction's total. That is the one thing
+the model gets visibly wrong, and it is measured below rather than argued
+(docs/polish.md has the core change that would fix it).
+
+#### The bus grant (BUSACK), settled
+
+Milestone 3 measured this, implemented it and backed it out because holding the 68000
+broke the milestone-1 lockstep. It is now modelled, and here is the reasoning in full.
+
+**What the hardware evidence is.** There is no published hardware number for this
+direction. MoD's t=1661 logic-analyser counts are of the *other* direction (the Z80
+reaching the 68000's bus: "!BG will go low 2 68K cycles later"), and Kabuto's averages
+likewise. MoD's `gen_test_z80_bus` counts the BUSACK delay twice, but its hardware
+values are not in the pinned material. What there *is* is the specification: BUSREQ
+"is sampled by the CPU with the rising edge of the last clock period of any machine
+cycle", and the bus is released after it (Zilog UM0080). So the grant falls at the end
+of the machine cycle in progress, and a 68000 access to the Z80's space before then is
+held by the arbiter rather than failing.
+
+**What it costs.** Nothing, in the end, and that is the finding. The lockstep is not
+the price: MAME models no arbiter at all -- it grants at once and charges nothing for a
+Z80 bank access -- so `Board.arbiter_enabled` turns the whole of milestone 5's arbiter
+off for the replay, exactly as `refresh_enabled` has been turned off since milestone 1
+for the refresh MAME also does not model. With that, the milestone-1 lockstep replays
+Sonic The Hedgehog instruction for instruction as before (below). And on MoD's ROM the
+grant delays the model produces are **0 to 9 68000 cycles**, every one of them shorter
+than the 8-cycle `move.b (a2),dN` the ROM measures with, so **its two counters still
+print 0000** -- the same result as with the immediate grant. So the specification's
+behaviour is modelled, the regression net is intact, and the one test that could
+disagree cannot see the difference.
+
+What *would* cost the lockstep is leaving the arbiter on during it, and that was never
+the right comparison: MAME is a detector, and a detector that models none of this
+milestone's subject cannot judge it.
+
+#### The measurements, against MoD and Kabuto
+
+`scripts/run_bus_arbiter.py` builds a small cartridge for each of MoD's experiments
+(the 68000 program that copies a Z80 program into the Z80's RAM, starts it and then
+holds the 68000 in the state the experiment wants) and records every delay the board's
+own arbiter charges. `.venv-pypy/bin/python scripts/run_bus_arbiter.py --accesses
+4000` at commit `21038dd`, seconds:
+
+| Experiment | board, Z80 wait states | hardware | board, 68000 delay |
+| --- | --- | --- | ---: |
+| 68000 in `stop #$2700` (off the bus), Z80 reading the bank window | **2-3**, mean 2.27 (2: 2,923; 3: 1,077) | MoD: "2-3" | 10-12, mean 10.54 |
+| 68000 in his `jmp (a0)` loop ("constantly on the bus"), Z80 reading | **3-4**, mean 3.36 (3: 2,547; 4: 1,453) | MoD: "range is 2-4 ... about 2.93"; Kabuto: 2-5, mean 3.3 | 10-13, mean 10.95 |
+| the same, Z80 `pop`ping (his sound drivers' case) | 2-4, mean 2.53 | MoD: "at least 4 wait states" on the second read, mean 3.5 over 10 | 10-13, mean 10.43 |
+
+The first experiment reproduces MoD's range exactly. The second sits between his mean
+(2.93) and Kabuto's (3.3) at 3.36, inside Kabuto's 2-5 and one step narrower than MoD's
+2-4. The 68000's delay is 10.4 to 11.0 cycles against Kabuto's "around 11" in all three.
+
+**The `pop` case is the one that does not agree**, and the reason is the modelling
+limitation above, not the formula: MoD saw the 68000 "sneak in a bus operation in
+between the first and second Z80 read", which needs the two reads placed at their own
+T-states; the board places both at nearly the same clock and charges 2.53 where he
+measured 3.5. Recorded as open item 14.
+
+#### The 68000's own rate, an independent check
+
+Kabuto also measured the whole stall model's effect in one number: "After all these
+slowdowns the 68K seems to be running at roughly 480 cycles per raster line instead of
+the theoretical 488+4/7 ones." With every stall the board charges -- both refreshes,
+the arbiter, the VDP -- the 68000 in the `jmp (a0)` harness keeps **481.0** of a line's
+488.6 clocks for its own instructions. The six lockstep games, which also pay VDP
+stalls, run at 467.9 to 475.3 (`--cartridge`, 240 frames each).
+
+### The DMA, and one correction to the slot table
+
+`scripts/run_dma_cost.py` (136 lines) measures the hold the VDP puts on the 68000
+beyond the bus cycle of the control write that starts a transfer -- which is exactly
+Kabuto's "on top of what the actual 68k instructions cost" -- for four targets and ten
+word counts, and fits a line to it.
+
+**The correction.** The first run was 25 % slow on every fast transfer and the
+Manual's per-line table was out by 3 %. The cause: an idle line's access slots.
+Exodus's `GetPixelClockTicksUntilNextAccessSlot` jumps from a refresh block's start to
+six pixels past it, losing **two** slots per refresh, which leaves 161 (H32) and 198
+(H40). Two hardware-tier sources say one: Kabuto's access pattern has a single `r` per
+group, and the Manual's DMA transfer capacity table gives 167 and 205 bytes a line in
+blanking, which is 171 - 4 and 210 - 5. The board now loses one slot per refresh, at
+the H counter values Exodus's own tables name as the refresh slots (five in H32, six in
+H40, "one more than there is during an active line"), giving **166 and 204**. Also
+changed: a transfer fetches its first word once the control write that started it is
+over, which is what `_run_transfer`'s docstring already claimed and its code did not.
+
+**After that** (`.venv-pypy/bin/python scripts/run_dma_cost.py`, commit `21038dd`,
+30 s), fitted over 64 to 512 words with the display off in H40:
+
+| Transfer | board, 68000 cycles a word | Kabuto | board intercept | Kabuto |
+| --- | ---: | ---: | ---: | ---: |
+| fast (CRAM, VSRAM, VRAM in 128 KB mode) | **2.38** | 2.4 | -3.5 | +5.6 |
+| slow (VRAM in 64 KB mode) | **4.78** | 4.7 | -14.3 | -6 |
+
+and the Manual's table for 68000 memory to VRAM, in bytes a raster line:
+
+| | H32, display | H32, blanking | H40, display | H40, blanking |
+| --- | ---: | ---: | ---: | ---: |
+| the board | **16.1** | **167.4** | **18.1** | **205.9** |
+| the Manual (PDF page 44) | 16 | 167 | 18 | 205 |
+
+So Kabuto's formulas are reproduced within their stated form: the right two slopes,
+within 2 % of both, with the `max()` shape falling out of the FIFO filling up, and the
+negative intercept he explains ("the DMA ends while there is still data in the FIFO to
+be processed, this is why there are seemingly negative costs"). **What is not
+reproduced is his fast-transfer intercept**: +5.6 against the board's -3.5, so a
+one-word transfer costs 8 cycles on his hardware and about 1 here. That is a fixed
+start-up the board has no mechanism for; adding 5.6 cycles to match a fitted constant
+would be fitting to a fit, so it is left as open item 15 instead.
+
+### The per-slot renderer, and the CRAM dots
+
+Milestone 3 deferred this here, and the brief asks for the decision to be made with
+frames per second on PyPy before and after.
+
+**The design.** A line is still set up once, at the point its active display begins:
+its horizontal scroll entry (the hardware's own `H` access is the first of the line),
+its window columns, and its sprites, which the hardware fetched during the preceding
+horizontal blank. Its *pixels* are now drawn lazily. Before anything the rest of the
+line would be drawn from changes -- a FIFO write landing at an access slot, a DMA fill
+or copy, a register write -- the VDP calls `Renderer.catch_up` with that slot's master
+clock and the line is drawn up to the pixel it falls on. A line nothing is written into
+is drawn in one piece, exactly as before. That is what keeps it affordable: the split
+points are access slots, of which an active line has 16 or 18, not arbitrary pixels.
+
+A CRAM write that lands in the active display also leaves its dot -- the colour it
+wrote, for the pixel of its slot. Dots are kept per row and laid over the picture at
+the end, as are the palettes each part of a row was drawn with, so a CRAM change along
+a line no longer recolours the pixels before it.
+
+**Where the pixels are.** The active display is external H $00-$9F in H40 and $00-$7F
+in H32, internal H $000 onwards. That is what makes Kabuto's access-slot groups fall
+into place: his 15 "mid-tiles" slots are the ones inside $000-$13F, his two
+"between-tiles-and-sprites" ones are $140 and $142 just past it, and his single
+"mid-sprite" one is $1CE, in the blanking. His remark that the second mid-tiles slot
+lands "at the pixel with X=-3 (display area coordinates)" would put the output about 21
+pixels behind the H counter; that pipeline delay is **not** modelled, and is recorded
+as item 20 rather than guessed at.
+
+**What it costs.** Two measurements, because this machine's frame rate varies by up to
+10 % between identical runs.
+
+Deterministic first -- how many pieces a line is drawn in, 100 frames after 400 of
+warm-up, `--no-sound`:
+
+| Game | draws a frame | draws a line |
+| --- | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 529 | 2.36 |
+| Streets of Rage 2 (USA) | 130 | 0.58 |
+| Gunstar Heroes (USA) | 278 | 1.24 |
+| Castlevania - Bloodlines (USA) | 224 | 1.00 |
+| Sonic The Hedgehog 3 (USA) | 224 | 1.00 |
+| Phantasy Star IV (USA) | 361 | 1.61 |
+| Overdrive 2 (PAL) | 224 | 0.93 |
+
+So most lines are still drawn in one piece and the worst game adds 1.4 extra pieces a
+line. Then frames per second, 900 frames, `--no-sound`, measured by **user CPU time**
+rather than wall time and taking the better of two runs each, the two configurations
+run back to back:
+
+| Game | per line | per slot | change |
+| --- | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 51.3 | 52.3 | +2.0 % |
+| Streets of Rage 2 (USA) | 64.0 | 61.6 | -3.8 % |
+| Gunstar Heroes (USA) | 51.6 | 50.2 | -2.7 % |
+| Castlevania - Bloodlines (USA) | 52.0 | 50.3 | -3.3 % |
+| Sonic The Hedgehog 3 (USA) | 50.8 | 49.0 | -3.5 % |
+| Phantasy Star IV (USA) | 53.7 | 47.1 | -12.3 % |
+| Overdrive 2 (PAL) | 38.4 | 38.4 | 0.0 % |
+
+**Decision: the per-slot path stays.** A few percent, with the one outlier inside the
+spread two identical runs of the *same* build show on this machine, is not ruinous, and
+the deterministic count says why: the machinery only runs where a program actually
+writes to the VDP part way along a line. What it buys is mid-line writes landing where
+they land on the hardware and the CRAM dots, which Overdrive 2 produces (below) and the
+six games do not (they write CRAM in the vertical blank, where the hardware makes no
+dot either).
+
+**What it does not buy, yet: r57shell's redraw-timing tests.** They are still not
+judged, and not for a rendering reason: the ROM polls the pad seven times a frame --
+the 6-button handshake -- so neither the board nor MAME leaves its first screen. Both
+render that screen identically (100.00 % of pixels). The test waits for milestone 7.
+
+### Milestone 5 acceptance: the runs and their results (2026-09-22)
+
+All at commit `21038dd` unless said; m68000-python 51ee1a5, z80-python 0.4.0, PyPy
+7.3.23 (Python 3.11.15), MAME 0.285.
+
+**VDPFIFOTesting's timing tests** (hardware-corrected; ROM SHA-256 `8b0ed394...`).
+`.venv-pypy/bin/python scripts/run_vdpfifotesting.py --machine M`, 7-8 s each:
+**122 of 122** on genesis, genesis-tmss, genesis2, megadrive, megadrive-tmss,
+megadrive2, megadrive-japan and megadrive2-japan; **114 of 122** on genesis3, the
+eight DMA Fill to VSRAM tests, as a Genesis 3 fails VSRAM tests on hardware. The
+timing tests among them all pass: FIFO Buffer Size, FIFO Wait States, DMA Transfer
+Bus Locking, FIFO Full Before DMA Transfer, DMA Transfer using FIFO and the seven DMA
+Busy Flag tests. Unchanged from milestone 2 through the slot-table correction and the
+first-fetch change, both of which move DMA timing.
+
+**Kabuto's DMA-cost formulas**: reproduced within their stated form -- the table above.
+
+**The arbiter's delays**: the three experiments above.
+
+**MoD's `gen_test_z80_bus`** (hardware-corrected): all eight checks PASS, the Z80's
+writes to 68000 work RAM read back $4243 and its reads give $FFFF, and the two BUSACK
+delay counters print **0000** with the grant now modelled (the reason is above).
+
+**Milestones 1 to 4, unchanged.**
+
+- The milestone-1 lockstep: Sonic The Hedgehog (USA, Europe) re-recorded from MAME
+  0.285 (30 emulated seconds, `scripts/mame_trace.py`) and replayed with the arbiter
+  and the per-slot renderer in the tree: **23,286,815 68000 and 12,728,465 Z80
+  instructions identical, 0 unexplained**, 122 s. The trace (684 MB) was deleted.
+- `.venv-pypy/bin/python -m pytest -q`: **42 passed, 1 deselected** in 125 s -- the 288
+  HV/status capture dumps still at 8,762,415 of 8,847,360 words, VDPFIFOTesting, the
+  sprite masking ROM at 0 of 18 cells differing, `gen_test_z80_bus`, milestone 4's FM
+  and PSG referee comparisons, and milestone 5's ten new tests.
+- The nine milestone-3 test ROMs against MAME's own frames after 3 emulated seconds
+  (`scripts/compare_mame_frames.py`): 100.00 % for `wtest`, `wtest_i1`, `stetest` and
+  r57shell's `vdp_tests`, 99.84 % `wbug`, 96.93 % `vctest`, 96.25 % `wtest_i2`,
+  69.64 % `SHLTEST`, 41.97 % `STETEST2` -- every figure identical to milestone 3's.
+- MAME's exit frames for the six lockstep games at 20 emulated seconds (`--record`):
+  92.38, 99.91, 82.75, 91.10, 99.90 and 93.03 % of pixels, against milestone 3's
+  92.10, 99.91, 82.75, 91.10, 99.90 and 93.03. Only Sonic The Hedgehog moved, by a
+  quarter of a percent, in the animation that was already a few frames out of phase.
+
+### Overdrive 2, the stress case
+
+`.venv-pypy/bin/python`, `megadrive` (the demo prints "THIS DEMO REQUIRES PAL/50 HZ"
+on an NTSC machine and stops), 12,000 frames -- 240 emulated seconds, 1,075 s of wall
+time with sound -- writing a PNG every 600 frames and the whole soundtrack as a WAV.
+
+The demo needed one thing before it would run at all: its cartridge board. MAME's
+software list gives Overdrive 2 the slot `rom_titan`, a device whose own comment says
+"This is same as SSF2 mapper, merge at cart slot rewrite" and whose registers are the
+same words of $A130F0; the board now accepts that slot as the mapper it already had.
+Without it the demo prints "YOUR CARTRIDGE OR EMULATOR DOES NOT SUPPORT SSF2-STYLE
+BANK SWITCHING" and stops. `python -m megadrive_python` also had to identify the
+cartridge (`Cartridge.from_image`) rather than load every image as plain ROM.
+
+**It runs to its end.** 12,000 frames of PAL is 240.4 s, and the last sampled frame
+(11,400) is the credits. 139,236,731 68000 and 116,596,672 Z80 instructions;
+6,519,808 Z80 bank accesses, costing the Z80 23,962,067 of its cycles and the 68000
+70,597,738 of its own.
+
+**The music is at the right speed, measured against Kabuto's own note.** He wrote the
+demo's sound driver: "I developed it from scratch to support 26 kHz sample playback
+with nearly no jitter". Counting the driver's writes to the YM2612's DAC register
+($2A) over 600 frames of the demo:
+
+| | DAC writes in 12.07 s | realised sample rate |
+| --- | ---: | ---: |
+| the board, arbiter on | 317,648 | **26,313 Hz** |
+| the board, arbiter off | 326,282 | 27,028 Hz |
+| Kabuto | | "26 kHz" |
+
+So the arbiter's bank-access delays are what bring the driver from 27.0 kHz to
+26.3 kHz -- the number he designed for. That is the clearest single piece of evidence
+this milestone produced: the delays are not a decoration, they set the pitch of this
+demo's samples, and they set it where its author says it belongs.
+
+**CRAM dots: 33,733 of them** over the run, all after frame 9,000, which is the
+sphere scene -- the one that paints a full-colour background by writing CRAM during
+the display. The six lockstep games make none (they write CRAM in the vertical blank,
+where the hardware makes no dot either).
+
+**The picture.** Of the twenty sampled frames, most are the scene they should be: the
+arcade, the spaceship, the robot, the city flyby, the sunset, the Overdrive 2 logo
+over concentric rings, the Mega Drive console, the sphere, the robot's head, and the
+credits. Four (frames 7,200, 8,400, 9,000 and 10,800) show a plaid or blocky pattern
+where a scene belongs. Overdrive 2 never enters 128 KB mode, so that is not the cause;
+it uses the debug register's plane forcing in four windows (frames 6,528-7,064 forcing
+sprites, 7,064 on with it clear, 8,128-9,130 and 9,132-9,740 and 10,144-11,082 forcing
+plane B), and the bad frames are not confined to any one of them.
+
+For a detector, MAME 0.285 was run on the same demo from its software list
+(`mame megadriv -cart d_titov2`) at 144, 192 and 216 emulated seconds. **MAME gets
+those sections wrong too, and differently**: at 144 s it shows a blocky pattern of its
+own, at 216 s red horizontal stripes where the board shows a red plaid, and at 192 s
+it draws the sphere over concentric rings where the board draws it over a diagonal
+weave. So all three are cases where no emulator here is right and the two are wrong in
+different ways, which is what the demo's readme predicted ("At the moment, this demo
+will not run on ANY emulator") and what its dependence on the VDP revision means. As
+the brief says, this is a stress case compared with Kabuto's notes, not a pass or a
+fail; the sections are recorded here for a later session.
+
+### Open questions for the user
+
+QUESTION: **An idle line's access slots were changed from Exodus's 2-per-refresh to
+1**, on the strength of Kabuto's access pattern and the Manual's DMA transfer capacity
+table, both hardware-tier, against Exodus, which is emulator-derived but written by
+the author of the hardware captures. It puts the board's DMA rates on Kabuto's
+measured formulas and reproduces the Manual's whole table. Accept, or is Exodus's
+table the one to follow where he and Kabuto disagree?
+
+QUESTION: **Kabuto's DMA start-up cost is not modelled.** His fast-transfer formula
+has a +5.6-cycle intercept where the board charges -3.5, so a one-word transfer costs
+8 68000 cycles on his hardware and about 1 here; the slopes agree within 2 %. Adding a
+fixed 5.6 cycles would be fitting to a fitted constant, so it is left open. Pursue it,
+or accept the slopes?
+
+QUESTION: **The bus grant is the specification's alone.** No hardware measurement of
+the Mega Drive's BUSACK delay is published in the pinned material, and MoD's ROM
+cannot see the one the board now produces (0 to 9 68000 cycles). Keep UM0080's rule
+unjudged, or take it back out until something can judge it?
+
+QUESTION: **The 68000's share of a Z80 bank access is charged to its next
+instruction**, because the Z80 runs in the 68000's wake in this scheduler. Accept, or
+is it worth running the Z80 ahead of the 68000 (or rolling the 68000 back, as MoD
+describes wanting to do in BlastEm) so the delay lands inside the instruction it
+really fell in?
+
+QUESTION: **Kabuto's "X = -3" is not modelled.** He places the second of a line's
+mid-tiles access slots at display X = -3, which would put the VDP's output about 21
+pixels behind its H counter; the board lands a mid-line write at the pixel its slot's
+own H counter names. Nothing pinned measures the offset, and r57shell's redraw tests
+cannot be reached until the 6-button pad exists. Leave it, or fit the 21 pixels from
+Overdrive 2's sphere scene (where it would move the colour bands)?
+
+QUESTION: **Four of Overdrive 2's twenty sampled frames are wrong**, in sections MAME
+also gets wrong differently. Run them down in a session of their own, or leave them
+until milestone 8's sweep gives more cases of the same kind?
+
+**End of milestone 5.** Stopping here, as the working agreement says.
