@@ -89,6 +89,38 @@ def test_refresh_constants():
     assert RAM_REFRESH_STALL == 3 * 7
 
 
+def test_a_68000_access_to_the_z80s_space_costs_one_extra_clock():
+    """Nuked-MD holds every $A00000-$A0FFFF bus cycle 7 MCLK longer, and so does MAME
+    (``before_delay(1)``); nothing hardware covers it, so the die-derived model judges
+    (docs/worklog.md, the timing session).  The clock is charged after the access, so
+    the access still lands at the clock its bus cycle began at, and it is counted apart
+    for the lockstep, which has to compare it with MAME's own count."""
+    from megadrive_python.board import Z80_SPACE_STALL
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    assert Z80_SPACE_STALL == 7  # one 68000 clock
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    board = system.board
+    board.z80_reset = False
+    board.z80_bus_requested = True
+    board.arbiter_enabled = False
+    for kind, call in (
+        ("read_byte", lambda: board.read_byte(0xA00000)),
+        ("read_word", lambda: board.read_word(0xA00000)),
+        ("write_byte", lambda: board.write_byte(0xA00000, 0)),
+        ("write_word", lambda: board.write_word(0xA00000, 0)),
+    ):
+        board.stall = board.z80_space_stall = 0
+        call()
+        assert board.stall == Z80_SPACE_STALL, kind
+        assert board.z80_space_stall == Z80_SPACE_STALL, kind
+    # Work RAM, by contrast, is charged nothing beyond its refresh.
+    board.stall = board.z80_space_stall = 0
+    board.read_word(0xFF0000)
+    assert board.z80_space_stall == 0
+
+
 def test_capture_loop_rate():
     """The refresh rules give the capture loop its hardware rate, 143.588 MCLK per
     MOVE.L (A0),(A1)+ (docs/timing.md, "Bus sharing")."""

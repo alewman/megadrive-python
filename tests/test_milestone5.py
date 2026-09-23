@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from conftest import ROOT  # noqa: F401  (puts scripts/ on the path)
 
-from megadrive_python.arbiter import bank_access_delay, busack_grant
+from megadrive_python.arbiter import BUSACK_PROPAGATION_MCLK, bank_access_delay, busack_grant
 from megadrive_python.cartridge import Cartridge
 from megadrive_python.machine import M68K_DIVIDER, MACHINES, MCLK_PER_LINE
 from megadrive_python.system import System
@@ -38,14 +38,21 @@ def test_kabutos_formula_gives_mods_measured_wait_states() -> None:
 
 
 def test_bus_grant_waits_for_the_end_of_the_machine_cycle() -> None:
-    """Zilog UM0080: BUSREQ is sampled "with the rising edge of the last clock period
-    of any machine cycle", so the grant is the first machine-cycle end at or after the
-    request, and a request past the last one is granted at once."""
+    """Two rules in one, as the timing session settled it.
+
+    Zilog UM0080: BUSREQ is sampled "with the rising edge of the last clock period of
+    any machine cycle", so the Z80 lets go at the first machine-cycle end at or after
+    the request (and at once if the request is past the last one). The arbiter then
+    takes ``BUSACK_PROPAGATION_MCLK`` to report it -- fitted to Nuked-MD, which
+    measures the whole $A11100-write-to-/BUSAK delay 7.15 68000 cycles longer than the
+    specification's rule alone gives (docs/worklog.md, the timing session).
+    """
     ends = [60, 105, 150]
-    assert busack_grant(0, ends) == 60
-    assert busack_grant(60, ends) == 60
-    assert busack_grant(61, ends) == 105
-    assert busack_grant(200, ends) == 200
+    p = BUSACK_PROPAGATION_MCLK
+    assert busack_grant(0, ends) == 60 + p
+    assert busack_grant(60, ends) == 60 + p
+    assert busack_grant(61, ends) == 105 + p
+    assert busack_grant(200, ends) == 200 + p
 
 
 def test_the_arbiter_charges_mods_measured_delays() -> None:

@@ -56,7 +56,7 @@ from mame_log import Access, Record, m68k_records, z80_records  # noqa: E402
 
 from megadrive_python.board import Lockup  # noqa: E402
 from megadrive_python.cartridge import Cartridge, load_image  # noqa: E402
-from megadrive_python.machine import MACHINES, MAME_DRIVERS  # noqa: E402
+from megadrive_python.machine import M68K_DIVIDER, MACHINES, MAME_DRIVERS  # noqa: E402
 from megadrive_python.system import System  # noqa: E402
 
 M68K_NAMES = ("pc", "sr", *(f"d{i}" for i in range(8)), *(f"a{i}" for i in range(7)),
@@ -618,9 +618,11 @@ class Lockstep:
                 # (m68000-python's _e_clock_wait, MAME's vpa_sync).
                 if self.previous_68k is not None:
                     before, spent = self.previous_68k
-                    cpu.clock = (
-                        before.cycles + spent + sum(1 for a in before.accesses if a.tag[0] == "A")
-                    )
+                    # ``spent`` already carries the board's own one-clock hold per
+                    # $A0xxxx access (``Board.z80_space_stall``), which is MAME's
+                    # ``before_delay(1)``: both machines charge it since the timing
+                    # session, so nothing is added for it here.
+                    cpu.clock = before.cycles + spent
                 cpu.set_ipl(level)
                 interrupt_clocks = cpu.step()
                 cpu.set_ipl(0)
@@ -641,6 +643,7 @@ class Lockstep:
             before, spent = self.previous_68k
             self.sort_68k_clocks(before, record, spent + interrupt_clocks, interrupt_clocks)
         self.pending_68k = list(record.accesses)
+        board.z80_space_stall = 0
         clocks = cpu.step()
         while self.pending_68k and self.drop_foreign(self.pending_68k[0]):
             self.pending_68k.pop(0)
@@ -649,7 +652,10 @@ class Lockstep:
                              + ", ".join(map(str, self.pending_68k)))  # fmt: skip
         self.m68k_count += 1
         self.history.append(f"68000 {record.registers[0]:06X} @ {record.cycles}")
-        self.previous_68k = (record, clocks)
+        # The board's step is the core's clocks plus the one clock it now charges for
+        # each $A00000-$A0FFFF access, which is what MAME's ``before_delay(1)`` is
+        # (docs/worklog.md, the timing session).
+        self.previous_68k = (record, clocks + board.z80_space_stall // M68K_DIVIDER)
 
     previous_68k: tuple[Record, int] | None = None
 
@@ -662,7 +668,10 @@ class Lockstep:
         if difference == 0:
             name = "agree" if not interrupt else "agree (with an interrupt entry)"
         elif difference == z80_area:
-            name = "MAME's before_delay(1) on each $A00000-$A0FFFF access (megadriv.cpp)"
+            # Since the timing session the board charges this clock too (Nuked-MD and
+            # MAME agree on it), so this class should be empty: if it is not, the
+            # board failed to charge one of MAME's $A0xxxx clocks.
+            name = "MAME's before_delay(1) the board did not charge (megadriv.cpp)"
         elif difference > 0 and any(
             a.tag == "VW" and a.address & 0x1C == 4 for a in record.accesses
         ):

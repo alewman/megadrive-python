@@ -51,6 +51,15 @@ CART_REFRESH_STALL = 14
 #: used; which value in the window is right is not settled (docs/worklog.md).
 RAM_REFRESH_STALL = 21
 RAM_REFRESH_AFTER_MCLK = 805
+#: Every 68000 access to the Z80's space costs one extra 68000 clock. Nothing hardware
+#: covers the question, so the tier rule lets a die-derived model answer it: Nuked-MD
+#: holds all 68 of the FM probe's $A0xxxx accesses 7 MCLK where the board held none
+#: (milestone 6), and MAME does the same (``megadriv.cpp``, ``before_delay(1)``,
+#: "required by pacman2 intro", "TODO: unverified"). Two independent models agreeing
+#: against the board is what the user's decision 1 adopted (docs/worklog.md, the
+#: timing session). It is charged after the access, so the access itself still lands
+#: at the clock the bus cycle began at.
+Z80_SPACE_STALL = M68K_DIVIDER
 
 
 class Lockup(Exception):
@@ -95,6 +104,9 @@ class Board:
         self.step_start = 0
         #: Master clocks the 68000 has been held during the current step (stalls).
         self.stall = 0
+        #: How much of ``stall`` is the Z80-space hold (:data:`Z80_SPACE_STALL`), for
+        #: the lockstep, which compares the board's step with MAME's own clock count.
+        self.z80_space_stall = 0
         #: Called with a master clock before the 68000 changes anything the Z80 can
         #: see (its RAM, bus, reset, the YM2612, the bank): the system runs the Z80
         #: up to that time first. ``stopping`` is True when the change about to be
@@ -173,6 +185,17 @@ class Board:
         if self.arbiter_enabled and t is not None and t < self.busack_at:
             self.stall += self.busack_at - t
         return True
+
+    def _z80_space_cost(self) -> None:
+        """The one extra 68000 clock every access to $A00000-$A0FFFF costs
+        (:data:`Z80_SPACE_STALL`), counted apart as well as charged.
+
+        ``scripts/lockstep_mame.py`` adds :attr:`z80_space_stall` to the core's own
+        clocks before comparing a step with MAME's, because MAME charges the same
+        clock (``before_delay(1)``) and the two have to be compared like with like.
+        """
+        self.stall += Z80_SPACE_STALL
+        self.z80_space_stall += Z80_SPACE_STALL
 
     def _bus_cycle(self, address: int) -> None:
         """One 68000 bus cycle about to start at ``address``: its refresh stalls, and
@@ -307,6 +330,7 @@ class Board:
             return value
         if top == 0xA0:
             value = self._z80_area_read(address)
+            self._z80_space_cost()
             return value | (value << 8) if value is not None else self.open_bus_msb()
         if top == 0xA1:
             return self._system_read_word(address)
@@ -329,6 +353,7 @@ class Board:
             return value
         if top == 0xA0:
             value = self._z80_area_read(address)
+            self._z80_space_cost()
             if value is not None:
                 return value
             return (self.open_bus() >> 8) if not address & 1 else 0
@@ -357,6 +382,7 @@ class Board:
             # "When doing word-wide writes to Z80 RAM, only the MSB is written"
             # (CMD 1.2): the Z80's bus is eight bits wide and takes D15-D8.
             self._z80_area_write(address & ~1, value >> 8)
+            self._z80_space_cost()
         elif top == 0xA1:
             self._system_write(address, value >> 8, value & 0xFF, word=True)
         elif 0x80 <= top < 0xA0:
@@ -378,6 +404,7 @@ class Board:
             )
         elif top == 0xA0:
             self._z80_area_write(address, value)
+            self._z80_space_cost()
         elif top == 0xA1:
             # The 68000 drives a byte on both halves of the data bus (UM 5.1.2), so
             # a register on D8 sees bit 0 of the byte at either address.

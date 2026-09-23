@@ -35,7 +35,7 @@ from __future__ import annotations
 from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
 
-from .arbiter import busack_grant
+from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant
 from .audio import AudioPath
 from .board import Board
 from .cartridge import Cartridge
@@ -147,19 +147,23 @@ class System:
         return self.z80_probe()[0]
 
     def z80_busack(self, mclk: int) -> int:
-        """The master clock the Z80 lets go of its bus, for a request made at ``mclk``.
+        """The master clock /BUSAK reaches the 68000, for a request made at ``mclk``.
 
         BUSREQ "is sampled by the CPU with the rising edge of the last clock period of
         any machine cycle" and the bus is released after it (Zilog UM0080,
-        specification tier), so the grant falls at the end of the machine cycle in
-        progress. The Z80 is first run up to the request, leaving at most one
-        instruction -- the one the request falls inside -- unrun; its machine-cycle
-        boundaries are the probe's (:meth:`z80_machine_cycle_ends`), and that
-        instruction is executed when the bus comes back, as before.
+        specification tier), so the Z80 lets go at the end of the machine cycle in
+        progress; the arbiter then takes
+        :data:`~megadrive_python.arbiter.BUSACK_PROPAGATION_MCLK` to report it (fitted
+        to Nuked-MD, die-derived: the specification says when the Z80 lets go, the
+        referee says how long the board takes to say so). The Z80 is first run up to
+        the request, leaving at most one instruction -- the one the request falls
+        inside -- unrun; its machine-cycle boundaries are the probe's
+        (:meth:`z80_machine_cycle_ends`), and that instruction is executed when the bus
+        comes back, as before.
         """
         self.catch_up_z80(mclk, stopping=True)
         if self.z80_mclk >= mclk or not self.board.z80_running:
-            return max(mclk, self.z80_mclk)
+            return max(mclk, self.z80_mclk) + BUSACK_PROPAGATION_MCLK
         return busack_grant(
             mclk, [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()]
         )
@@ -251,6 +255,7 @@ class System:
         start = self.mclk
         board.step_start = start
         board.stall = 0
+        board.z80_space_stall = 0
         if board.m68k_accesses:
             board.m68k_accesses.clear()
         vdp.sync(start)

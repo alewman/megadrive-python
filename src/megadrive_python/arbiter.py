@@ -68,6 +68,16 @@ GRANT = 3
 ACCESS = 2
 #: The refresh logic can prolong the Z80's own access by 2 cycles (Kabuto's ``b``).
 REFRESH = 2
+#: The arbiter's own propagation, in master clocks, from the Z80 letting go of the bus
+#: to /BUSAK being seen on the 68000's side.  Zilog UM0080 says *when* the Z80 lets go
+#: and nothing about the board around it; nothing hardware in the pinned material
+#: measures this direction.  The tier rule therefore lets the die-derived model answer,
+#: and Nuked-MD does: over 122 grants it takes 68-118 MCLK (9.71-16.86 68000 cycles,
+#: mean 12.34) from the 68000's write to $A11100 to /BUSAK, where the machine-cycle
+#: rule alone took 10-44 MCLK (mean 5.19).  This constant is the difference of the two
+#: means, 7.15 68000 cycles, rounded to 50 MCLK; **die-derived and fitted**, not
+#: measured on hardware (docs/worklog.md, the timing session).
+BUSACK_PROPAGATION_MCLK = 50
 
 
 def bank_access_delay(subcycle: int, release: int, refreshed: bool) -> tuple[int, int]:
@@ -86,10 +96,15 @@ def bank_access_delay(subcycle: int, release: int, refreshed: bool) -> tuple[int
 
 
 def busack_grant(request: int, machine_cycle_ends: list[int]) -> int:
-    """The master clock the Z80 lets go of its bus, given the request's clock and the
-    ends of the Z80 step's machine cycles (Zilog UM0080: the end of the machine cycle
-    in progress)."""
+    """The master clock /BUSAK reaches the 68000, given the request's clock and the
+    ends of the Z80 step's machine cycles.
+
+    Two things in one: Zilog UM0080's rule for *when* the Z80 lets go (the end of the
+    machine cycle in progress; specification tier) and the arbiter's own propagation
+    for how long the board takes to say so (:data:`BUSACK_PROPAGATION_MCLK`; fitted to
+    Nuked-MD, die-derived).
+    """
     for end in machine_cycle_ends:
         if end >= request:
-            return end
-    return request
+            return end + BUSACK_PROPAGATION_MCLK
+    return request + BUSACK_PROPAGATION_MCLK
