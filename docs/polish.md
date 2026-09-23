@@ -20,7 +20,22 @@ lives.
 | --- | --- | --- | --- |
 | `M68000CPU.step_clocks` is public since m68000-python 44c26f0 (PR #1, merged 2026-09-22); the board reads the private `_cycles` | `Board.m68k_access_clock` (one line) | bump the pin in `pyproject.toml` from 51ee1a5 to the merge commit, reinstall in both venvs, use the property | the milestone-1 lockstep and milestone-2 acceptance runs, to show nothing moved |
 | Z80 RESET clears `I` and `R` since z80-python PR #15 (merged 2026-09-22), but no release carries it and the board depends on `z80-python>=0.4.0` from PyPI | `System._z80_reset_line` (labelled) | when a release carries it: raise the floor, drop the workaround | the milestone-1 lockstep (Sonic 3's driver reads `R`) |
-| z80-python reports only an instruction's total, so the board cannot say *where inside an instruction* a Z80 bus access falls. The arbiter needs that: it places each bank access at the step's start plus the delays already charged, which is why two reads of one `POP` land almost together and the board charges them 2.53 wait states on average where MoD measured 3.5 (milestone 5) | `Board._bank_delay` (labelled), and `System.z80_probe`, which re-runs the instruction on a probe bus to estimate the same thing for the bus grant | propose the Z80 equivalent of m68000-python's `step_clocks` -- a read-only "T-states so far in this step", readable from inside a bus callable -- and place each access at it | `scripts/run_bus_arbiter.py`'s three experiments, and the milestone-1 lockstep |
+| z80-python reports only an instruction's total, so the board cannot say *where inside an instruction* a Z80 bus access falls. The arbiter needs that: it places each bank access at the step's start plus the delays already charged, which is why two reads of one `POP` land almost together. Milestone 6 measured the consequence exactly: Nuked-MD charges the `pop`'s first read 2.95 wait states and its second 3.61 (MoD's hardware: the second "at least 4", mean 3.5), where the board charges 4.08 then 2.30 -- the same total, the opposite split | `Board._bank_delay` (labelled), and `System.z80_probe`, which re-runs the instruction on a probe bus to estimate the same thing for the bus grant | propose the Z80 equivalent of m68000-python's `step_clocks` -- a read-only "T-states so far in this step", readable from inside a bus callable -- and place each access at it | `scripts/run_bus_arbiter.py`'s three experiments, and the milestone-1 lockstep |
+
+## Waiting on a decision the user has to make
+
+These are not workarounds: they are places where milestone 6 found a judge for
+something the board models differently, and where changing it would re-open an
+earlier milestone's acceptance run.  They are listed here so that one pass can
+take them together with the core bumps above, and they are each a `QUESTION:` in
+[worklog.md](worklog.md), milestone 6.
+
+| What | Where it lives | What Nuked-MD says | Re-run after |
+| --- | --- | --- | --- |
+| A 68000 access to $A00000-$A0FFFF costs one extra 68000 clock (MAME's `before_delay(1)`, its own comment "TODO: unverified") | `Board.read_*`/`write_*`, which charge nothing | 68 of 68 such accesses held 7 MCLK | the milestone-1 lockstep (re-recorded from MAME; this *removes* a named-difference class), `scripts/run_bus_arbiter.py`, Overdrive 2's DAC rate |
+| The Z80 bus grant is about 7.4 68000 cycles early: the board models Zilog UM0080's machine-cycle rule and none of the arbiter's propagation | `System.z80_busack`, `arbiter.busack_grant` | the $A11100 write to /BUSAK is 9.71-16.86 cycles, the board 1.43-6.29 | `scripts/run_z80_bus_test.py`, the milestone-1 lockstep, `scripts/run_nuked_md.py roms` |
+| The DMA has no start-up cost | `VDP._run_transfer` | +8.0 cycles fitted, 11.0 for one word against the board's 1.1 (Kabuto: +5.6) | `scripts/run_dma_cost.py`, VDPFIFOTesting, `scripts/run_nuked_md.py dma` |
+| The work-RAM refresh re-arms 805 MCLK after the access it stretched | `Board._bus_cycle`, `RAM_REFRESH_AFTER_MCLK` | no single period fits every program; the rule itself is wrong | the HV captures, VDPFIFOTesting, `scripts/run_nuked_md.py roms` |
 
 ## Waiting on something on the machine
 

@@ -1617,3 +1617,410 @@ until milestone 8's sweep gives more cases of the same kind?
 6. **Overdrive 2's four wrong frames get their own session after milestone 8's
    sweep**, so that it is known first whether the same cause shows in ordinary
    games. Nuked-MD (milestone 6) is the referee for it.
+
+## Session 5 (2026-09-23): milestone 6, Nuked-MD as a referee
+
+### How the brief was read
+
+Scope is milestone 6 only: build Nuked-MD headless from `reference/src/Nuked-MD`
+(GPL-2.0 -- run it, read it, cite it, never copy it), teach it to write a bus-level
+trace, and for the test ROMs of milestones 2-5 show that the board's bus and device
+timing agrees with it or sort every difference into a named cause. Keep the build
+script in the repository, as milestone 4's `validation/build_referees.sh` does.
+Nuked-MD's tier is the one `docs/validation.md` gives a die-derived model -- it judges
+only where no hardware source covers the question -- with one caveat of its own: its
+README says it models "NMOS 68k, NMOS Z80 and FC1004. No real mega drive used such
+combination, but Model 1 VA7 would be closest", so anything that follows from its chip
+combination, from its unimplemented parts or from this build's `-DTMSS_ENABLE=0` is a
+named cause and not a board bug.
+
+Overdrive 2's four wrong frames are explicitly *not* in scope (the user deferred them
+to their own session after milestone 8); nothing here touched them.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K. gcc 15.2.0
+(Ubuntu 15.2.0-16ubuntu1) for the referee. Nuked-MD at `594ca2a` ("FJ3002 FM wip"),
+the revision `scripts/pinned_repos.json` pins.
+
+### What was built
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `validation/nuked_md_headless.c` | 342 | the three back ends Nuked-MD's `md.c` calls (`Audio_*`, `Video_*`), plus the bus tracer: one sample per half-MCLK of /AS, /UDS, /LDS, R/W, the address and data buses, the Z80's /MREQ, /IORQ, /RD, /WR and ZCLK, and eight board signals (/ZBR, /BUSAK, /ZRES, /BGACK, the arbiter's refresh strobe, /WAIT, /SOUND, the VDP's reset) |
+| `validation/nuked_md_sdl.h` | 56 | a stand-in for the SDL2 declarations `md.c` and `controller.c` use, so no SDL is needed and the run is single-threaded and deterministic |
+| `validation/build_nuked_md.sh` | 64 | the build, with both switches explained |
+| `scripts/nuked_md.py` | 495 | drive the referee, parse its trace, take the *board's* own bus log in the same shape, align the two and compare them |
+| `scripts/run_nuked_md.py` | 886 | the six comparisons below |
+
+Both C files are this repository's own (MIT) and are compiled *against* Nuked-MD's
+headers, exactly as `validation/opn2_ref.c` and the other two are compiled against
+theirs. Nothing of Nuked-MD is copied here. The binary lands in
+`reference/build-nuked-md/` (git-ignored) and is not distributed.
+
+The build: `sh validation/build_nuked_md.sh`, 12 s.
+
+Two switches, both deliberate and both recorded in the script:
+
+- `-DTMSS_ENABLE=0`. Nuked-MD's FC1004 carries TMSS, and with it enabled the bank
+  register (`tmss.c`, `dff3`) powers up *clear*, so the cartridge is not decoded until
+  "SEGA" reaches $A14000 -- which no pre-TMSS test ROM writes. With it 0 the same
+  flip-flop powers up set (`SDFFS` instead of `SDFFR`), which is the pre-TMSS board.
+  The referee's I/O chip still reports hardware version 1, so the combination is TMSS
+  hardware with TMSS off: one more of the referee's departures from any retail console.
+- `-w`, as upstream builds it.
+
+**The trace.** 24-byte packed records: half-MCLK, the ZCLK edge count, the byte
+address, the data, the cycle's length, a type (68000 bus cycle, Z80 bus cycle, signal
+change) and flags. A 68000 bus cycle is /AS low to /AS high; its **length** is what
+makes the comparison sharp, because 18 MCLK is a cycle nothing is stretching and
+anything longer is a stall the referee charged -- which is exactly what the board's
+`Board.stall` counts. So each access is compared on four things: its byte address, its
+direction and size, *the stall charged to it*, and the data on the bus.
+
+The board's side needs no change to `src/`: `scripts/nuked_md.py` wraps the four bus
+callables the 68000 core holds through m68000-python's public `attach_bus`, and
+`board.dma_read_word` and the Z80's two callables by assignment.
+
+### What was chosen to compare, and why
+
+Nuked-MD runs at about **0.33 emulated frames a second** here (2,000,000 half-MCLK in
+3.4 s: 294,000 MCLK a second, against the machine's 53,693,182). One emulated second
+costs three minutes. That rules out running a test ROM to its verdict and rules in
+three things:
+
+1. **Small purpose-built cartridges** where the question is one timing rule: eight
+   probe loops, the three arbiter experiments, the bus grant, the DMA against its word
+   count, the FM's BUSY. Each is 20,000-60,000 MCLK of trace after the referee's 68000
+   comes out of reset, 2-11 s of wall time.
+2. **The first 900,000 MCLK (about one NTSC frame) of each test ROM of milestones
+   2-5**, from its reset vector on, which is its whole initialisation -- the VDP set-up,
+   the RAM clear, the first DMAs -- and 25,000-29,000 bus cycles. 6-8 s each, run
+   five at a time.
+3. **Nothing by picture or by verdict**: what the referee is uniquely good for is the
+   bus, and the picture already has hardware judges (milestone 3).
+
+**The referee's own clock.** Its 68000 fetches its reset vector at **693,230 MCLK**
+(/SRES is released at half-MCLK 10,000 and the FC1004 then holds the CPU); the board's
+does at 0. Every comparison therefore puts the board's clock at 693,230 before the
+first step, so both machines' VDPs are the same distance into a frame when the program
+starts, and aligns the two streams on 24 consecutive matching (address, kind) pairs.
+
+**The two refresh phases are read out of the referee, not fitted.** Both refreshes are
+free-running counters whose phase at power-on nothing models. Because the referee
+reports each cycle's length, its ticks are *observed*: a +14 on a cartridge access is
+the cartridge refresh, a +21 on a work-RAM access is the work RAM's. A grid is fitted
+to those observations and the board's counters are set to match. That is the only
+thing taken from the referee; the periods and the stretches are the board's own.
+
+### The cartridge refresh: the board's rule is exactly right
+
+Fitting the board's rule -- a fixed 896-MCLK grid, the next bus cycle absorbs the tick,
+and it costs 14 MCLK only if that cycle is a cartridge access -- to the referee's own
+observed stretches:
+
+| ROM (300,000 MCLK from the referee's reset) | cartridge stretches | phases that reproduce all of them |
+| --- | ---: | --- |
+| Nemesis's `sr logic analyser noint - H40V28` | 269 | 518-523 |
+| CMD's `wtest.bin` | 250 | 518-523 |
+
+The same phase window for two unrelated programs, because both start from the same
+power-on. Two variants were also tried and both fail: "only a cartridge access absorbs
+the tick" reproduces neither ROM at any phase. Over the ten test ROMs below the board's
+rule misplaces **0 of the referee's cartridge ticks** in every one.
+
+### The work-RAM refresh: the period is narrowed, the *rule* does not generalise
+
+The board's rule is "once due, the next work-RAM access waits 21 MCLK, and the next
+falls due 805 MCLK after that access started" (milestone 2, from Nuked-MD; the user
+accepted it as the basis until a hardware measurement exists).
+
+- **The stretch is confirmed**: 21 MCLK, on every one of the 179 work-RAM stretches
+  seen in three probe loops and on all 100 and 344 in the two test ROMs above.
+- **In a dense work-RAM loop the rule is exact**, and the period is narrowed from
+  milestone 2's 743-826 to **806-819** (`move.w (a0),d0` x16 with a0 = $FF0000, and the
+  same with writes: 799 work-RAM accesses, 59 stretched, every period in 806..819
+  reproduces all 59 at some phase and 805 reproduces none). So the board's 805 is one
+  MCLK below the window that fits.
+- **It does not generalise.** With work-RAM accesses every 112 MCLK instead of every
+  62, no period in 600..1400 reproduces the referee at any phase. On CMD's `wtest.bin`
+  the exact periods are **694-699**, not 806-819. On Nemesis's capture ROM no period
+  in 600..1400 fits at all (the best leaves 269 misplaced). The referee's stretches are
+  not raster-locked either (their times are spread evenly modulo a 3,420-MCLK line).
+
+So the re-arm timer is a fit to one access pattern, not the machine's rule, and
+**805 was left unchanged**: no single value fits, moving it would re-open milestones
+2-5's acceptance runs for no gain, and the question is now sharper than a constant.
+This is the single largest source of difference in the ROM comparison below, and every
+cartridge-stretch difference that goes with it is a knock-on: each misplaced work-RAM
+tick shifts the board's whole timeline by 21 MCLK, after which the (correct) cartridge
+grid lands on different accesses.
+
+### The probe loops
+
+`.venv-pypy/bin/python scripts/run_nuked_md.py probes --cycles 400`, 20,000 MCLK of
+trace from the referee's reset, 2-3 s each:
+
+| Probe | bus cycles equal | what the rest is |
+| --- | ---: | --- |
+| NOP loop (ROM fetches only) | **394 / 394** | |
+| ROM reads (`move.w (a0),d0`, a0 in ROM) | **394 / 394** | |
+| VDP data writes (a control write then eight data writes) | **394 / 394** | |
+| work RAM reads | 312 / 394 | the work-RAM refresh (27 ticks misplaced) and its knock-on |
+| work RAM writes | 311 / 394 | likewise |
+| work RAM read-modify-write (`addq.w #1,(a0)`) | 325 / 394 | likewise |
+| VDP status reads | 336 / 394 | 58 reads differ in bit 2 (HBlank) only: the referee's VDP comes out of reset at its own point in the frame (below) |
+| VDP HV counter reads, Mode 5 | 232 / 394 | the same, and the counter itself (below) |
+| VDP HV counter reads, still in Mode 4 | 223 / 394 | the referee's Mode 4 HV port reads a constant $9F00; the board reads the Mode 5 counter whatever the mode |
+| **total** | **2,921 / 3,546** | |
+
+Three named causes come out of this and hold for everything below:
+
+1. **The referee's VDP has its own power-on phase.** At the same master clock the
+   board's V counter reads $CA (line 202, which is 693,230 mod 3,420 x 262) and the
+   referee's $9F (line 159): its VDP starts about 43 lines and 1,040 MCLK after the
+   board's. Shifting the board's clock to make the *first* HV read agree leaves only 1
+   of 162 later reads agreeing, so the two also step differently. **The HV counter and
+   the status register are not the referee's to judge**: Nemesis's logic-analyser
+   captures are hardware and cover exactly this question (milestone 2, 8,762,415 of
+   8,847,360 words), and the tier rule puts hardware above a die-derived model. Recorded
+   and not pursued.
+2. **Mode 4's HV port is not modelled.** At power-on the VDP is in Mode 4 and the
+   referee's $C00008 reads a constant; the board reads its Mode 5 counter. No test ROM
+   of milestones 2-5 reads HV before setting Mode 5, so nothing here depends on it.
+3. **Work RAM powers up with the referee's DRAM contents** ($5E in the even bytes of
+   the first words, in these runs) and the board's with zero, so a probe that reads work
+   RAM before writing it differs in data. The probes now clear what they read.
+
+### The test ROMs of milestones 2-5
+
+`.venv-pypy/bin/python scripts/run_nuked_md.py roms --window 900000 --cycles 40000
+--parallel 5`, 6-8 s each. Every 68000 bus cycle from the reset vector on: byte
+address, direction, size, the stall charged to it, and the data on a read. The
+comparison stops at the first *stream* difference, because after that the two machines
+are running different code.
+
+| ROM (SHA-256, first 16) | bus cycles equal | in the window | what the rest is |
+| --- | ---: | ---: | --- |
+| `wtest.bin` `160927b5a9f23efc` | **28,921 / 28,921** | 28,927 | |
+| `vctest.bin` `085115ec3e82ed4c` | **28,921 / 28,921** | 28,927 | |
+| `ym2612csmmode.bin` `3faaae394f6eba5e` | **25,307 / 25,307** | 25,313 | |
+| `ym2612detune.bin` `74306d736f99541c` | **25,307 / 25,307** | 25,313 | |
+| `ym2612multiplexing.bin` `519d19a023edf623` | **25,307 / 25,307** | 25,313 | |
+| `gen_test_z80_bus.md` `ed344fed9de5c985` | 21,828 / 21,832 | 28,096 | one work-RAM refresh tick, then the bus grant (below) |
+| `stetest.bin` `0c7729d63bc193ce` | 230 / 233 | 28,135 | one VDP status bit, then the bus grant |
+| `vdp_tests.bin` `207cd17db44a2142` | 22,125 / 28,122 | 28,128 | the work-RAM refresh (1,841 ticks) and its knock-on |
+| `sr logic analyser noint - H40V28` `fd25dd3094734b6b` | 23,258 / 28,621 | 28,627 | likewise (1,305 ticks) |
+| `VDPFIFOTesting.bin` `8b0ed3944893d679` | 23,259 / 28,622 | 28,628 | likewise (1,303 ticks) |
+| `SpriteMaskingTestRom.bin` `1331819ef3ed07c6` | -- | 11 | the referee's 68000 makes eleven bus cycles and stops: not compared |
+
+In every one of the ten the board's cartridge-refresh rule misplaces **0** of the
+referee's ticks. Every difference is one of four named causes:
+
+- **the work-RAM refresh rule** (above), and the cartridge stretches that move with it;
+- **the Z80's bus grant** (below), which ends `gen_test_z80_bus` and `stetest`;
+- **the VDP's power-on phase** (a single status read each in `stetest` and
+  `vdp_tests`);
+- **the I/O chip's hardware version**: the referee reads $A1 at $A10001 (overseas,
+  NTSC, no Mega CD, version 1) where the board's `genesis` machine reads $A0 (version
+  0). The comparisons give the board the referee's value; without it `stetest` and
+  `vdp_tests` branch away after 34 and 36 cycles, which is what version detection is
+  for. Nuked-MD is an FC1004, so version 1 is right for it.
+
+`SpriteMaskingTestRom.bin` is recorded rather than explained: the referee's 68000
+makes eleven bus cycles from its reset vector and then nothing at all for the rest of
+the window. No other ROM behaves that way, and chasing it was out of proportion to the
+comparison it would buy.
+
+### Milestone 5's open items, answered
+
+#### Kabuto's DMA start-up cost: the referee says it is real (open item 15)
+
+`.venv-pypy/bin/python scripts/run_nuked_md.py dma --words 1,2,3,4,8,16,32,64,128,256,512
+--targets CRAM,VSRAM,VRAM`. Each ROM sets the VDP up (Mode 5, DMA enabled, display off,
+H40), starts one 68000-memory DMA from $FF0000, and the cost measured is the gap the
+transfer leaves in the 68000's own bus stream beyond the write that starts it -- which
+is Kabuto's "on top of what the actual 68k instructions cost", verbatim.
+
+| words | referee, CRAM/VSRAM | board | referee, VRAM | board |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | **11.0** | **1.1** | **11.0** | **1.1** |
+| 2 | 13.0 | 4.0 | 13.0 | 4.0 |
+| 4 | 18.0 | 6.9 | 18.0 | 6.9 |
+| 16 | 45.0 | 35.4 | 73.0 | 69.7 |
+| 64 | 168.0 | 175.4 | 305.0 | 326.6 |
+| 256 | 641.0 | 642.6 | 1227.0 | 1245.4 |
+| 512 | 1273.0 | 1254.6 | 2449.0 | 2475.7 |
+
+Fitted over all eleven word counts, in 68000 cycles:
+
+| | slope | intercept |
+| --- | ---: | ---: |
+| referee, fast (CRAM, VSRAM) | 2.47 | **+8.0** |
+| board, fast | 2.46 | +3.2 |
+| Kabuto, fast | 2.4 | **+5.6** |
+| referee, slow (VRAM) | 4.78 | -0.3 |
+| board, slow | 4.86 | -2.6 |
+| Kabuto, slow | 4.7 | -6 |
+
+**The start-up cost is real.** A one-word fast transfer costs the referee 11.0 68000
+cycles and the board 1.1; Kabuto's formula gives 8.0. The board reproduces both slopes
+(within 1 % of the referee, within 3 % of Kabuto) and neither intercept, and the
+referee sits on Kabuto's side of the question rather than the board's. That is what
+milestone 5's open item 15 asked for: the +5.6 is not an artefact of his fit.
+
+#### The `pop` wait states: the board has the two reads the wrong way round (open item 14)
+
+`scripts/run_nuked_md.py arbiter`, MoD's three experiments run on the referee and on
+the board from the *same* image. One change from `scripts/run_bus_arbiter.py`: each
+Z80 loop jumps back to $0000 rather than into the middle of itself. With MoD's
+`jp $0003` the referee's Z80 never executes the `ld sp,$8002` -- found by tracing: its
+`pop` read Z80 RAM at three T-states and /WAIT never moved -- so the experiment
+measured nothing. Jumping to $0000 makes the loop self-correcting on both machines.
+
+The referee's wait states are counted exactly, from ZCLK edges: a Z80 memory cycle is
+three T-states and the next machine cycle begins the moment it ends, so
+`(next cycle's first ZCLK) - (this one's) - 3` is the count.
+
+| Experiment (2,000 board accesses, 134-218 referee accesses) | referee | board | hardware |
+| --- | --- | --- | --- |
+| 68000 in `stop #$2700`, Z80 reading the bank window | **2-3, mean 2.25** | 2-3, mean 2.19 | MoD: "2-3" |
+| 68000 in his `jmp (a0)` loop, Z80 reading | **2-4, mean 2.74** | 2-5, mean 3.55 | MoD: 2-4, "seemed about 2.93"; Kabuto: 2-5, mean 3.3 |
+| the same, Z80 `pop`ping | 2-5, mean 3.28 | 2-5, mean 3.19 | MoD: the second read "at least 4 wait states", mean 3.5 over 10 |
+| -- the `pop`'s **first** read | mean **2.95** (2-4) | mean **4.08** (2-5) | |
+| -- the `pop`'s **second** read | mean **3.61** (2-5) | mean **2.30** (2-3) | MoD: 3.5 |
+
+The first experiment agrees with the referee and with MoD. The second is the board's
+worst: it charges 3.55 where the referee charges 2.74 and MoD measured 2.93, and it
+produces 5s the referee never does -- Kabuto's `a` (how long the 68000 still needs the
+bus) comes out systematically larger on the board than on the die.
+
+**The `pop` is the interesting one, and the referee names the cause.** The two reads
+of one `pop` cost the referee 2.95 then 3.61 -- the second is the expensive one, which
+is exactly what MoD measured on hardware ("the second read from the POP seems to always
+have at least 4 wait states", mean 3.5). The board has it **the wrong way round**:
+4.08 then 2.30. The totals happen to be close (3.19 against 3.28), which is why
+milestone 5's averages looked reasonable; the split shows what is really happening.
+The cause is the one docs/polish.md already records: z80-python reports only a step's
+total, so the board places both of a `pop`'s reads at the step's start, the first one
+absorbs the whole bus hold and the second finds it already paid. This is a measured
+confirmation of that entry, not a new problem, and it is the strongest argument yet for
+proposing the Z80 equivalent of m68000-python's `step_clocks`.
+
+#### The bus grant: the board grants about 7 68000 cycles too early
+
+`scripts/run_nuked_md.py busack`: the 68000 asks for the Z80's bus, holds it for 20
+NOPs, gives it back, waits 20 NOPs and asks again, for ever, while the Z80 runs its
+bank-reading loop. 37 grants in 60,000 MCLK.
+
+| | delay from the $A11100 write to /BUSAK | in 68000 cycles |
+| --- | ---: | ---: |
+| referee, /ZBR to /BUSAK | 50-100 MCLK | 7.14-14.29, mean 9.64 |
+| referee, the $A11100 write to /BUSAK | 68-118 MCLK | **9.71-16.86, mean 12.22** |
+| board (`System.z80_busack`) | 10-44 MCLK | **1.43-6.29, mean 4.86** |
+| hardware | nothing in the pinned material measures this direction | |
+
+The board models only Zilog UM0080's rule -- BUSREQ "is sampled by the CPU with the
+rising edge of the last clock period of any machine cycle" -- and nothing of the
+arbiter's own propagation, so it grants about 7.4 68000 cycles early. Milestone 5
+accepted the rule as unjudged because nothing could judge it; **this is the judge the
+tier rule allows**, and it says the rule is right in shape and short by a constant.
+
+It is not academic. In the ROM comparison above, both `gen_test_z80_bus` and
+`stetest` end at a read of $A11100 where the referee returns $0067 and the board
+$0066: bit 0 is the grant, the programs are polling for it, and the board answers one
+poll sooner. Those are the only two ROMs that poll it, and it ends both comparisons.
+
+### The sound chips' wiring, which milestone 4's referees could not see
+
+`scripts/run_nuked_md.py sound`. A cartridge releases the Z80's reset (the FM shares
+that line), takes the Z80's bus, writes an FM register eight times and after each write
+polls $A04000 until BUSY clears, counting the polls; then it reads all four ports. The
+whole thing is on the 68000's bus, so the trace answers it.
+
+- **BUSY: the same 6 polls on both machines, all eight times.** The board's program
+  takes the same path as the referee's through every poll loop (there is no *stream*
+  difference anywhere in the run), so the board's BUSY window and the referee's are the
+  same to the poll. That is the board's wiring of the chip, not the chip's arithmetic,
+  and it is the part Nuked-OPN2 and YM2608-LLE could not check.
+- **Ports 1-3 read $00 on the referee**, as they do on the board (milestone 4's
+  decision 6 took Genesis Plus GX's 0 for want of anything better). One more source,
+  and a die-derived one.
+- **One real difference, and it is the board's: every 68000 access to $A0xxxx costs
+  one 68000 clock more on the referee.** 68 of the run's accesses to the Z80's space
+  are held 7 MCLK by the referee and 0 by the board (and 93 later cartridge fetches
+  move with them): 434 of 636 bus cycles agree, and every difference is that one clock
+  or a knock-on of it. This is **MAME's `before_delay(1)`** -- `megadriv.cpp`,
+  "required by pacman2 intro", "TODO: unverified" -- which milestone 1 recorded as a
+  named class of difference between the board and MAME, 41,274 steps of Sonic alone.
+  Nuked-MD verifies it. Nothing hardware covers the question, so the tier rule lets the
+  die-derived model judge, and it agrees with MAME against the board.
+
+  It was **not** changed this session: adding a clock to every $A0xxxx access moves
+  milestone 1's lockstep (it would remove a whole named-difference class, which is an
+  improvement, but the lockstep has to be re-recorded from MAME to show it), and it
+  moves the arbiter's `subcycle` and the Overdrive 2 sample rate. It is the one
+  actionable board fix this milestone found, and it is left as a question for the user
+  with the numbers above.
+
+Run as `genesis2` (the ASIC FM the referee actually carries) the figures are identical
+to `genesis`: nothing in this probe distinguishes the two FM variants.
+
+### What is *not* claimed
+
+- Nothing about the **picture**: the referee's video output was not compared.
+- Nothing about the **HV counter or the status register's** values: Nemesis's hardware
+  captures cover them and outrank the referee (above).
+- Nothing about **Overdrive 2's four wrong frames**: out of scope this session, and
+  nothing here happened to localise them.
+- The referee's own FM is the **CMOS YM3438**; milestone 4's sample-for-sample work
+  against Nuked-OPN2 and YM2608-LLE is unaffected and was not re-run.
+- **Mode 4** (the Power Base Converter) is not modelled by the board at all and the
+  referee's Mode 4 HV port differs; milestone 10 is where that belongs.
+
+### Milestones 1 to 5, unchanged
+
+Nothing in `src/` was modified this session, so no acceptance run could move. To show
+it rather than assert it: `.venv-pypy/bin/python -m pytest -q` at the commit that adds
+this entry.
+
+### Open questions for the user
+
+QUESTION: **Should the board charge one 68000 clock for every access to $A00000-$A0FFFF?**
+The referee does (68 of 68 such accesses in the sound probe, 7 MCLK each) and so does
+MAME, whose own comment calls it unverified; nothing hardware covers it. Doing it would
+delete a named-difference class from milestone 1's lockstep but needs that lockstep
+re-recorded from MAME, and it moves the arbiter's `subcycle` and Overdrive 2's realised
+sample rate. Change it, or leave it named?
+
+QUESTION: **The bus grant is 7.4 68000 cycles too early.** The referee measures the
+$A11100 write to /BUSAK at 9.71-16.86 68000 cycles (mean 12.22) against the board's
+1.43-6.29 (mean 4.86), and two test ROMs poll $A11100 and see the difference. Milestone
+5 kept UM0080's rule because nothing could judge it; now something can. Add the
+arbiter's propagation (a constant, fitted to the referee), or leave the specification's
+rule alone and name the difference?
+
+QUESTION: **The work-RAM refresh rule does not generalise.** The stretch is confirmed
+at 21 MCLK, and the re-arm period is exact at 806-819 in a dense work-RAM loop -- but
+694-699 in `wtest.bin` and nothing at all in Nemesis's capture ROM. It is the largest
+remaining source of difference (1,300-1,900 misplaced ticks per test ROM). Leave 805
+and the named difference, spend a session finding the referee's real mechanism, or drop
+the work-RAM refresh until there is a rule that holds?
+
+QUESTION: **Kabuto's DMA start-up cost is confirmed by the referee** (+8.0 cycles
+fitted, 11.0 for a one-word transfer, against the board's +3.2 and 1.1). Milestone 5's
+decision 2 left it open until milestone 8. Model it now from the referee -- which would
+be fitting the board to a die-derived model where Kabuto's hardware figure agrees in
+sign and size -- or keep it for milestone 8 as decided?
+
+QUESTION: **The board charges 3.55 Z80 wait states where the referee charges 2.74 and
+MoD measured 2.93** for a bank read with the 68000 constantly on the bus, and it
+produces 5s neither sees. Kabuto's `a` is too large on the board. Worth running down
+against the referee's own bus log (which shows exactly where each 68000 cycle was when
+the request arrived), or accept a 0.6-wait-state bias?
+
+QUESTION: **`SpriteMaskingTestRom.bin` makes eleven bus cycles on the referee and then
+stops.** Worth a look (it may be a referee limitation, in which case it is a named
+cause, or a real difference in what the ROM does on an FC1004), or leave it?

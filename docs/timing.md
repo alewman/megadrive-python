@@ -273,7 +273,10 @@ start-up he measured has no mechanism here and is left open.
   "with the rising edge of the last clock period of any machine cycle" and lets
   go after it (Zilog UM0080), so the grant falls at the end of the machine cycle
   in progress and a 68000 access to the Z80's space before then is held by the
-  arbiter. No hardware measurement of the Mega Drive's own delay is published
+  arbiter. No hardware measurement of the Mega Drive's own delay is published;
+  Nuked-MD, which the tier rule lets judge where nothing hardware does, puts the whole
+  delay from the $A11100 write to /BUSAK at 9.71-16.86 68000 cycles against the
+  board's 1.43-6.29, so the board is about 7.4 cycles early
   ([undocumented-behavior.md](undocumented-behavior.md), open item 8).
 - **A refresh steals 2 of every 128 68000 cycles**: "every time 128 cycles
   have passed the next bus access is slowed down by 2 cycles" (Kabuto), except
@@ -284,10 +287,17 @@ start-up he measured has no mechanism here and is left open.
   (die-derived; a detector) and judged by the captures, whose sampling loop it
   reproduces to the MCLK: a fixed 896-MCLK grid; the first 68000 bus cycle to
   start at or after each tick absorbs it, and takes 14 MCLK longer only if it is
-  a cartridge access. Separately, the next work-RAM access once one is due waits
-  21 MCLK, and the next falls due 805 MCLK after that access started (Nuked-MD
-  allows 743-826 for the capture loop; which is right is open). In the capture
-  loop that gives 143.588 MCLK per `MOVE.L (A0),(A1)+`, as the hardware.
+  a cartridge access. Milestone 6 checked that rule against Nuked-MD's own
+  reported bus-cycle lengths and it is **exact**: fitted to the referee's observed
+  stretches it reproduces all of them at one phase window (518-523 MCLK from
+  power-on) for two unrelated programs, and over ten test ROMs it misplaces none of
+  the referee's ticks. Two variants of it fail. Separately, the next work-RAM access
+  once one is due waits 21 MCLK, and the next falls due 805 MCLK after that access
+  started. The 21 is confirmed; **the re-arm rule is not** -- the period that
+  reproduces the referee is 806-819 MCLK in a dense work-RAM loop, 694-699 in
+  `wtest.bin`, and no value fits Nemesis's capture ROM
+  ([undocumented-behavior.md](undocumented-behavior.md), open item 5). In the capture
+  loop the board's figure gives 143.588 MCLK per `MOVE.L (A0),(A1)+`, as the hardware.
   With every stall the board charges, a 68000 in a `jmp (a0)` loop with the Z80
   reading ROM keeps **481.0** of a raster line's 488.6 clocks for its own
   instructions, which is Kabuto's "roughly 480 cycles per raster line instead of

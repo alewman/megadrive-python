@@ -9,7 +9,7 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 to 5 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 6 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
 (119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
@@ -33,7 +33,16 @@ the end of the Z80's machine cycle; the DMA costs 2.38 and 4.78 68000 cycles a w
 against Kabuto's measured 2.4 and 4.7, and moves the Manual's 16, 167, 18 and 205
 bytes a raster line to within one byte; and after every stall the 68000 keeps 481 of a
 line's 488.6 clocks, which is Kabuto's "roughly 480". The picture is now drawn a piece
-at a time, so a write part way along a line lands there, CRAM dots and all. Around the
+at a time, so a write part way along a line lands there, CRAM dots and all. And all of
+that has now been held against **Nuked-MD**, the whole chipset modelled from decapped
+die photographs, built here headless with a bus tracer of our own: on one NTSC frame of
+each test ROM of milestones 2 to 5, five of the ten agree with it on **every** one of
+their 25,307 to 28,921 68000 bus cycles -- address, direction, size, the stall charged
+to each, and the data read -- and every difference elsewhere is sorted into a named
+cause. It settled three things nothing else could: the DMA start-up cost Kabuto
+measured is real (the referee charges 11 68000 cycles for a one-word transfer where the
+board charges 1), the board has the two halves of a Z80 `pop` the wrong way round, and
+the Z80's bus grant comes about seven 68000 cycles early. Around the
 groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 
@@ -84,6 +93,7 @@ See [docs/README.md](docs/README.md).
 | `scripts/run_mdfourier.py` | Milestone 4: the MDFourier signal against the hardware recordings (a detector) | yes |
 | `scripts/run_bus_arbiter.py` | Milestone 5: MoD's two logic-analyser experiments, and the 68000's rate | yes |
 | `scripts/run_dma_cost.py` | Milestone 5: DMA cost per word and per raster line, against Kabuto and the Manual | yes |
+| `scripts/run_nuked_md.py` | Milestone 6: six comparisons against Nuked-MD, the die-derived referee | yes |
 | `tests/` | pytest: the board's tables, milestone 2's judges (fetched), milestone 1's replays (`-m slow`, local) | yes |
 | `reference/` | Fetched manuals, research documents, forum threads, source trees and die-derived models | no |
 | `tests/test_roms/` | Fetched test ROMs, logic-analyser captures and hardware audio recordings | no |
@@ -91,6 +101,7 @@ See [docs/README.md](docs/README.md).
 
     python -m megadrive_python CART --frames 600 --png frame.png --wav sound.wav
     sh validation/build_referees.sh             # build milestone 4's three referees
+    sh validation/build_nuked_md.sh             # build milestone 6's referee, Nuked-MD
     python scripts/fetch_references.py          # fetch everything missing
     python scripts/fetch_references.py --large  # also the large recordings
     python scripts/fetch_references.py --verify # check the pins, fetch nothing

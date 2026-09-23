@@ -251,9 +251,19 @@ source, the way sms-python does.
    Retro. A lead to confirm, not a rule.
 5. **The work-RAM slow-down** Kabuto saw but did not measure. The board's model
    (21 MCLK on the next work-RAM access once due, due again about 805 MCLK after)
-   is Nuked-MD's, and reproduces the capture loop's rate; the interval is fixed
-   only to 743-826 MCLK by that loop, and Nuked-MD varies the stretch (7/21/35
-   MCLK) in other loops, which the board does not model.
+   is Nuked-MD's, and reproduces the capture loop's rate. Milestone 6 measured it
+   properly against the referee's own reported cycle lengths and the rule **does not
+   generalise**: the 21-MCLK stretch is confirmed on every one of the several hundred
+   stretches seen, but the re-arm period that reproduces the referee exactly is
+   806-819 MCLK in a dense work-RAM loop (which narrows the old 743-826 and excludes
+   the board's 805), 694-699 in CMD's `wtest.bin`, and no value in 600-1400 fits
+   Nemesis's capture ROM at any phase. The referee's stretches are not raster-locked
+   either. So the re-arm timer is a fit to one access pattern rather than the
+   machine's rule, and it is the largest single source of difference in milestone 6's
+   ROM comparison (1,300-1,900 misplaced ticks per test ROM, each shifting the board's
+   timeline by 21 MCLK and so moving the -- otherwise exact -- cartridge grid).
+   Nuked-MD also varies the stretch (7/21/35 MCLK) in some loops, which the board does
+   not model.
 6. **VDPFIFOTesting's intermittent tests**: data-port writes during a DMA fill,
    and the fill's FIFO byte order, vary on real hardware (Nemesis). The board
    passes all four (milestone 2).
@@ -276,6 +286,14 @@ source, the way sms-python does.
    the same result as before it was modelled, and still not comparable with hardware.
    MAME grants at once and models no arbiter, so the milestone-1 lockstep turns the
    whole arbiter off (`Board.arbiter_enabled`), as it already does the refresh.
+   **Milestone 6 gave it a judge.** Nothing hardware covers the question, so the tier
+   rule lets Nuked-MD answer it: from the 68000's write to $A11100 to /BUSAK it takes
+   9.71-16.86 68000 cycles (mean 12.22) over 37 grants, where the board takes
+   1.43-6.29 (mean 4.86). The specification's rule is therefore right in shape and
+   short by about 7.4 cycles of the arbiter's own propagation, which the board does not
+   model. It is visible: `gen_test_z80_bus` and `stetest` both poll $A11100 and the
+   board reads the grant one poll sooner than the referee does
+   ([worklog.md](worklog.md), milestone 6).
 9. **What a VRAM write in 128 KB mode does to the picture.** The board models the
    write path from Kabuto's formulas (one byte per word, the address bits rearranged)
    but keeps reading VRAM as in 64 KB mode, where the hardware shows garbage. Nothing
@@ -299,9 +317,29 @@ source, the way sms-python does.
     the second read "seems to always have at least 4 wait states" and the pair averages
     3.5; the board, placing both reads almost together, charges 2.53 wait states on
     that experiment where it charges 3.36 on his single-read one
-    ([worklog.md](worklog.md), milestone 5). A core-side accessor would settle it
-    ([polish.md](polish.md)).
+    ([worklog.md](worklog.md), milestone 5). **Milestone 6 measured the split** on
+    Nuked-MD, which charges the `pop`'s first read 2.95 wait states and its second
+    3.61 -- MoD's order and very nearly his number -- where the board charges 4.08 then
+    2.30: the same total, the opposite split, exactly as the missing accessor predicts.
+    A core-side accessor would settle it ([polish.md](polish.md)).
 15. **The DMA's start-up cost.** Kabuto's fast-transfer formula has a +5.6-cycle
     intercept, so a one-word transfer costs 8 68000 cycles on his hardware; the board
     charges about 1, having no mechanism for a start-up. Its slopes are within 2 % of
-    his ([timing.md](timing.md), "DMA").
+    his ([timing.md](timing.md), "DMA"). **Milestone 6 confirmed the cost exists**:
+    Nuked-MD charges 11.0 68000 cycles for a one-word fast transfer and fits +8.0 over
+    1 to 512 words, against the board's 1.1 and +3.2. The slopes agree (2.47 against
+    the board's 2.46 and Kabuto's 2.4); the intercept does not, and the referee is on
+    Kabuto's side of it.
+16. **What a 68000 access to the Z80's space costs.** MAME adds one 68000 clock to
+    every access to $A00000-$A0FFFF (`megadriv.cpp`, `before_delay(1)`, "required by
+    pacman2 intro", "TODO: unverified"), which milestone 1 carried as a named class of
+    lockstep difference (41,274 steps of Sonic alone). **Nuked-MD does the same**: in
+    milestone 6's FM probe all 68 of the 68000's accesses to $A0xxxx are held 7 MCLK by
+    the referee and 0 by the board. Nothing hardware covers it, so the die-derived
+    model judges, and it agrees with MAME against the board. Not changed in milestone
+    6: it moves the milestone-1 lockstep (which would have to be re-recorded), the
+    arbiter's `subcycle` and Overdrive 2's realised sample rate.
+17. **The VDP in Mode 4.** At power-on the VDP is in Mode 4 and Nuked-MD's $C00008
+    reads a constant ($9F00 in the runs made); the board reads its Mode 5 HV counter
+    whatever the mode. No test ROM of milestones 2-5 reads HV before setting Mode 5,
+    and Mode 4 as a whole is milestone 10.
