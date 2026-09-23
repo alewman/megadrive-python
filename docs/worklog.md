@@ -2981,7 +2981,8 @@ Genie and the Sega Pico family; the sweep will say how many images they are.
 | `a0d299e` | `run_mapper.py`: do not try to write a PNG of a frame not yet drawn |
 | `d6a8659` | Say exactly what a read of an EEPROM board's register gives |
 | `ef04b86` | `start-here.md`: two things it got wrong about the pads and TMSS |
-| (this one) | Milestone 7's record: the worklog, the certification record, the open items, the findings and the README |
+| `e755a3b` | Milestone 7's record: the worklog, the certification record, the open items, the findings and the README, and the fold in `cartridge.py` that keeps a plain cartridge as fast as it was |
+| `58cbc47` | the final line counts |
 
 **End of milestone 7.** Stopping here, as the working agreement says; milestone 8's
 sweep is next.
