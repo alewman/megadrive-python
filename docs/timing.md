@@ -297,8 +297,8 @@ quoted beside them. The slopes did not move.
   whole delay from the $A11100 write to /BUSAK at 9.71-16.86 68000 cycles (mean
   12.34 over 122 grants) where the specification's rule alone gave 1.43-6.29.
   The timing session adopted the difference as `arbiter.BUSACK_PROPAGATION_MCLK`
-  = 50 MCLK, fitted and labelled die-derived; the board's grants are then
-  8.57-13.43 cycles, mean **12.33** against the referee's 12.34. A 68000 access
+  = 57 MCLK, fitted and labelled die-derived; the board's grants are then
+  9.57-13.43 cycles, mean **12.29** against the referee's 12.34. A 68000 access
   to the Z80's space before the grant is held by the arbiter
   ([undocumented-behavior.md](undocumented-behavior.md), open item 8).
 - **A refresh steals 2 of every 128 68000 cycles**: "every time 128 cycles

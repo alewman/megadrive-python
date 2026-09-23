@@ -331,22 +331,22 @@ source, the way sms-python does.
    **Milestone 6 gave it a judge.** Nothing hardware covers the question, so the tier
    rule lets Nuked-MD answer it: from the 68000's write to $A11100 to /BUSAK it takes
    9.71-16.86 68000 cycles (mean 12.34 over 122 grants), where the machine-cycle rule
-   alone took 1.43-6.29 (mean 5.19). The specification's rule is therefore right in
+   alone takes 1.43-5.29 (mean 4.15). The specification's rule is therefore right in
    shape and short by the arbiter's own propagation.
    **The timing session adopted that propagation** as `arbiter.BUSACK_PROPAGATION_MCLK`
-   = 50 MCLK -- the difference of the two means, 7.15 68000 cycles, rounded to whole
+   = 57 MCLK -- the difference of the two means, 8.19 68000 cycles, rounded to whole
    master clocks and labelled die-derived and fitted. The board's grants are then
-   8.57-13.43 cycles, mean 12.33 against the referee's 12.34; the spread is narrower
+   9.57-13.43 cycles, mean 12.29 against the referee's 12.34; the spread is narrower
    than the referee's because the board's machine-cycle estimate is coarse
    (`System.z80_probe`). MoD's ROM's two delay counters now print **0001** instead of
    0000, which is still not comparable with hardware because his own values are not
    published.
    **What is still open.** With the Z80 *held in reset* the referee takes far longer:
    on `gen_test_z80_bus`, the one pinned ROM that polls $A11100 in that state, /BUSAK
-   follows the write by **235 MCLK** (33.6 68000 cycles) against the board's 50. One
+   follows the write by **235 MCLK** (33.6 68000 cycles) against the board's 57. One
    observation is not a constant, so no second figure was fitted, and both
    `gen_test_z80_bus` and `stetest` still end their referee comparison at that poll
-   (referee $67, board $66) -- a measured gap of about 185 MCLK rather than an
+   (referee $67, board $66) -- a measured gap of about 178 MCLK rather than an
    unmodelled one ([worklog.md](worklog.md), the timing session).
 9. **What a VRAM write in 128 KB mode does to the picture.** The board models the
    write path from Kabuto's formulas (one byte per word, the address bits rearranged)

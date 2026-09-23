@@ -97,10 +97,10 @@ REFRESH = 2
 #: measures this direction.  The tier rule therefore lets the die-derived model answer,
 #: and Nuked-MD does: over 122 grants it takes 68-118 MCLK (9.71-16.86 68000 cycles,
 #: mean 12.34) from the 68000's write to $A11100 to /BUSAK, where the machine-cycle
-#: rule alone took 10-44 MCLK (mean 5.19).  This constant is the difference of the two
-#: means, 7.15 68000 cycles, rounded to 50 MCLK; **die-derived and fitted**, not
+#: rule alone takes 10-37 MCLK (mean 4.15).  This constant is the difference of the two
+#: means, 8.19 68000 cycles, rounded to 57 MCLK; **die-derived and fitted**, not
 #: measured on hardware (docs/worklog.md, the timing session).
-BUSACK_PROPAGATION_MCLK = 50
+BUSACK_PROPAGATION_MCLK = 57
 
 
 def bank_access_delay(subcycle: int, release: int, refreshed: bool) -> tuple[int, int]:

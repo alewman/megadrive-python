@@ -459,7 +459,7 @@ commit `3ae1498`; m68000-python 51ee1a5, z80-python 0.4.0, MAME 0.285, Nuked-MD
 | What | Where | Judge | Before | After |
 | --- | --- | --- | --- | --- |
 | one extra 68000 clock on every $A00000-$A0FFFF access | `board.Z80_SPACE_STALL` | Nuked-MD and MAME agree; nothing hardware | 0 MCLK | 7 MCLK |
-| the arbiter's propagation on the bus grant | `arbiter.BUSACK_PROPAGATION_MCLK` | Nuked-MD (nothing hardware measures this direction) | mean 5.19 cycles | mean **12.33** against the referee's 12.34 |
+| the arbiter's propagation on the bus grant | `arbiter.BUSACK_PROPAGATION_MCLK` = 57 MCLK | Nuked-MD (nothing hardware measures this direction) | mean 4.15 cycles | mean **12.29** against the referee's 12.34 |
 | the DMA's start-up | `vdp.DMA_STARTUP_MCLK` | Kabuto (hardware) +5.6, corroborated by Nuked-MD's +8.0 | one word 0.6 cycles | one word **7.4** against Kabuto's 8.0 |
 | how long the 68000 holds the bus (Kabuto's `a`) | `arbiter.AS_LOW_MCLK`, `Board._m68k_release` | the 68000 UM's bus-arbitration rule, measured on Nuked-MD | 28 MCLK plus a 2-cycle look-ahead | **18 MCLK**, no look-ahead |
 
@@ -482,17 +482,17 @@ Nemesis's photographs judge that ROM).
 | the YM2612 against Nuked-OPN2, 18 streams, both variants | 0 of 87,377,483 internal cycles x 3 values x 2 variants not identical | **0 of 110,549,790 x 3 x 2** (the streams are longer since milestone 4's press frames) |
 | `scripts/run_bus_arbiter.py`, MoD's three experiments | 2.27 / **3.36** / 2.53 wait states | 2.27 / **2.91** / 2.44 (MoD's hardware: "2-3" / 2.93 / 3.5) |
 | `scripts/run_dma_cost.py` | one word 0.6, fit 2.37 × words − 3.5; Manual's table 16.1/167.4/18.1/205.9 | one word **7.4**, fit 2.37 × words **+ 1.7**; Manual's table 16.1/**167.1**/18.1/**205.1** against its 16/167/18/205 |
-| `run_nuked_md.py busack`, 122 grants | board 10-44 MCLK, mean 4.86 cycles | board 60-94 MCLK, mean **12.33** (referee 12.34) |
+| `run_nuked_md.py busack`, 122 grants | board 10-44 MCLK, mean 4.86 cycles | board 67-94 MCLK, mean **12.29** (referee 12.34) |
 | `run_nuked_md.py dma` | board fast 2.46 × words + 3.2, one word 1.1 | board 2.46 × words **+ 9.0**, one word **6.9** (referee 2.47 + 8.0, 11.0) |
 | `run_nuked_md.py arbiter`, the `jmp (a0)` loop | 2-5, mean 3.55 | **2-4, mean 2.86** (referee 2-4, 2.74) |
 | `run_nuked_md.py arbiter`, the `pop`'s first read | mean 4.07 | **mean 2.97** (referee 2.95) |
 | `run_nuked_md.py sound`, the FM probe | 434 of 636 bus cycles agree | **568 of 636**; the 68 $A0xxxx stall differences are gone, 1 remains |
 | `run_nuked_md.py probes`, eight loops | 2,921 of 3,546 | **unchanged** |
 | `run_nuked_md.py roms`, ten ROMs | as milestone 6's table | **unchanged**, every figure |
-| `pytest -q`, PyPy and CPython 3.14.4 | 46 passed, 1 deselected | **49 passed, 6 deselected** (three new tests, one rewritten for the grant's propagation; the deselected six are the `slow` MAME-log replays, run directly instead) |
+| `pytest -q`, PyPy and CPython 3.14.4 | 46 passed, 1 deselected | **49 passed, 1 deselected** on PyPy and on CPython 3.14.4 (three new tests, one rewritten for the grant's propagation) |
 | the nine milestone-3 test ROMs against MAME's frames (detector) | 100.00/100.00/100.00/99.84/96.93/96.25/69.64/41.97 % | **every figure identical** |
 | frames a second on PyPy, 900 frames, `--no-sound`, paired against commit `86fa7e1` | 37.0-48.5 fps | **41.7-51.2 fps**, +0.6 % to +12.7 %: a frame is a fixed number of master clocks, so more stall clocks means fewer instructions to run |
-| Overdrive 2's realised DAC rate (Kabuto's own driver, "26 kHz") | 26,313 Hz with the arbiter on, 27,028 without | **25,855 Hz** with it on, 26,318 without -- 0.6 % below his figure where it was 1.2 % above |
+| Overdrive 2's realised DAC rate (Kabuto's own driver, "26 kHz") | 26,313 Hz with the arbiter on, 27,028 without | **25,858 Hz** with it on, 26,318 without -- 0.6 % below his figure where it was 1.2 % above |
 
 **What did not move that might have been expected to.** The referee's ROM comparison
 is unchanged in every figure, including `gen_test_z80_bus` and `stetest`, which still

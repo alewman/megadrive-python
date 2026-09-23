@@ -2150,12 +2150,15 @@ The board modelled Zilog UM0080's rule -- the Z80 lets go at the end of the mach
 cycle in progress -- and nothing of the board around it. `run_nuked_md.py busack
 --window 200000` over **122 grants**: the referee takes 68-118 MCLK (9.71-16.86 68000
 cycles, mean **12.34**) from the 68000's write to $A11100 to /BUSAK where the
-specification's rule alone took 10-44 MCLK (mean 5.19). `BUSACK_PROPAGATION_MCLK` is
-the difference of the two means, 7.15 cycles, rounded to **50 MCLK** and labelled
+specification's rule alone takes 10-37 MCLK (mean 4.15). `BUSACK_PROPAGATION_MCLK` is
+the difference of the two means, 8.19 cycles, rounded to **57 MCLK** and labelled
 die-derived and fitted; `busack_grant` now returns the machine-cycle end plus it.
+(The constant was fitted twice: once at 50 MCLK against the release rule of the time,
+and again at 57 after section 5 corrected that rule and moved the board's unaided
+figure from 5.19 cycles to 4.15. 57 is the one in the tree.)
 
-After: the board's grants are 60-94 MCLK, **mean 12.33 68000 cycles against the
-referee's 12.34**. The board's spread is narrower (8.57-13.43 against 9.71-16.86)
+After: the board's grants are 67-94 MCLK, **mean 12.29 68000 cycles against the
+referee's 12.34**. The board's spread is narrower (9.57-13.43 against 9.71-16.86)
 because `System.z80_probe`'s machine-cycle estimate is coarse; the constant fixes the
 mean, not the shape, and that is said rather than hidden.
 
@@ -2172,15 +2175,15 @@ where the referee reads $67 and the board $66. Tracing that poll on both machine
 ```text
 referee: $A11100 write at 1,382,688;  /BUSAK at 1,382,923  (235 MCLK, 33.6 cycles)
 referee: polls at 1,382,884 -> $6700 (busy), 1,383,038 -> $6600 (granted)
-board:   $A11100 write at ~1,382,807; grant at 1,382,857  (50 MCLK)
+board:   $A11100 write at ~1,382,807; grant at 1,382,864  (57 MCLK)
 board:   poll at 1,383,003 -> $6600 (granted)
 ```
 
 The Z80 is **held in reset** there, and the referee's arbiter takes 235 MCLK in that
-state against the 68-118 it takes with the Z80 running. The propagation was made to
+state against the 68-118 it takes with the Z80 running (the board takes 57). The propagation was made to
 apply with the Z80 held as well (it is the arbiter's, not the Z80's), but a second
 constant fitted to a single observation is exactly what the user's rule forbids, so
-the board keeps 50 and the remaining ~185 MCLK is a named, measured difference rather
+the board keeps 57 and the remaining ~178 MCLK is a named, measured difference rather
 than an unmodelled one. QUESTION below.
 
 ### 3. The work-RAM refresh: what was tried, and why 805 stayed
@@ -2383,7 +2386,7 @@ register $2A:
 
 | | milestone 5 | now |
 | --- | ---: | ---: |
-| arbiter on | 26,313 Hz | **25,855 Hz** |
+| arbiter on | 26,313 Hz | **25,858 Hz** |
 | arbiter off | 27,028 Hz | 26,318 Hz |
 | Kabuto | "26 kHz" | "26 kHz" |
 
@@ -2404,8 +2407,10 @@ milestones 3 and 5.
 
 ### The suite
 
-`.venv-pypy/bin/python -m pytest -q`: **49 passed, 6 deselected** in 158 s;
-`.venv/bin/python -m pytest -q` (CPython 3.14.4): 49 passed, 6 deselected in 395 s.
+`.venv-pypy/bin/python -m pytest -q`: **49 passed, 1 deselected** in 163 s;
+`.venv/bin/python -m pytest -q` (CPython 3.14.4): 49 passed in 395 s. (While the MAME
+trace directories were still present six were deselected instead of one: the extra
+five are `slow` replays that are only collected when their logs exist.)
 Three tests are new (the Z80-space clock, the /AS-low release rule, the DMA
 start-up) and one was rewritten for the grant's propagation. The six deselected are
 the `slow` marker's MAME-log replays, collected this time because the trace
