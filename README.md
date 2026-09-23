@@ -28,21 +28,28 @@ seconds of wall time per emulated second on PyPy, which is most of why the board
 at 17 to 21 frames a second with sound and 138 to 205 without. Bus timing is in as
 well: the arbiter charges a Z80 bank access the 2 to 5 cycles Kabuto's footnote 1
 gives and the 68000 about 11, which reproduces MoD's logic-analyser range exactly with
-the 68000 off the bus and brackets his mean with it on the bus; the bus grant waits for
-the end of the Z80's machine cycle; the DMA costs 2.38 and 4.78 68000 cycles a word
-against Kabuto's measured 2.4 and 4.7, and moves the Manual's 16, 167, 18 and 205
-bytes a raster line to within one byte; and after every stall the 68000 keeps 481 of a
-line's 488.6 clocks, which is Kabuto's "roughly 480". The picture is now drawn a piece
+the 68000 off the bus and lands on his mean, 2.91 against his 2.93, with it on the bus;
+the bus grant waits for the end of the Z80's machine cycle and then for the arbiter to
+report it; the DMA costs 2.37 and 4.78 68000 cycles a word against Kabuto's measured
+2.4 and 4.7 with the 5.6-cycle start-up he measured, and moves the Manual's 16, 167, 18
+and 205 bytes a raster line to within one byte; and after every stall the 68000 keeps
+481 of a line's 488.6 clocks, which is Kabuto's "roughly 480". The picture is now drawn a piece
 at a time, so a write part way along a line lands there, CRAM dots and all. And all of
 that has now been held against **Nuked-MD**, the whole chipset modelled from decapped
 die photographs, built here headless with a bus tracer of our own: on one NTSC frame of
 each test ROM of milestones 2 to 5, five of the ten agree with it on **every** one of
 their 25,307 to 28,921 68000 bus cycles -- address, direction, size, the stall charged
 to each, and the data read -- and every difference elsewhere is sorted into a named
-cause. It settled three things nothing else could: the DMA start-up cost Kabuto
-measured is real (the referee charges 11 68000 cycles for a one-word transfer where the
-board charges 1), the board has the two halves of a Z80 `pop` the wrong way round, and
-the Z80's bus grant comes about seven 68000 cycles early. Around the
+cause. It settled four things nothing else could, and a
+timing session then adopted them: the DMA start-up cost Kabuto measured is real, the
+Z80's bus grant came about seven 68000 cycles early, a 68000 access to the Z80's space
+costs one clock more than the board charged -- which removed the largest named class of
+clock difference from the milestone-1 lockstep, now 119,755,782 68000 and 73,002,958
+Z80 instructions with nothing unexplained and nothing named against MAME's own clock --
+and the 68000 holds the bus for only 18 of a bus cycle's 28 master clocks, which had
+been making every Z80 bank access cost half a wait state too much. It also showed that
+the board has the two halves of a Z80 `pop` the wrong way round, which needs a change
+to z80-python to fix. Around the
 groundwork it was built from, in the shape that built
 [sms-python](https://github.com/alewman/sms-python):
 

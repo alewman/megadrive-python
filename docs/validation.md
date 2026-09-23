@@ -445,3 +445,63 @@ with Nuked-MD's" holds outright for five of the ten test ROMs and for three of
 the eight probes; everywhere else each difference is sorted into one of the named
 causes above, which is the brief's alternative. The numbers and the reasoning are
 in [worklog.md](worklog.md), milestone 6.
+
+### The timing session (2026-09-23): what four adopted rules moved
+
+Not a milestone. The user's six decisions on milestone 6's questions, taken in one
+pass before milestone 7 and before milestone 8's sweep, because the sweep compares
+thousands of frames against MAME and every timing change moves its results. Code at
+commit `3ae1498`; m68000-python 51ee1a5, z80-python 0.4.0, MAME 0.285, Nuked-MD
+@ 594ca2a, PyPy 7.3.23 (Python 3.11.15).
+
+**What was adopted**, each with the judge that settled it:
+
+| What | Where | Judge | Before | After |
+| --- | --- | --- | --- | --- |
+| one extra 68000 clock on every $A00000-$A0FFFF access | `board.Z80_SPACE_STALL` | Nuked-MD and MAME agree; nothing hardware | 0 MCLK | 7 MCLK |
+| the arbiter's propagation on the bus grant | `arbiter.BUSACK_PROPAGATION_MCLK` | Nuked-MD (nothing hardware measures this direction) | mean 5.19 cycles | mean **12.33** against the referee's 12.34 |
+| the DMA's start-up | `vdp.DMA_STARTUP_MCLK` | Kabuto (hardware) +5.6, corroborated by Nuked-MD's +8.0 | one word 0.6 cycles | one word **7.4** against Kabuto's 8.0 |
+| how long the 68000 holds the bus (Kabuto's `a`) | `arbiter.AS_LOW_MCLK`, `Board._m68k_release` | the 68000 UM's bus-arbitration rule, measured on Nuked-MD | 28 MCLK plus a 2-cycle look-ahead | **18 MCLK**, no look-ahead |
+
+The work-RAM refresh was investigated and **kept at 805 MCLK** with the difference
+named; five candidate rules and their scores are in
+[undocumented-behavior.md](undocumented-behavior.md), open item 5.
+`SpriteMaskingTestRom.bin` was left alone, as decided (the referee's own limitation;
+Nemesis's photographs judge that ROM).
+
+**Every acceptance run these touch, re-run:**
+
+| Run | Before | After |
+| --- | --- | --- |
+| milestone 1's two-CPU replay, six games, 30 s each, MAME traces **re-recorded** | 119,755,782 68000 + 73,002,958 Z80 instructions, 0 unexplained, **41,274 steps of Sonic alone in the class "MAME's `before_delay(1)`"** | the same instruction counts, 0 unexplained, **that class empty**: on Sonic its 41,274 steps move into "agree" exactly (23,240,769 → 23,282,043), every other named class unchanged to the count |
+| Nemesis's HV/status captures, 288 dumps | 8,762,415 / 8,847,360 words | **8,762,415 / 8,847,360**, unchanged to the word |
+| VDPFIFOTesting, nine machines | 122/122 on eight, 114/122 on genesis3 | **unchanged** |
+| Nemesis's sprite masking ROM against his MD1600 | 0 of 18 cells differ | **unchanged** |
+| MoD's `gen_test_z80_bus` | 8 checks PASS; delay counters 0000/0000 | 8 checks PASS; delay counters **0001/0001** (no hardware value published for them) |
+| the PSG against Nuked-PSG, ten streams | 0 of 80,300,605 input clocks differ | **0 of 121,279,196** (the game streams are longer since milestone 4's press frames, and the board's own clock moved with the $A0 charge) |
+| the YM2612 against Nuked-OPN2, 18 streams, both variants | 0 of 87,377,483 internal cycles x 3 values x 2 variants not identical | **0 of 110,549,790 x 3 x 2** (the streams are longer since milestone 4's press frames) |
+| `scripts/run_bus_arbiter.py`, MoD's three experiments | 2.27 / **3.36** / 2.53 wait states | 2.27 / **2.91** / 2.44 (MoD's hardware: "2-3" / 2.93 / 3.5) |
+| `scripts/run_dma_cost.py` | one word 0.6, fit 2.37 × words − 3.5; Manual's table 16.1/167.4/18.1/205.9 | one word **7.4**, fit 2.37 × words **+ 1.7**; Manual's table 16.1/**167.1**/18.1/**205.1** against its 16/167/18/205 |
+| `run_nuked_md.py busack`, 122 grants | board 10-44 MCLK, mean 4.86 cycles | board 60-94 MCLK, mean **12.33** (referee 12.34) |
+| `run_nuked_md.py dma` | board fast 2.46 × words + 3.2, one word 1.1 | board 2.46 × words **+ 9.0**, one word **6.9** (referee 2.47 + 8.0, 11.0) |
+| `run_nuked_md.py arbiter`, the `jmp (a0)` loop | 2-5, mean 3.55 | **2-4, mean 2.86** (referee 2-4, 2.74) |
+| `run_nuked_md.py arbiter`, the `pop`'s first read | mean 4.07 | **mean 2.97** (referee 2.95) |
+| `run_nuked_md.py sound`, the FM probe | 434 of 636 bus cycles agree | **568 of 636**; the 68 $A0xxxx stall differences are gone, 1 remains |
+| `run_nuked_md.py probes`, eight loops | 2,921 of 3,546 | **unchanged** |
+| `run_nuked_md.py roms`, ten ROMs | as milestone 6's table | **unchanged**, every figure |
+| `pytest -q` | 46 passed, 1 deselected | **48 passed** (three new tests; one rewritten for the grant's propagation) |
+
+**What did not move that might have been expected to.** The referee's ROM comparison
+is unchanged in every figure, including `gen_test_z80_bus` and `stetest`, which still
+end at the $A11100 poll where the referee reads $67 and the board $66: with the Z80
+*held in reset* the referee takes 235 MCLK from the write to /BUSAK, not the 68-118
+it takes with the Z80 running, and one observation is not a constant to fit. The
+probe loops are unchanged because none of them touches the Z80's space, the DMA or
+the arbiter.
+
+**What got worse, and why it is still the right change.** The `pop` experiment's pair
+mean falls from 3.19 to 2.50 against the referee's 3.27: the board's inflated `a` had
+been compensating for its inability to place the second of a `pop`'s two reads at its
+own T-state. The first read now lands on the referee's figure (2.97 against 2.95) and
+the second is plainly short (2.04 against 3.60), which is the z80-python limitation
+`polish.md` records, now unmasked rather than cancelled out.

@@ -2070,3 +2070,283 @@ timing.
    2.93) in the same pass: it is the same arbiter arithmetic as 2.
 6. **Leave `SpriteMaskingTestRom.bin` stalling the referee**: it looks like the
    referee's own limitation, and the ROM is judged by Nemesis's photographs.
+
+## Session 6 (2026-09-23): the timing session
+
+### How the brief was read
+
+Not a milestone: the user's six decisions on milestone 6's questions, taken in one
+pass before milestone 7 and before milestone 8's sweep, because the sweep compares
+thousands of frames against MAME and every timing change moves its results. Four
+things to adopt (the extra clock on $A00000-$A0FFFF, the arbiter's propagation on
+the bus grant, the DMA's start-up cost, the Z80 wait-state bias), one to investigate
+with a limit (the work-RAM refresh) and one to leave alone
+(`SpriteMaskingTestRom.bin`). Then re-run every acceptance run they touch and record
+the before and after, explaining anything that moves.
+
+The judging rule the user set for this session, which decided two of the four:
+**where the referee and a hardware-measured source disagree in size, the hardware
+source is the judge and the referee is the corroboration**; and do not fit a constant
+to make one test pass at the cost of another.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, Nuked-MD at `594ca2a`, gcc 15.2.0, the 13th-generation
+Core i9-13900K. The machine was shared throughout, which is why the frame-rate
+measurement below is a paired run of the two trees rather than a table of absolutes.
+
+### 1. One extra 68000 clock on every $A00000-$A0FFFF access
+
+Milestone 6 found the referee holding all 68 of the FM probe's accesses to the Z80's
+space 7 MCLK where the board held none, which is MAME's `before_delay(1)`
+(`megadriv.cpp`, "required by pacman2 intro", "TODO: unverified"). Two independent
+models against the board and nothing hardware on the question, so the tier rule lets
+them judge.
+
+`Board._z80_space_cost` charges it in the four bus entry points, **after** the access,
+so the access itself still lands at the clock its bus cycle began at (the referee
+stretches the cycle; it does not delay its start). It is also counted apart in
+`Board.z80_space_stall`, because the milestone-1 lockstep compares the board's step
+with MAME's own clock count and MAME charges the same clock: `scripts/lockstep_mame.py`
+adds that counter to the core's clocks, and the line that used to add MAME's own
+`before_delay` to the E-clock phase of an interrupt entry is gone with it.
+
+**The milestone-1 replay, re-recorded and re-run.** `python scripts/mame_trace.py
+genesis GAME.zip --seconds 30` for the six games (MAME 0.285, two runs each, six in
+parallel), then `.venv-pypy/bin/python scripts/lockstep_mame.py
+tests/mame_traces/genesis-NAME`. The traces (3.5 GB) were deleted afterwards.
+
+| Game | 68000 instr. | Z80 instr. | unexplained | `before_delay(1)` steps | wall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 23,286,815 | 12,728,465 | 0 | **0** (was 41,274) | 397 s |
+| Streets of Rage 2 (USA) | 21,274,844 | 11,269,553 | 0 | **0** | 372 s |
+| Gunstar Heroes (USA) | 20,854,523 | 15,425,681 | 0 | **0** | 397 s |
+| Castlevania - Bloodlines (USA) | 11,343,385 | 8,460,818 | 0 | **0** | 355 s |
+| Sonic The Hedgehog 3 (USA) | 21,741,798 | 11,837,738 | 0 | **0** | 403 s |
+| Phantasy Star IV (USA) | 21,254,417 | 13,280,703 | 0 | **0** | 400 s |
+| **Total** | **119,755,782** | **73,002,958** | **0** | | |
+
+Every instruction count is milestone 1's to the instruction. To be sure that nothing
+*else* moved, the same Sonic trace was also replayed against a worktree at the
+session's starting commit `86fa7e1`: its 41,274 `before_delay(1)` steps move into
+"agree" exactly (23,240,769 → 23,282,043) and every other class is identical to the
+count -- 3,165 $A11100 non-grant bits, 1,477 VDP reads replayed, 463 YM2612 status
+replayed, 48 Z80 RAM reads sorted to MAME's side, 26 Z80 instructions replayed in the
+other order, 3,276 MAME DMA stalls, 1,495 interrupt entries. Summed over the six:
+107,762 YM2612 status replayed, 47,067 $A11100 non-grant bits, 10,879 VDP reads, 516
+Z80 RAM reads, 47 Z80 instructions, 1 I/O latch bit -- the last five identical to
+milestone 1's totals.
+
+(The YM2612 status count is the one number that differs from milestone 1's 90,707,
+and it did not move this session: the comparison at `86fa7e1` gives Sonic's 463 too.
+It moved when milestone 4 put a real FM on the board and was never re-measured
+across all six games.)
+
+### 2. The arbiter's propagation on the bus grant
+
+The board modelled Zilog UM0080's rule -- the Z80 lets go at the end of the machine
+cycle in progress -- and nothing of the board around it. `run_nuked_md.py busack
+--window 200000` over **122 grants**: the referee takes 68-118 MCLK (9.71-16.86 68000
+cycles, mean **12.34**) from the 68000's write to $A11100 to /BUSAK where the
+specification's rule alone took 10-44 MCLK (mean 5.19). `BUSACK_PROPAGATION_MCLK` is
+the difference of the two means, 7.15 cycles, rounded to **50 MCLK** and labelled
+die-derived and fitted; `busack_grant` now returns the machine-cycle end plus it.
+
+After: the board's grants are 60-94 MCLK, **mean 12.33 68000 cycles against the
+referee's 12.34**. The board's spread is narrower (8.57-13.43 against 9.71-16.86)
+because `System.z80_probe`'s machine-cycle estimate is coarse; the constant fixes the
+mean, not the shape, and that is said rather than hidden.
+
+MoD's `gen_test_z80_bus`: all eight checks still PASS, the Z80's writes to 68000 work
+RAM still read back $4243 and its reads $FFFF, and its two delay counters now print
+**0001** instead of 0000. MoD's own hardware values for those two counters are still
+not in the pinned material, so this is a change, not a pass.
+
+**What it did not fix, and the measurement that says why.** `run_nuked_md.py roms` is
+unchanged in every figure, including the two ROMs that poll $A11100 --
+`gen_test_z80_bus` (21,828 / 21,832) and `stetest` (230 / 233) -- which still end
+where the referee reads $67 and the board $66. Tracing that poll on both machines:
+
+```text
+referee: $A11100 write at 1,382,688;  /BUSAK at 1,382,923  (235 MCLK, 33.6 cycles)
+referee: polls at 1,382,884 -> $6700 (busy), 1,383,038 -> $6600 (granted)
+board:   $A11100 write at ~1,382,807; grant at 1,382,857  (50 MCLK)
+board:   poll at 1,383,003 -> $6600 (granted)
+```
+
+The Z80 is **held in reset** there, and the referee's arbiter takes 235 MCLK in that
+state against the 68-118 it takes with the Z80 running. The propagation was made to
+apply with the Z80 held as well (it is the arbiter's, not the Z80's), but a second
+constant fitted to a single observation is exactly what the user's rule forbids, so
+the board keeps 50 and the remaining ~185 MCLK is a named, measured difference rather
+than an unmodelled one. QUESTION below.
+
+### 3. The work-RAM refresh: what was tried, and why 805 stayed
+
+Time-boxed, as the decision said. The referee reports every bus cycle's /AS-low
+length, so its work-RAM stretches are *observed*; eight traces were taken (three
+dense probe loops of 300,000 MCLK and five test ROMs of 900,000) and candidate rules
+replayed over the referee's own cycle times.
+
+**Three new facts.**
+
+1. **The stretch is not always 21 MCLK.** It is 7, 21 or 35 -- one, three or five
+   68000 clocks. Nemesis's capture ROM: 301 of its 401 stretches are 21 and 100 are
+   7. r57shell's `vdp_tests`: 820 of 1,020 are 21, 18 are 7 and 182 are 35. The board
+   models only the 21.
+2. **The rate varies by two and a half between programs, and rises as work-RAM
+   traffic thins.** In 900,000 MCLK `wtest.bin` shows 1,032 stretches (one per 872
+   MCLK) and the capture ROM 401 (one per 2,244). The apparent period is 845 MCLK
+   where 44 % of bus cycles are work RAM, 871 at 29 %, 880 at 40 %, 896 at 20 %.
+3. **No free-running grid fits.** For a fixed grid of period *G*, every stretch's
+   time must fall in one narrow band of residues mod *G*. Over *G* = 200..2,000 the
+   tightest band any *G* gives is 70-165 MCLK, 8-18 % of the period, and no *G* is
+   shared by two programs. The 4,546 stretches of all eight runs together -- which
+   share one power-on phase, since the referee always starts from the same reset --
+   band no better at any period (best arc 196 of 203).
+
+**Five candidate rules, each free to choose its own period and phase**, scored by how
+many of the referee's stretches it misplaces (fewest misses @ the period that gave
+them):
+
+| rule | dense probe (354) | `wtest` (1,032) | capture ROM (401) | `vdp_tests` (1,020) |
+| --- | ---: | ---: | ---: | ---: |
+| **A** re-arm *P* after the stretched RAM access (the board's) | 556 @ 946 | **0** @ 760 | 1,055 @ 946 | 1,664 @ 834 |
+| **B** fixed grid, any bus cycle absorbs the tick, only RAM pays | 233 @ 845 | 863 @ 871 | 300 @ 896 | 638 @ 880 |
+| **C** fixed grid, the tick waits for a RAM access | 175 @ 845 | **0** @ 871 | 604 @ 896 | 183 @ 880 |
+| **D** every *N*th work-RAM access (a row counter, not a timer) | 353 @ 44 | **0** @ 8 | 300 @ 57 | **0** @ 11 |
+| **E** any bus cycle absorbs the tick and re-arms the timer | 361 @ 785 | 1,032 @ 834 | 401 @ 876 | 1,072 @ 778 |
+
+Rules C and D are each exact on two programs and hopeless on the other two, and the
+period or count each needs differs by a factor of five between programs (C: 845 to
+896; D: 8 to 57 accesses). At the board's own 805 MCLK, C is no better than A overall
+(663 against 709 on the dense probe, but 1,656 against **0** on `wtest`), so even the
+shape change does not pay.
+
+**Decision: 805 MCLK and rule A stay, the difference stays named.** No rule was found
+that fits the referee, and changing the constant or the shape would move milestone
+2's capture agreement for no gain. What the session did buy is a sharper question:
+the interval depends on the access pattern, the stretch has three sizes, and the
+mechanism is not a grid, not a re-armed timer and not an access counter. Written up
+as open item 5 of docs/undocumented-behavior.md, with the table above.
+
+Not tried, and the obvious next step: reading the referee's refresh counter out of
+its own state instead of inferring it from stretches. That needs a change to
+`validation/nuked_md_headless.c` to expose FC1004 internals, which is more than a
+time-boxed investigation.
+
+### 4. The DMA's start-up cost
+
+Kabuto (hardware-measured research) gives a fast transfer as `words * 2.4 + 5.6`
+68000 cycles, so a one-word transfer costs eight; milestone 5 reproduced his slope
+within 2 % and had no mechanism for the +5.6, charging about one cycle; milestone 6
+measured the referee at 11.0 cycles for one word and +8.0 fitted over 1 to 512.
+
+The two judges agree the start-up is real and differ by 2.4 cycles in its size, so
+**the hardware source judges**: `VDP.DMA_STARTUP_MCLK` is Kabuto's own 5.6 cycles,
+39 MCLK (5.571, the rounding to whole master clocks), charged before the transfer's
+first word is read. Taking his constant as the mechanism it is named as, rather than
+a delta fitted to make some measurement land, is the whole reason for the choice --
+and it matters, because the board's own two harnesses fit intercepts seven cycles
+apart on the same board (`run_dma_cost.py` fits over 1..512 by the VDP's own `hold`,
+`run_nuked_md.py dma` over 1..512 by the gap in a real 68000 bus stream).
+
+`.venv-pypy/bin/python scripts/run_dma_cost.py`, H40, display off, fast transfer:
+
+| words | 1 | 2 | 4 | 8 | 16 | 64 | 512 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| board, before | 0.6 | 4.0 | 7.4 | 16.0 | 36.0 | 145.7 | 1216.0 |
+| board, after | **7.4** | **8.6** | **12.7** | **22.1** | **40.6** | 150.3 | 1217.4 |
+| Kabuto | 8.0 | 10.4 | 15.2 | 24.8 | 44.0 | 159.2 | 1234.4 |
+
+Fitted: 2.37 x words + **1.7** (was −3.5) fast, 4.78 x words − 9.7 (was −14.3) slow,
+against Kabuto's 2.4 + 5.6 and 4.7 − 6. In the referee's own harness the board is now
+2.46 x words + **9.0** with one word at **6.9**, against the referee's 2.47 + 8.0 and
+11.0. So the board sits between Kabuto and the referee on the one-word figure and just
+past the referee on the fit: the residual 3.6 cycles to the die are named, not fitted
+away.
+
+The Manual's DMA transfer capacity table still comes out: **16.1, 167.1, 18.1, 205.1**
+bytes a raster line against its 16, 167, 18, 205. VDPFIFOTesting is **122 of 122** on
+every machine but genesis3 (114 of 122, its VSRAM tests), its seven DMA Busy Flag
+tests, DMA Transfer Bus Locking, FIFO Full Before DMA Transfer and DMA Transfer using
+FIFO included.
+
+### 5. The Z80 wait-state bias: one number, found in the referee's bus log
+
+The board charged **3.55** wait states for a bank read with the 68000 in Kabuto's
+`jmp (a0)` loop where the referee charges 2.74 and MoD's logic analyser measured 2.93,
+and it produced 5s neither of them sees. The user's hint was to run it down against
+the referee's own bus log, which shows where each 68000 cycle was when the request
+arrived. That is exactly what it shows.
+
+**A 68000 bus cycle is four clocks, but the 68000 holds the bus for only 18 of its 28
+MCLK.** The bus is a requester's once /AS and /DTACK are negated (68000 UM, "Bus
+Arbitration"). In the referee's trace of that loop, **1,706 of its 1,766 68000 bus
+cycles hold /AS low for exactly 18 MCLK**, with a 10-MCLK gap to the next; the other
+60 hold it 32, which is 18 plus the cartridge refresh's 14 and is Kabuto's "up to 6
+cycles if the last access is delayed by the refresh logic". The board charged the
+whole 28 MCLK, which made the 68000 look continuously on the bus in a tight loop, and
+then also looked two cycles ahead to the next access, so Kabuto's `a` came out 5 and
+6 where the die never goes past 4.
+
+Replaying his formula over the referee's own 134 held Z80 reads with three candidate
+`a`s:
+
+| how ``a`` is taken | wait-state distribution | mean | the referee's own |
+| --- | --- | ---: | --- |
+| the /AS-low remainder (18 MCLK) | 2: 52, 3: 65, 4: 17 | **2.74** | 2: 51, 3: 67, 4: 16, mean **2.74** |
+| the whole four-clock cycle | 2: 1, 3: 67, 4: 66 | 3.49 | |
+| the whole cycle plus the 2-cycle look-ahead (the board's) | 3: 16, 4: 66, 5: 52 | 4.27 | |
+
+So `Board.m68k_accesses` now holds `[start, span]` -- where /AS fell and how long it
+stays down, lengthened by whatever stretches that cycle -- and `_m68k_release` counts
+only a cycle actually under way. Kabuto's sentence is not contradicted: a cycle is
+four clocks and the next does begin within two; the bus is simply free for the 10
+MCLK in between, which his own footnote could not have distinguished.
+
+On the board (`run_nuked_md.py arbiter`, 2,000 accesses; `run_bus_arbiter.py`, 4,000):
+
+| experiment | before | after | referee | hardware |
+| --- | --- | --- | --- | --- |
+| 68000 in `stop #$2700`, Z80 reading | 2-3, 2.19 | 2-3, 2.19 | 2-3, 2.25 | MoD: "2-3" |
+| 68000 in `jmp (a0)`, Z80 reading | 2-5, **3.55** | 2-4, **2.86** | 2-4, 2.74 | MoD: 2-4, 2.93 |
+| the same, `run_bus_arbiter.py` | 3-4, **3.36** | 2-4, **2.91** | | MoD: 2.93 |
+| the same, Z80 `pop`ping | 2-5, 3.19 | 2-4, 2.50 | 2-5, 3.27 | MoD: 3.5 |
+| -- the `pop`'s **first** read | 2-5, 4.07 | 2-4, **2.97** | 2-4, 2.95 | |
+| -- the `pop`'s **second** read | 2-3, 2.30 | 2-4, 2.04 | 2-5, 3.60 | MoD: 3.5 |
+
+The board's `jmp (a0)` figure is now 2.91 against MoD's hardware 2.93 and 2.86
+against the referee's 2.74, in his range 2-4, with the 5s gone.
+
+**One thing got worse, and it is the right kind of worse.** The `pop` pair's mean
+falls from 3.19 to 2.50 against the referee's 3.27. The inflated `a` had been
+compensating for the board's inability to place the *second* of a `pop`'s two reads
+at its own T-state: the first read now lands on the referee's own figure (2.97
+against 2.95) and the second is plainly short (2.04 against 3.60). That is the
+z80-python limitation docs/polish.md records, unmasked instead of cancelled out, and
+it is the strongest argument yet for the Z80 equivalent of `step_clocks`.
+
+Kabuto's whole-model check is unmoved: **481.0** of a raster line's 488.6 clocks left
+for the 68000's own instructions, against his "roughly 480".
+
+### 6. `SpriteMaskingTestRom.bin`: left alone, as decided
+
+The referee's 68000 makes eleven bus cycles from its reset vector and stops. Nothing
+was done, and Nemesis's MD1600 photographs go on judging that ROM: `0 of 18 result
+cells differ`.
+
+### Everything else these changes touch, re-run
+
+Every figure is in docs/validation.md's certification record, "The timing session".
+The short version: the HV/status captures are **8,762,415 of 8,847,360 words**,
+unchanged to the word; VDPFIFOTesting is unchanged on all nine machines; the sprite
+masking ROM is unchanged; the PSG is identical to Nuked-PSG on **121,279,196 input
+clocks** over ten streams and the YM2612 identical to Nuked-OPN2 on **110,549,790
+internal cycles** in each of two variants over eighteen streams, so **sound is still
+cycle-exact**; `run_nuked_md.py probes` is 2,921 of 3,546 and `roms` is unchanged in
+every one of its ten figures. The one referee comparison that improved is the FM
+probe: **568 of 636 bus cycles** against milestone 6's 434, the 68 $A0xxxx stall
+differences gone.

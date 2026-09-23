@@ -40,6 +40,10 @@ source, the way sms-python does.
    `docs/undocumented-behavior.md`; it exposes a `tas_write` hook for this).
 7. **Refresh slow-down**: 2 of every 128 68000 cycles, not while writing to the
    VDP; work RAM has an extra slow-down Kabuto did not measure ([timing.md](timing.md)).
+   Separately, **every 68000 access to $A00000-$A0FFFF is one 68000 clock longer**:
+   nothing hardware says so, but Nuked-MD holds every such bus cycle 7 MCLK and MAME
+   charges the same clock (`before_delay(1)`, "TODO: unverified"). The board charges it
+   since the timing session (open item 16).
 8. **The bank register** is written a bit at a time; the result of a partial
    sequence is unknown (CMD could not find it).
 
@@ -264,6 +268,44 @@ source, the way sms-python does.
    timeline by 21 MCLK and so moving the -- otherwise exact -- cartridge grid).
    Nuked-MD also varies the stretch (7/21/35 MCLK) in some loops, which the board does
    not model.
+
+   **The timing session investigated it further, with a limit, and kept 805.** Three
+   new facts, all read out of the referee's own reported bus-cycle lengths over eight
+   traces (three dense probe loops of 300,000 MCLK and five test ROMs of 900,000):
+
+   - **The stretch is not always 21 MCLK.** A work-RAM cycle can be stretched 7, 21 or
+     35 MCLK -- 1, 3 or 5 68000 clocks. In Nemesis's capture ROM 100 of 401 stretches
+     are 7; in r57shell's `vdp_tests` 18 of 1,020 are 7 and 182 are 35. The board
+     models only the 21.
+   - **The rate varies by a factor of two and a half between programs.** In 900,000
+     MCLK `wtest.bin` shows 1,032 stretches (one per 872 MCLK) and the capture ROM 401
+     (one per 2,244), and the apparent period rises as work-RAM traffic thins: 845 MCLK
+     where 44 % of bus cycles are work RAM, 871 at 29 %, 896 at 20 %.
+   - **No free-running grid fits.** For a fixed grid of period *G* every stretch's time
+     must fall in one narrow band of residues mod *G*; over 200-2,000 MCLK the tightest
+     band any *G* gives is 70-165 MCLK wide, 8-18 % of the period, and no *G* is shared
+     by two programs. Nor do the 4,546 stretches of all eight runs -- which share one
+     power-on phase -- band together at any period.
+
+   Five candidate rules were scored against the referee, each free to choose its own
+   period and phase, counting how many of the referee's stretches it misplaces:
+
+   | rule | dense probe (354) | `wtest` (1,032) | capture ROM (401) | `vdp_tests` (1,020) |
+   | --- | ---: | ---: | ---: | ---: |
+   | **A** re-arm *P* after the stretched RAM access (the board's) | 556 @ 946 | **0** @ 760 | 1,055 @ 946 | 1,664 @ 834 |
+   | **B** fixed grid, any bus cycle absorbs the tick, only RAM pays | 233 @ 845 | 863 @ 871 | 300 @ 896 | 638 @ 880 |
+   | **C** fixed grid, the tick waits for a RAM access | 175 @ 845 | **0** @ 871 | 604 @ 896 | 183 @ 880 |
+   | **D** every *N*th work-RAM access (a row counter, not a timer) | 353 @ 44 | **0** @ 8 | 300 @ 57 | **0** @ 11 |
+   | **E** any bus cycle absorbs the tick and re-arms the timer | 361 @ 785 | 1,032 @ 834 | 401 @ 876 | 1,072 @ 778 |
+
+   Two rules are exact on two programs each and hopeless on the others, and the period
+   or count each needs differs by a factor of five between programs. At the board's own
+   805 MCLK rule C is no better than rule A overall (663 against 709 on the dense
+   probe, but 1,656 against **0** on `wtest`). So **805 and rule A stay**, the
+   difference is named, and the question is sharper than it was: the mechanism makes
+   the interval depend on the access pattern in a way none of these five shapes
+   captures. What would settle it is a hardware measurement, or reading the refresh
+   counter out of the referee's own state rather than inferring it from stretches.
 6. **VDPFIFOTesting's intermittent tests**: data-port writes during a DMA fill,
    and the fill's FIFO byte order, vary on real hardware (Nemesis). The board
    passes all four (milestone 2).
@@ -288,12 +330,24 @@ source, the way sms-python does.
    whole arbiter off (`Board.arbiter_enabled`), as it already does the refresh.
    **Milestone 6 gave it a judge.** Nothing hardware covers the question, so the tier
    rule lets Nuked-MD answer it: from the 68000's write to $A11100 to /BUSAK it takes
-   9.71-16.86 68000 cycles (mean 12.22) over 37 grants, where the board takes
-   1.43-6.29 (mean 4.86). The specification's rule is therefore right in shape and
-   short by about 7.4 cycles of the arbiter's own propagation, which the board does not
-   model. It is visible: `gen_test_z80_bus` and `stetest` both poll $A11100 and the
-   board reads the grant one poll sooner than the referee does
-   ([worklog.md](worklog.md), milestone 6).
+   9.71-16.86 68000 cycles (mean 12.34 over 122 grants), where the machine-cycle rule
+   alone took 1.43-6.29 (mean 5.19). The specification's rule is therefore right in
+   shape and short by the arbiter's own propagation.
+   **The timing session adopted that propagation** as `arbiter.BUSACK_PROPAGATION_MCLK`
+   = 50 MCLK -- the difference of the two means, 7.15 68000 cycles, rounded to whole
+   master clocks and labelled die-derived and fitted. The board's grants are then
+   8.57-13.43 cycles, mean 12.33 against the referee's 12.34; the spread is narrower
+   than the referee's because the board's machine-cycle estimate is coarse
+   (`System.z80_probe`). MoD's ROM's two delay counters now print **0001** instead of
+   0000, which is still not comparable with hardware because his own values are not
+   published.
+   **What is still open.** With the Z80 *held in reset* the referee takes far longer:
+   on `gen_test_z80_bus`, the one pinned ROM that polls $A11100 in that state, /BUSAK
+   follows the write by **235 MCLK** (33.6 68000 cycles) against the board's 50. One
+   observation is not a constant, so no second figure was fitted, and both
+   `gen_test_z80_bus` and `stetest` still end their referee comparison at that poll
+   (referee $67, board $66) -- a measured gap of about 185 MCLK rather than an
+   unmodelled one ([worklog.md](worklog.md), the timing session).
 9. **What a VRAM write in 128 KB mode does to the picture.** The board models the
    write path from Kabuto's formulas (one byte per word, the address bits rearranged)
    but keeps reading VRAM as in 64 KB mode, where the hardware shows garbage. Nothing
@@ -321,24 +375,36 @@ source, the way sms-python does.
     Nuked-MD, which charges the `pop`'s first read 2.95 wait states and its second
     3.61 -- MoD's order and very nearly his number -- where the board charges 4.08 then
     2.30: the same total, the opposite split, exactly as the missing accessor predicts.
-    A core-side accessor would settle it ([polish.md](polish.md)).
-15. **The DMA's start-up cost.** Kabuto's fast-transfer formula has a +5.6-cycle
-    intercept, so a one-word transfer costs 8 68000 cycles on his hardware; the board
-    charges about 1, having no mechanism for a start-up. Its slopes are within 2 % of
-    his ([timing.md](timing.md), "DMA"). **Milestone 6 confirmed the cost exists**:
-    Nuked-MD charges 11.0 68000 cycles for a one-word fast transfer and fits +8.0 over
-    1 to 512 words, against the board's 1.1 and +3.2. The slopes agree (2.47 against
-    the board's 2.46 and Kabuto's 2.4); the intercept does not, and the referee is on
-    Kabuto's side of it.
-16. **What a 68000 access to the Z80's space costs.** MAME adds one 68000 clock to
-    every access to $A00000-$A0FFFF (`megadriv.cpp`, `before_delay(1)`, "required by
-    pacman2 intro", "TODO: unverified"), which milestone 1 carried as a named class of
-    lockstep difference (41,274 steps of Sonic alone). **Nuked-MD does the same**: in
-    milestone 6's FM probe all 68 of the 68000's accesses to $A0xxxx are held 7 MCLK by
-    the referee and 0 by the board. Nothing hardware covers it, so the die-derived
-    model judges, and it agrees with MAME against the board. Not changed in milestone
-    6: it moves the milestone-1 lockstep (which would have to be re-recorded), the
-    arbiter's `subcycle` and Overdrive 2's realised sample rate.
+    A core-side accessor would settle it ([polish.md](polish.md)). **After the timing
+    session** the compensation is gone and the gap is plain: with the release rule
+    corrected the `pop`'s first read costs the board 2.97 wait states against the
+    referee's 2.95, its second 2.04 against 3.60, and the pair 2.50 against 3.27. This
+    is now the board's largest remaining arbiter difference and it is entirely the
+    missing accessor.
+15. **The DMA's start-up cost**, adopted in the timing session and **not fully
+    resolved**. Kabuto's fast-transfer formula has a +5.6-cycle intercept, so a
+    one-word transfer costs 8 68000 cycles on his hardware; milestone 6 measured
+    Nuked-MD at 11.0 for the same transfer, fitting +8.0 over 1 to 512 words. The two
+    judges agree that a start-up exists and disagree about its size by 2.4 cycles, so
+    the **hardware source was taken**: `vdp.DMA_STARTUP_MCLK` is his own 5.6 cycles
+    (39 MCLK). The board now costs 7.4 cycles for a one-word fast transfer against his
+    8.0 and the referee's 11.0, so it is still 3.6 cycles under the die. Why the die
+    charges more than the hardware research reports is not explained here; the referee
+    is an FC1004 with NMOS CPUs and Kabuto measured a Model 1, which is a candidate and
+    nothing more.
+16. ~~**What a 68000 access to the Z80's space costs.**~~ **Settled and adopted** in
+    the timing session (2026-09-23). MAME adds one 68000 clock to every access to
+    $A00000-$A0FFFF (`megadriv.cpp`, `before_delay(1)`, "required by pacman2 intro",
+    "TODO: unverified"), which milestone 1 carried as a named class of lockstep
+    difference (41,274 steps of Sonic alone); Nuked-MD does the same (all 68 of the FM
+    probe's $A0xxxx accesses held 7 MCLK). Nothing hardware covers it, so the
+    die-derived model judges and it agrees with MAME against the board. The board now
+    charges it (`board.Z80_SPACE_STALL`, after the access, so the access still lands at
+    the clock its bus cycle began at). The milestone-1 replay was re-recorded from MAME
+    and re-run on all six games: the named class is gone and 0 differences are
+    unexplained. What remains open is only the *reason* -- no hardware source says why a
+    Z80-space cycle is a clock longer, and MAME's own comment still calls it
+    unverified.
 17. **The VDP in Mode 4.** At power-on the VDP is in Mode 4 and Nuked-MD's $C00008
     reads a constant ($9F00 in the runs made); the board reads its Mode 5 HV counter
     whatever the mode. No test ROM of milestones 2-5 reads HV before setting Mode 5,

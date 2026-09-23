@@ -244,18 +244,28 @@ page 44) agrees with the slot counts:
 183-page scan.) With the display disabled, the blanking figure applies on
 every line.
 
-**What the board gives** (milestone 5, `scripts/run_dma_cost.py`, display off,
-68000 memory to VRAM): 16.1, 167.4, 18.1 and 205.9 bytes a line, against the
-Manual's 16, 167, 18 and 205. Per word, fitted over 64 to 512 words in H40:
-**2.38 68000 cycles** for a fast transfer (CRAM, VSRAM, VRAM in 128 KB mode)
-against Kabuto's 2.4, and **4.78** for a slow one (VRAM in 64 KB mode) against
-his 4.7. His intercepts are not reproduced: he measures +5.6 cycles of start-up
-on a fast transfer where the board charges −3.5, so a one-word transfer costs
-him 8 cycles and the board about 1. The board holds the 68000 from the end of
-the control write that starts the transfer until the last word is *read*, which
-is where his "the DMA ends while there is still data in the FIFO to be
-processed, this is why there are seemingly negative costs" comes from; the
-start-up he measured has no mechanism here and is left open.
+**What the board gives** (`scripts/run_dma_cost.py`, display off, 68000 memory
+to VRAM): 16.1, 167.1, 18.1 and 205.1 bytes a line, against the Manual's 16,
+167, 18 and 205. Per word in H40: **2.37 68000 cycles** for a fast transfer
+(CRAM, VSRAM, VRAM in 128 KB mode) against Kabuto's 2.4, and **4.78** for a slow
+one (VRAM in 64 KB mode) against his 4.7. The board holds the 68000 from the end
+of the control write that starts the transfer until the last word is *read*,
+which is where his "the DMA ends while there is still data in the FIFO to be
+processed, this is why there are seemingly negative costs" comes from.
+
+**The start-up cost.** Kabuto's formulas carry a +5.6-cycle intercept on a fast
+transfer, so a one-word transfer costs eight 68000 cycles on his hardware; the
+board had no mechanism for it and charged about one (milestone 5). Milestone 6
+put Nuked-MD on the same transfer and it charges 11.0 cycles for one word,
+fitting +8.0 over 1 to 512 -- so the start-up is real and the referee is on
+Kabuto's side of the question. The timing session adopted it, taking the
+**hardware** figure because the two judges disagree in size: `VDP` charges
+Kabuto's own 5.6 cycles (`DMA_STARTUP_MCLK`, 39 MCLK) before the transfer's first
+word is read. A one-word fast transfer now costs the board **7.4** cycles
+(6.9 in the referee's own harness) against his 8.0 and the referee's 11.0, and
+the fitted intercept is +1.7 (+9.0 in that harness) — the two harnesses' fits of
+the same board differ by about seven cycles, which is why the one-word figure is
+quoted beside them. The slopes did not move.
 
 ## Bus sharing
 
@@ -268,15 +278,28 @@ start-up he measured has no mechanism here and is left open.
   Modelled in milestone 5 from Kabuto's footnote 1, which gives the arithmetic
   behind his averages (`src/megadrive_python/arbiter.py`); the board's figures
   are in [worklog.md](worklog.md) and `scripts/run_bus_arbiter.py` measures them
-  by running MoD's two experiments.
-- **The bus grant to the 68000** ($A11100 to BUSACK): the Z80 samples BUSREQ
-  "with the rising edge of the last clock period of any machine cycle" and lets
-  go after it (Zilog UM0080), so the grant falls at the end of the machine cycle
-  in progress and a 68000 access to the Z80's space before then is held by the
-  arbiter. No hardware measurement of the Mega Drive's own delay is published;
-  Nuked-MD, which the tier rule lets judge where nothing hardware does, puts the whole
-  delay from the $A11100 write to /BUSAK at 9.71-16.86 68000 cycles against the
-  board's 1.43-6.29, so the board is about 7.4 cycles early
+  by running MoD's two experiments. What the board supplies to that arithmetic
+  is his `a`, and the timing session corrected it: **the 68000 holds the bus for
+  the /AS-low part of its cycle, 18 of its 28 MCLK**, not for the whole four
+  clocks, and an access it has not begun holds nothing (68000 UM, "Bus
+  Arbitration"; Nuked-MD measures 1,706 of 1,766 cycles at exactly 18 MCLK in
+  Kabuto's own `jmp (a0)` loop, and the other 60 at 32 -- 18 plus the cartridge
+  refresh's 14, which is his "up to 6 cycles if the last access is delayed by
+  the refresh logic"). With that the board charges **2.86-2.91** wait states on
+  his loop against MoD's measured 2.93 and the referee's 2.74, where before it
+  charged 3.36-3.56 and produced 5s neither sees.
+- **The bus grant to the 68000** ($A11100 to BUSACK): two things in series. The
+  Z80 samples BUSREQ "with the rising edge of the last clock period of any
+  machine cycle" and lets go after it (Zilog UM0080), so it releases at the end
+  of the machine cycle in progress; the arbiter then takes its own propagation
+  to report that, which nothing hardware in the pinned material measures.
+  Nuked-MD, which the tier rule lets judge where nothing hardware does, puts the
+  whole delay from the $A11100 write to /BUSAK at 9.71-16.86 68000 cycles (mean
+  12.34 over 122 grants) where the specification's rule alone gave 1.43-6.29.
+  The timing session adopted the difference as `arbiter.BUSACK_PROPAGATION_MCLK`
+  = 50 MCLK, fitted and labelled die-derived; the board's grants are then
+  8.57-13.43 cycles, mean **12.33** against the referee's 12.34. A 68000 access
+  to the Z80's space before the grant is held by the arbiter
   ([undocumented-behavior.md](undocumented-behavior.md), open item 8).
 - **A refresh steals 2 of every 128 68000 cycles**: "every time 128 cycles
   have passed the next bus access is slowed down by 2 cycles" (Kabuto), except
@@ -294,11 +317,16 @@ start-up he measured has no mechanism here and is left open.
   the referee's ticks. The obvious variant of it -- only a cartridge access absorbs
   the tick -- reproduces neither program at any phase. Separately, the next work-RAM access
   once one is due waits 21 MCLK, and the next falls due 805 MCLK after that access
-  started. The 21 is confirmed; **the re-arm rule is not** -- the period that
-  reproduces the referee is 806-819 MCLK in a dense work-RAM loop, 694-699 in
-  `wtest.bin`, and no value fits Nemesis's capture ROM
-  ([undocumented-behavior.md](undocumented-behavior.md), open item 5). In the capture
+  started. The 21 is confirmed; **the re-arm rule is not**, and the timing session
+  investigated it against the referee and kept 805 because nothing better was found
+  ([undocumented-behavior.md](undocumented-behavior.md), open item 5, which lists the
+  five candidate rules tried and what each scored). In the capture
   loop the board's figure gives 143.588 MCLK per `MOVE.L (A0),(A1)+`, as the hardware.
+- **Every 68000 access to $A00000-$A0FFFF costs one extra 68000 clock.** Nothing
+  hardware covers it; Nuked-MD holds all 68 such accesses in milestone 6's FM probe
+  7 MCLK, and MAME charges the same clock (`before_delay(1)`, its own comment "TODO:
+  unverified"). Adopted in the timing session (`board.Z80_SPACE_STALL`), which removed
+  the largest named class of clock difference from the milestone-1 lockstep.
   With every stall the board charges, a 68000 in a `jmp (a0)` loop with the Z80
   reading ROM keeps **481.0** of a raster line's 488.6 clocks for its own
   instructions, which is Kabuto's "roughly 480 cycles per raster line instead of
