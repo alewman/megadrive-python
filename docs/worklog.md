@@ -3684,3 +3684,56 @@ before checking the instrument. What survived is: an independent emulator
 corroborating the Extended SSF mapper, a second detector for the cartridges MAME
 cannot run, and one more of the board's timing rules confirmed against the
 specification rather than against an emulator.
+
+### The event reader's 32-bit counter, and a heuristic thrown away (2026-09-24)
+
+Redoing Overdrive 2 on the double-buffered renderer needed a way to find a broken
+frame among 12,000. Two instruments were tried and one of them was already committed
+and wrong.
+
+**The distinct-row count does not work, and is inverted.** It was right about the
+*old* symptom -- a torn frame collapses to 37 rows of 224 -- and carrying it over to
+corruption was a mistake. Scored by how far a frame's self-difference falls at some
+small shift, the four frames confirmed broken by eye score 0.226, 0.395, 0.552 and
+0.620, scattered across the whole range, while frame 10,100 -- a correct grey cube on
+black -- scores the highest of all at 0.892. A mostly-black correct scene is hugely
+self-similar; a dense plaid has every row distinct. Pixel statistics do not separate
+these two, and the approach was dropped rather than tuned.
+
+**`scripts/blastem_events.py` silently corrupted any log longer than about eighty
+seconds.** BlastEm's cycle counter is 32 bits, and `EVENT_ADJUST` deducts a large
+amount from every component at once to keep it from overflowing. Its own reader does
+that subtraction in `uint32` arithmetic; the parser did it in Python's unbounded
+integers, so the counter ran off. The 12,000-frame Overdrive 2 log carries exactly
+one adjust -- 4,278,391,830, taken when the raw counter had reached 4,286,955,510 --
+and read without the mask the log **appears to stop at frame 4,008** instead of the
+12,002 it holds.
+
+The fix separates the two clocks, which is what the format actually has:
+
+- `Reader.raw` is the counter as BlastEm holds it: 32 bits, wrapping, deducted from
+  by an adjust.
+- `Event.cycle` is absolute time, which only ever advances by an event's delta. An
+  adjust is bookkeeping against an overflow, not a moment when time moved, so it does
+  not touch it.
+
+Three tests cover it, including a wrap that accumulates past 2^32 with real 24-bit
+deltas. The reader still consumes the whole body: 76,821,806 of 76,821,806 bytes on
+the Overdrive 2 log, now over 12,002 frames.
+
+Milestone 8's Earthion work is unaffected -- 600 frames is about twelve seconds, well
+before the first adjust -- so item 21 stands as measured.
+
+**The reconstruction was validated before anything was built on it.** The risk was
+that BlastEm logs the register writes that *trigger* a DMA but not the bytes the
+transfer moves, in which case a VRAM rebuilt from the log would quietly drift from
+the real one. Earthion settles it, because its loading is almost entirely DMA: the
+board's **380,340 VRAM byte writes are identical to BlastEm's, address and value, in
+order**, with no address transform (`^ 1` mismatches at the very first write;
+straight matches throughout). So the log carries the transferred bytes, the address
+convention is the one `_vram_write_byte` takes, and a replay of the log reconstructs
+VRAM faithfully.
+
+It is also a much deeper corroboration than the register streams gave. 9,062 matching
+register writes was suggestive; 380,340 matching VRAM writes between two independent
+emulators is another kind of evidence.

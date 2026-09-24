@@ -35,6 +35,15 @@ keeps ``last_word_address`` and ``last_byte_address`` exactly as BlastEm's own d
   made it look like one. Its gaps cluster: over a 600-frame Earthion run the mean gap
   is one frame and the median is two. Use :func:`frame_of` instead.
 - A cycle is **half a master clock** (about 26.85 MHz), not a 68000 clock.
+- The logged counter is **32 bits and wraps**, and ``EVENT_ADJUST`` deducts a large
+  amount from it to keep it from overflowing. BlastEm's own reader does that
+  subtraction in ``uint32`` arithmetic, so it must be masked here too -- Python's
+  unbounded integers make the counter run off instead. A 12,000-frame Overdrive 2 log
+  carries one such adjust, of 4,278,391,830, taken when the raw counter had reached
+  4,286,955,510; read without the mask the log appears to stop after 4,008 frames
+  instead of the 12,002 it holds. :attr:`Event.cycle` is *absolute* time, which only
+  advances by each event's delta and is untouched by an adjust, so it stays
+  continuous; :attr:`Reader.raw` is the wrapped counter BlastEm itself holds.
 """
 
 from __future__ import annotations
@@ -94,6 +103,12 @@ class Reader:
         self.name = data[11 : 11 + length].decode("latin1")
         self.body = zlib.decompress(data[11 + length :])
         self.pos = 0
+        #: The counter as BlastEm holds it: 32 bits, wrapping, and deducted from by
+        #: ``EVENT_ADJUST``. Kept so the log can be read the way BlastEm reads it.
+        self.raw = 0
+        #: Absolute time, which only ever advances by an event's delta. An adjust is
+        #: bookkeeping against a 32-bit overflow, not a moment when time moved, so it
+        #: does not touch this -- which is what keeps a long log's frames continuous.
         self.cycle = 0
         self.last_word_address = 0
         self.last_byte_address = 0
@@ -123,7 +138,7 @@ class Reader:
         if kind == ADJUST:
             deduction = int.from_bytes(self.body[self.pos : self.pos + 4], "big")
             self.pos += 4
-            self.cycle -= deduction
+            self.raw = (self.raw - deduction) & 0xFFFFFFFF
             return 0, deduction
         if kind == PSG_REG:
             return 0, self._u8()
@@ -174,6 +189,7 @@ class Reader:
                     delta -= 0x1000000
                 delta |= self._u16()
             for _ in range(repeats + 1):
+                self.raw = (self.raw + delta) & 0xFFFFFFFF
                 self.cycle += delta
                 address, value = self._payload(kind)
                 yield Event(self.cycle, kind, address, value)

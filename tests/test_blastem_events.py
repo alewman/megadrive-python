@@ -6,6 +6,7 @@ not that anything it says is right.
 
 from __future__ import annotations
 
+import itertools
 import sys
 import zlib
 from pathlib import Path
@@ -58,8 +59,10 @@ def test_a_four_byte_header_carries_a_signed_twenty_four_bit_delta():
     assert event.cycle == 0x10000
     # A negative delta is sign-extended rather than read as a huge positive one.
     body = bytes([0xF0 | be.VDP_REG, 0xFF]) + (0xFFFF).to_bytes(2, "big") + bytes([0, 4])
-    (event,) = list(be.Reader(_log(body)))
-    assert event.cycle == -1
+    reader = be.Reader(_log(body))
+    (event,) = list(reader)
+    assert event.cycle == -1  # absolute time follows the delta
+    assert reader.raw == 0xFFFFFFFF  # the counter BlastEm holds wraps
 
 
 def test_a_multi_header_repeats_the_event_with_its_own_payload():
@@ -113,3 +116,49 @@ def test_register_writes_are_grouped_by_frame():
 def test_a_file_that_is_not_a_log_is_refused():
     with pytest.raises(ValueError, match="BLSTEL"):
         be.Reader(b"not a blastem log at all")
+
+
+def test_the_cycle_counter_is_masked_to_thirty_two_bits():
+    # BlastEm's counter is uint32 and wraps; its own reader does the arithmetic that
+    # way. Python's unbounded integers do not, which is why it has to be masked here.
+    body = bytes([0xF0 | be.VDP_REG, 0xFF]) + (0xFFF0).to_bytes(2, "big") + bytes([0, 4])
+    reader = be.Reader(_log(body))
+    (event,) = list(reader)
+    assert event.cycle == -16  # absolute time follows the delta
+    assert reader.raw == 0xFFFFFFF0  # the wrapped counter does not
+
+
+def test_an_adjust_deducts_from_the_counter_and_absolute_time_keeps_it():
+    # EVENT_ADJUST is how BlastEm stops its 32-bit counter overflowing: it deducts a
+    # large amount from every component at once. Real time does not go backwards, so
+    # Event.cycle carries the deduction forward and keeps rising across it. A
+    # 12,000-frame Overdrive 2 log read without this appears to stop at frame 4,008.
+    deduction = 4_278_391_830
+    body = bytes([0xE0 | be.VDP_REG]) + (1000).to_bytes(2, "big") + bytes([0, 4])
+    body += bytes([0xE0 | be.ADJUST]) + (500).to_bytes(2, "big")
+    body += deduction.to_bytes(4, "big")
+    body += bytes([0xE0 | be.VDP_REG]) + (250).to_bytes(2, "big") + bytes([1, 0x74])
+    events = list(be.Reader(_log(body)))
+    assert [e.name for e in events] == ["vdp-reg", "adjust", "vdp-reg"]
+    # Absolute time is monotonic across the adjust: 1000, then 1500, then 1750.
+    assert [e.cycle for e in events] == [1000, 1500, 1750]
+
+
+def test_absolute_time_survives_a_wrap_of_the_raw_counter():
+    # A delta is at most 24 bits, so the counter can only reach 2**32 by accumulating.
+    # Once it wraps, the counter BlastEm holds starts again from a small number while
+    # absolute time keeps climbing -- which is the whole point of keeping both.
+    step = 0x7FFFF0
+    count = (1 << 32) // step + 2
+    body = b""
+    for _ in range(count):
+        body += bytes([0xF0 | be.VDP_REG, step >> 16])
+        body += (step & 0xFFFF).to_bytes(2, "big") + bytes([0, 4])
+    reader = be.Reader(_log(body))
+    events = list(reader)
+    assert len(events) == count
+    assert events[-1].cycle == step * count  # absolute time never wraps
+    assert events[-1].cycle > 1 << 32
+    assert reader.raw == (step * count) & 0xFFFFFFFF  # the counter does
+    assert reader.raw < 1 << 32
+    assert all(b.cycle > a.cycle for a, b in itertools.pairwise(events))
