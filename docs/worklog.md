@@ -3590,3 +3590,58 @@ models the figure *falls*, 80.3% to 79.8%, and that is not a regression: ninetee
 cartridges left `unsupported`, so the denominator grew by nineteen while two became
 `same`. The other seventeen are cartridges the board now runs and MAME cannot, which
 no comparison against MAME can score.
+
+### BlastEm's event log, read (2026-09-24)
+
+The user asked for BlastEm as a second detector, which matters more since the mapper
+landed: seventeen cartridges sit in `mame-board` not because the board is wrong but
+because **MAME cannot run them**. It crashes on the whole Demons of Asteborg family
+and puts Earthion on `rom_sram` with no mapper, where it draws noise.
+
+Getting a *picture* out of BlastEm headless turned out to be closed on every route:
+
+- its **debugger** spawns a terminal emulator (`terminal.c`: `execlp(term, term,
+  "-title", "BlastEm Debugger", "-e", termhelper)`), so piped stdin drives nothing;
+- **`-g`** does not avoid OpenGL and SDL's dummy video driver cannot supply it;
+- **`USE_FBDEV=1` does not build** at the pinned revision: `render.h` types
+  `render_thread` as `SDL_Thread *` and only `render_sdl.c` implements
+  `render_create_thread`, so the 2013 framebuffer backend no longer compiles. It is
+  about twenty lines of pthread shim to fix, and was **not** fixed: patching a pinned
+  oracle to build would make it "our BlastEm" rather than an independent one.
+
+Its **event log** needs no display at all. `scripts/blastem_events.py` reads it, and
+`tests/test_blastem_events.py` checks the decode on logs built in the test.
+
+**What it settles.** BlastEm runs Earthion properly -- 380,043 VRAM byte writes,
+13,840 CRAM and VSRAM writes, 9,062 register writes, PSG and YM activity, sane
+registers -- where MAME draws noise. Two independent emulators run this cartridge and
+the one that cannot is the one without the mapper, which is as close to corroboration
+of milestone 8's mapper work as a detector can give.
+
+**What it opens.** The board and BlastEm do *not* agree on Earthion. The board runs
+the game's whole VDP initialisation **twice**: frames 25 and 26 repeat frames 10 and
+11 byte for byte, the full register set `0:04 1:74 2:38 3:34 ...` and then the same
+DMA burst. BlastEm runs it once. Best alignment over 600 frames matches only 118 of
+them, so this is a structural difference and not a phase one. Whether the board is
+re-initialising wrongly or the game reaches that path at a different moment is **not
+settled here**, and needs the divergence traced to its first differing write rather
+than its first differing frame.
+
+**Two traps, both of which produced wrong readings before they were found**, and both
+now recorded in the module's own docstring so the next reader does not repeat them:
+
+1. **`EVENT_FLUSH` is not a frame marker.** It is an output-buffer flush. Its count
+   lands near the frame count -- 599 for a 600-frame run -- which is exactly what
+   makes it look like one. Its gaps cluster: over that run the mean gap is one frame
+   and the **median is two**. Grouping by it produced an apparent "BlastEm runs at
+   half the rate" that does not exist. Frames come from the cycle instead, and a
+   cycle is **half a master clock** (~26.85 MHz), not a 68000 clock.
+2. **Comparing instantaneous VDP registers says nothing here.** The board's and
+   BlastEm's differ at registers 0, 10, 12 and 13 after 600 frames -- which are
+   exactly the ones Earthion rewrites per raster band. That is sampling phase, not
+   disagreement. The stream is the instrument; a snapshot is not.
+
+The parser's own correctness check is that it consumes the body exactly: 887,746 of
+887,746 bytes on Overdrive 2's log and 1,226,184 of 1,226,184 on Earthion's. One
+wrong payload width desynchronises and either raises or stops short, so landing on
+the last byte is the proof.

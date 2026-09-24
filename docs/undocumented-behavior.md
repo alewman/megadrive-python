@@ -560,3 +560,40 @@ source, the way sms-python does.
       (An earlier note in this session guessed that dispatch would have to carry the
       whole word before the mapper could be implemented. The observation says
       otherwise for these four carts, and it is recorded here rather than acted on.)
+
+21. **The board runs Earthion's loading loop about twice as fast as BlastEm does,
+    and nothing here can say which is right.** Chasing what looked like a divergence
+    (the board appeared to run the game's VDP initialisation twice where BlastEm ran
+    it once) showed there is no divergence at all: **the first 9,062 VDP register
+    writes are identical, in order, between the two.** The board's stream is a strict
+    superset -- it simply gets further. The apparent double initialisation is BlastEm
+    reaching the same code later, and comparing by frame number rather than by
+    content is what made it look structural.
+
+    What is left is a rate difference, and it is a clean factor of two:
+
+    | | frames for identical work | DMA triggers (reg 23) | median gap between triggers |
+    | --- | ---: | ---: | ---: |
+    | the board | **300** | 1,374 | **1,710 MCLK** |
+    | BlastEm | **599** | 1,377 | **3,608 MCLK** |
+
+    Emulated time per frame agrees (the board's 536,728,611 MCLK over 600 frames
+    against BlastEm's 537,526,808), the work is the same, and the number of transfers
+    is the same. The board simply advances half as far between one DMA and the next.
+
+    It is **not** the interrupts: 556 VINTs over 600 frames, 0.93 a frame, with no
+    doubling. It is **not** simply the transfer being undercharged either -- the
+    difference is about 1,900 MCLK per DMA, where the whole cost of a 31-word
+    transfer under Kabuto's formula is about 560. The likeliest remaining candidate
+    is what the game does *between* transfers: a status bit polled in a loop, which
+    the board would clear too early.
+
+    **Why this is not recorded as a bug.** BlastEm is emulator-derived and therefore
+    a detector: it can say the two disagree, never which is right, and no
+    hardware-tier source here covers the question. And the disagreement points the
+    *opposite* way to MAME's: against MAME the board runs **behind** (which is the
+    whole of `FRAME_OFFSET` = 3 and the lag measured in milestone 8), and against
+    BlastEm it runs **ahead**, by a factor of two. Those cannot both be the whole
+    story, and reconciling them is the open question rather than either figure on its
+    own. `scripts/blastem_events.py` is the instrument; the measurement above is
+    reproducible with it.

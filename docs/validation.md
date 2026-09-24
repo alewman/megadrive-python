@@ -125,7 +125,7 @@ Express on TMSS (2026, one tester). What each says is wrong or superseded is in
 | Emulator | Licence | Pin | Its evidence |
 | --- | --- | --- | --- |
 | MAME 0.285 (`genesis`, `megadriv`, `megadrij`, `genesis_tmss`) | BSD-3/GPL | installed binary; source `reference/src/mame` @ f379cd0 | the trace recipe in [mame-oracle.md](mame-oracle.md); the weakest of these for VDP timing |
-| BlastEm | GPL-3.0 | `reference/src/blastem` @ 542164d (libretro's git mirror) | first to run Overdrive 2 correctly; passes VDPFIFOTesting and Direct Color DMA; CRAM dots; its author's own logic-analyser work |
+| BlastEm | GPL-3.0 | `reference/src/blastem` @ 542164d (libretro's git mirror) | first to run Overdrive 2 correctly; passes VDPFIFOTesting and Direct Color DMA; CRAM dots; its author's own logic-analyser work. **Built and used here since 2026-09-24**: its hardware event log (`blastem -e`) is read by `scripts/blastem_events.py`, which is the only way to compare against the cartridges MAME cannot run. Stock at the pinned revision -- its framebuffer backend no longer compiles and was deliberately not patched |
 | Exodus | MIT | `reference/src/Exodus` @ 08f388f | built by Nemesis beside his captures; 121/122 on his own test (2013); dormant |
 | Genesis Plus GX | non-commercial | `reference/src/Genesis-Plus-GX` @ fdab4a4 | the widest compatibility and many hardware-checked details (BUSY, EEPROM, mappers); no FIFO-test or Overdrive 2 claim found |
 | jgenesis | GPL-3.0 | `reference/src/jgenesis` @ d19ee94 | claims VDPFIFOTesting, Direct Color DMA and MD Soft Checker in its release notes |
