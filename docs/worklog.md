@@ -3645,3 +3645,42 @@ The parser's own correctness check is that it consumes the body exactly: 887,746
 887,746 bytes on Overdrive 2's log and 1,226,184 of 1,226,184 on Earthion's. One
 wrong payload width desynchronises and either raises or stops short, so landing on
 the last byte is the proof.
+
+### Item 21 chased, and closed the other way (2026-09-24)
+
+The user asked for the Earthion difference to be chased. It turned out there was no
+divergence to chase, and then the rate difference that was left resolved against the
+detector rather than against the board.
+
+**There is no divergence.** The first 9,062 VDP register writes are identical, in
+order, between the board and BlastEm; the board's stream is a strict superset. The
+"the board runs the initialisation twice" reading was an artefact of comparing by
+frame number: BlastEm reaches the same code later. That claim is withdrawn.
+
+**What the loop actually is.** Between two DMA triggers the game reads $C00004 three
+or four times and nothing else -- `0A0A`, `0A0A`, `0A0A`, `0A08`. Bit 1 is the
+DMA-busy bit. The game triggers a 31-word 68000-to-VRAM transfer, polls until busy
+clears, and triggers the next, so the loop's rate *is* the transfer's duration.
+
+**The board's duration is the Manual's, to the digit.** `scripts/run_dma_cost.py`
+still reproduces the whole DMA transfer capacity table -- 16.1, 167.1, 18.1, 205.1
+against the Manual's 16, 167, 18, 205 -- and Earthion's own transfers take a median
+of **1,036 MCLK where the table predicts 1,034**, a ratio of 1.00. The blanking
+column is the right one: the display is disabled on all 34 of the board's triggers,
+and with the display disabled the blanking figure applies on every line.
+
+BlastEm takes about 2.6 times longer for the same transfers. The Manual is
+specification tier and outranks both emulators, so the board is right here and
+nothing was changed.
+
+**The contradiction with MAME was never one.** Running *behind* MAME is the
+accumulated cost of stalls MAME models nothing of; running *ahead* of BlastEm is one
+DMA rate the Manual settles. Two different measurements that were only ever in
+tension because both were described as "speed".
+
+**What this cost, and what it bought.** Two readings had to be thrown away -- the
+double initialisation, and `EVENT_FLUSH` as a frame marker -- both from comparing
+before checking the instrument. What survived is: an independent emulator
+corroborating the Extended SSF mapper, a second detector for the cartridges MAME
+cannot run, and one more of the board's timing rules confirmed against the
+specification rather than against an emulator.

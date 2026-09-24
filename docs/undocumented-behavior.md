@@ -562,7 +562,7 @@ source, the way sms-python does.
       otherwise for these four carts, and it is recorded here rather than acted on.)
 
 21. **The board runs Earthion's loading loop about twice as fast as BlastEm does,
-    and nothing here can say which is right.** Chasing what looked like a divergence
+    and the Manual says the board is right.** Chasing what looked like a divergence
     (the board appeared to run the game's VDP initialisation twice where BlastEm ran
     it once) showed there is no divergence at all: **the first 9,062 VDP register
     writes are identical, in order, between the two.** The board's stream is a strict
@@ -588,12 +588,34 @@ source, the way sms-python does.
     is what the game does *between* transfers: a status bit polled in a loop, which
     the board would clear too early.
 
-    **Why this is not recorded as a bug.** BlastEm is emulator-derived and therefore
-    a detector: it can say the two disagree, never which is right, and no
-    hardware-tier source here covers the question. And the disagreement points the
-    *opposite* way to MAME's: against MAME the board runs **behind** (which is the
-    whole of `FRAME_OFFSET` = 3 and the lag measured in milestone 8), and against
-    BlastEm it runs **ahead**, by a factor of two. Those cannot both be the whole
-    story, and reconciling them is the open question rather than either figure on its
-    own. `scripts/blastem_events.py` is the instrument; the measurement above is
-    reproducible with it.
+    **Resolved the same day, and in the board's favour, by a source that outranks
+    both emulators.** The loop is the game polling status bit 1, the DMA-busy bit:
+    it triggers a 31-word 68000-to-VRAM transfer, reads $C00004 until the bit clears,
+    and triggers the next. So the rate is set by how long a transfer takes.
+
+    - The board's transfers are **exactly** what the Manual's DMA transfer capacity
+      table gives. `scripts/run_dma_cost.py` reproduces the whole table to a tenth of
+      a byte -- 16.1, 167.1, 18.1, 205.1 against its 16, 167, 18, 205 -- and
+      Earthion's own 31-word transfers take a median of **1,036 MCLK against the
+      1,034 the table predicts, a ratio of 1.00**.
+    - The table's blanking column is the right one: the display is **disabled on all
+      34 of the board's triggers**, and the Manual's rule is that with the display
+      disabled the blanking figure applies on every line (docs/timing.md).
+    - The display state is not in doubt on BlastEm's side either. The two emulators'
+      register write streams are identical, so register 1 -- which carries the
+      display-enable bit -- holds the same value at the same point in both.
+
+    BlastEm takes about 2.6 times longer for those same transfers. The **Manual is
+    specification tier and outranks both emulators**, so on this measure the board is
+    right and the difference is BlastEm's. Nothing was changed.
+
+    The apparent contradiction with MAME dissolves with it: the board running
+    *behind* MAME (`FRAME_OFFSET` = 3) is the accumulated cost of stalls MAME models
+    nothing of, and running *ahead* of BlastEm is one DMA rate that the Manual
+    settles. They were never the same measurement.
+
+    Two readings had to be discarded to get here, both from comparing before checking
+    the instrument: that the board "runs the initialisation twice" (it does not --
+    the streams are identical and the board is simply further along), and that
+    BlastEm's `EVENT_FLUSH` marks frames (it does not). `scripts/blastem_events.py`
+    is the instrument; every measurement above is reproducible with it.
