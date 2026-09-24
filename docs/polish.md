@@ -11,6 +11,12 @@ lives, and would be written differently once something outside this repository
 changes. Not a to-do list for the board's own milestones, and not a place to
 park a known bug: a bug goes in `docs/undocumented-behavior.md` or is fixed.
 
+One section below bends that rule deliberately, and says so: "Waiting on a
+decision the user has to make" carries changes to `src/` that a milestone
+diagnosed and did not make. They wait on a decision rather than on anything
+outside the repository, and they are here so that one queue holds everything
+the final pass has to work through.
+
 Each entry says what to do, what to re-run afterwards, and where the workaround
 lives.
 
@@ -28,6 +34,21 @@ cost and the work-RAM refresh -- were taken in the timing session of 2026-09-23
 and are gone from this list. What each became is in [worklog.md](worklog.md),
 "Session 6"; the work-RAM refresh stays as open item 5 of
 [undocumented-behavior.md](undocumented-behavior.md), with what was tried.)*
+
+## Waiting on a decision the user has to make
+
+Three changes to `src/` that milestone 8 diagnosed and did not make, because a
+sweep is not the place to change the thing being swept. Each is a decision
+rather than a repair: the board's present behaviour is defensible, and the
+alternative is better for a reason the user should weigh.
+
+| What | What the board does now | What to do instead | Re-run after |
+| --- | --- | --- | --- |
+| **The renderer hands out a partial picture.** `Renderer.start_frame` banks `height = self.rows` and zeroes `rows`; `Renderer.frame` returns `self.rows or self.height`. When the 68000 step that crosses the frame boundary has already drawn rows of the *next* frame -- a 68000-memory DMA holds the CPU for the whole transfer, which can be tens of lines -- `frame()` hands out the new frame's partial rows, and because `self.pixels` is one buffer written in place the finished frame's first rows are already overwritten and cannot be recovered | `System.run_frame` returns with a picture of 320x1, 320x55, 320x56 or 320x223 instead of the finished frame; the sweep scores those as `size` | give the renderer two buffers and swap them at `start_frame`: a reference swap per frame and about 150 KB. Milestone 9's frontend meets the same limitation, so it wants this anyway | the sweep's `size` rows, and milestone 3's picture runs |
+| **An odd initial PC raises out of the constructor.** `Phantasy Star Fukkokuban (Japan)` has initial PC `00CB187F`. It is not an interleaved dump (neither a whole-file nor an SMD 16 KB de-interleave gives a valid header or an even PC): the dump is bad | `System.__init__` raises `GroupZero (3, 13310079, False, True)` from `m68k.reset()`'s prefetch, which the sweep records as `error:` | a real 68000 takes an address error *during* reset exception processing, which is a double bus fault: the CPU halts and the screen stays black. MAME shows exactly that (256x224, every pixel 0, checked here). Constructing a `System` should not raise; it should halt | the sweep's `error:` rows |
+| **An image larger than the 4 MB cartridge window is silently truncated.** `Cartridge.from_image`'s fallback returns `cls(image)` with no size check, so 14.7 MB lands in a $000000-$3FFFFF window and the rest is unreachable. 36 romset images exceed the window; 29 of them are unlisted and get `rom` or `rom_sram` with `unsupported = None`. The mapper machinery is not the problem -- the *listed* Super Street Fighter II gets `rom_ssf2` and works, while its unlisted Virtual Console re-release of the same game gets plain `rom` | the nine Earthion images all score `differs`, counted against the board when the cause is ours; Astebros and the eight Demons of Asteborg are scored too (MAME's own list calls them `ssf_sram` and marks the entry `supported="no"`) | set `unsupported` when the image exceeds `ROM_WINDOW` and no mapper slot was chosen, so they are counted apart instead of losing a comparison they cannot win. Implementing the mapper properly is the next row | the sweep, and milestone 7's `run_mapper.py` |
+| **These carts are not on the SSF2 mapper; they are on Krikzz's Extended SSF, which is a different device.** Its specification is the designer's own: `extended_ssf-v2.txt`, krikzz.com, 2014-09-22, pinned in `scripts/pinned_files.json` (specification tier). Differences from the Sega/SSF2 mapper the board implements: the bank field is **5 bits** (32 x 512 KB = 16 MB), not the 6 bits `ssf2tnc.txt` gives; the bank registers are the **even** words $A130F2-$A130FE for windows 1-7; **$A130F0 is not SRAM control at all** but mapper control, `[PXWL.... ...RRRRR]` -- P an enable bit that must be set for the write to take, X 32x mode, W ROM write-enable (the ROM can be written as RAM), L an LED, and the low 5 bits **the first bank**, which this mapper can switch and SSF2 cannot. It also adds hardware multiply and divide at $A130D0-$A130DA, and SD and USB IO. Activation is documented: the header at $100 reads `"SEGA SSF"` instead of `"SEGA GENESIS"` | `Cartridge.write_time` treats $A130F1 as the Sega mapper's SRAM enable and write-protect, ignores $A130F0, masks banks with `& 0x3F`, and never lets bank 0 move | decide how far to go. The header rule covers 14 of the romset's images (3 Demons of Asteborg, all 9 Earthion, 2 Kunio no Nekketsu) **and Overdrive 2**, which declares `"SEGA SSF"` and currently runs on `rom_titan`. It does not cover the other 6 Demons of Asteborg, which use a game-specific `"SEGA DOA"`, nor Astebros, which is 14.75 MB under a plain `"SEGA MEGA DRIVE"` header | `run_mapper.py`, the sweep, and milestone 5's Overdrive 2 runs |
+| **One conflict to resolve before implementing the above.** MAME's `megadrive_hb_ssf_device::time_f0_w` (`src/devices/bus/megadrive/cart/ssf.cpp`) implements $A130F0 as the *Sega* mapper's SRAM control -- bit 1 disables the SRAM view, bit 0 write-protects it -- with the comment "same as Sega mapper (Demons of Asteborg wants it this way)". That contradicts krikzz's own document, which puts a protection bit, 32x, ROM write-enable, an LED and the first bank in that register and no SRAM control anywhere | nothing: the board does not implement this mapper yet | the document is specification tier and MAME is emulator-derived, so the document judges -- but a game is evidence about its own cartridge, and MAME's comment says a real game disagrees. Resolve by observing what Demons of Asteborg actually writes to $A130F0 before choosing, and record the answer in `docs/undocumented-behavior.md` | whatever the mapper work re-runs |
 
 ## Waiting on something on the machine
 

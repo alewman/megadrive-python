@@ -435,8 +435,15 @@ source, the way sms-python does.
     r57shell's redraw-timing tests poll the pad seven times a frame -- the 6-button
     handshake -- so neither the board nor MAME leaves their first screen until
     milestone 7 fits that pad.
-11. **MD Soft Checker v0.30** (Sega's own diagnostic) is not available: the local
-    romset's symlink is broken, and the forum link is a mega.nz page.
+11. ~~**MD Soft Checker v0.30**~~ **is available and has been run** (milestone 8).
+    The local No-Intro mirror holds it as `MD Soft Checker (USA) (Proto) (Unl)`
+    (the romset's own symlink dangles because No-Intro dropped the `(v0.30)` from
+    the name); it is pinned in `scripts/pinned_files.json`. Sega's own factory
+    diagnostic prints 17 checks and the board gets its OK on every one, on all nine
+    machines, with the version register read back correctly in its header
+    ([validation.md](validation.md), milestone 8). It tests that each memory answers
+    and that each kind of DMA moves bytes; it says nothing about timing, the picture
+    or sound, so it is a floor and not a ceiling.
 12. **The analogue path's corner frequency and the PSG/FM mixing ratio** are fitted
     to the MDFourier recordings, not read from a document; no source gives either.
 13. **What a discrete YM2612's ports 1-3 read** (above, "The YM2612" item 7).

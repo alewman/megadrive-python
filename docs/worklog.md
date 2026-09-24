@@ -3015,3 +3015,403 @@ sweep is next.
    is why the romset's symlink dangles. It runs on the board: at 600 frames it
    shows its pad screen with both ports reading a 3-button pad. It is Sega's own
    factory diagnostic, so it is a hardware-corrected oracle: use it.
+
+## Session 8 (2026-09-23): milestone 8, the compatibility sweep and its triage
+
+### How the brief was read
+
+Scope is milestone 8 only: boot every cartridge in `/data/emu/roms/megadrive` for N
+emulated seconds against MAME's frame at the same time, then triage every difference
+into a named cause, as sms-python did. Nothing is changed to match MAME without a
+higher-tier source; MAME is a detector here and never a judge, and a difference that
+is MAME's own -- its `insta_68k_to_*_dma` hack, its `rand()` on $A11100, its
+interrupt acceptance, its lack of an arbiter, its 6-button pad that its own source
+says does not work -- is counted apart from the board's.
+
+Three things the user asked for by name: run Sega's own MD Soft Checker, now that
+the local mirror is known to have it, and record what it reports as its own
+acceptance (a judge, not a detector); watch for the 7- and 35-MCLK work-RAM refresh
+stretches the board does not model as a possible cause of a frame difference (the
+timing session's decision 5); and say whether a real game's difference points at
+Kabuto's DMA start-up cost (milestone 5's open item, left for here). Overdrive 2's
+four wrong frames are the user's own next session and were not touched.
+
+### Environment
+
+Same as the previous sessions: `.venv` CPython 3.14.4, `.venv-pypy` PyPy 7.3.23
+(Python 3.11.15), m68000-python pinned at 51ee1a5 (unchanged: docs/polish.md),
+z80-python 0.4.0, MAME 0.285, the 13th-generation Core i9-13900K, shared throughout
+(load average 25-30 of 32 threads for most of the session, which the wall times
+below reflect).
+
+### What was built
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `scripts/mame_media.py` | 207 | which board MAME puts an image on, and how to hand it one so that both machines run the same cartridge |
+| `scripts/compat_sweep.py` | 290 | the sweep: every cartridge on the board and on MAME, the frame compared |
+| `scripts/triage_diffs.py` | 210 | the triage: the lockstep's verdict for each difference, and which of the board's own timing models moves it |
+| `scripts/run_soft_checker.py` | 123 | Sega's MD Soft Checker, its verdicts read off the screen |
+| `tests/test_milestone8.py` | 90 | 7 tests that need nothing fetched |
+
+### Sega's MD Soft Checker, which is a judge
+
+`MD Soft Checker (USA) (Proto) (Unl)` from the local No-Intro mirror (zip SHA-256
+`688debcf0635e48ef501c84fd8348cdd40d18b2a5efa1e4391be1fd5cbf2996a`, the image
+262,144 bytes, SHA-1 `bd716dbbbe3fd50169fa5bad7e203ce9356fdfc0`, header
+"MD Soft Checker     Version 0.30"), pinned in `scripts/pinned_files.json` by a
+`file://` URL that names exactly where it came from, fetched into
+`tests/test_roms/sega/` and not committed. It is not in MAME's software list.
+
+It is Sega's own factory diagnostic, so under the tier rule it is a **judge**, not a
+detector: it was written by the people who made the machine, and what it reports is
+about hardware. `scripts/run_soft_checker.py` runs it and reads its verdicts off the
+rendered picture -- each result line's last two glyphs as a block of pixels, because
+the ROM is proprietary and publishes no result table -- and the glyphs themselves
+were read once by eye from the PNG.
+
+`.venv-pypy/bin/python scripts/run_soft_checker.py` (96 s for all nine machines):
+**17 result lines on every machine, all seventeen with the same verdict, and that
+verdict reads OK.** The report, read off the picture at frame 240:
+
+```text
+OVERSEA mode  NTSC  VER.0
+68K Register R/W OK          DMA ROM  ==> VRAM OK
+68K All Instruction Set OK   DMA ROM  ==> Color RAM OK
+WORK RAM R/W OK              DMA ROM  ==> VSRAM OK
+Z80 BUS Request OK           DMA WRAM ==> VRAM OK
+Z80 RAM R/W OK               DMA WRAM ==> Color RAM OK
+VRAM R/W OK                  DMA WRAM ==> VSRAM OK
+Color RAM R/W OK             DMA VRAM FILL OK
+VSRAM R/W OK                 DMA VRAM COPY OK
+I/O Port Register R/W OK
+```
+
+and its header is the version register read back, which is milestone 7's work
+judged by Sega's own program: `OVERSEA mode NTSC VER.0` on `genesis`,
+`OVERSEA mode PAL VER.1` on `megadrive2`, `JAPAN mode NTSC VER.0` on
+`megadrive-japan`. The Genesis 3, whose VSRAM is 0x80 bytes and which fails
+Nemesis's VSRAM tests, passes the checker's VSRAM test -- the checker writes and
+reads back, which a larger VSRAM does not break.
+
+At 600 frames it has moved on to its pad screen, which reads `JOY1 PAD3 1P` and
+`JOY2 PAD3 1P` with `U L R D ST A B C` -- a 3-button pad found on both ports, which
+is what the board presents.
+
+**What this does not cover**: the checker tests that each memory answers reads and
+writes and that each kind of DMA moves bytes; it says nothing about timing, about
+the picture, or about sound. It is a floor, and the board is over it.
+
+### The sweep: what was chosen, and why
+
+Four choices had to be made before running anything, and each is a number.
+
+**Sound off.** `YM2612.enabled = False` keeps the chip's bus, register file, timers
+and BUSY and skips only the generator, so nothing a game can observe changes
+(milestone 4). It is the difference between 2.9 seconds of wall time per emulated
+second and 0.3: with the FM running, the whole sweep would be ten times the cost for
+a picture that does not depend on it.
+
+**Ten emulated seconds**, as sms-python's sweep used. Measured on this machine, a
+cartridge costs about 100 s of CPU at that length -- 600 frames of a board that runs
+38 to 51 frames a second without sound, plus MAME (0.8 s), the snapshot and the
+comparisons -- so the whole romset is about four hours on 16 processes. Five seconds
+would halve it; twenty would double it and lose comparisons rather than gain them
+(below). Ten is also the length milestone 3's own MAME frame table used.
+
+**Sixteen processes**, the cap the working agreement sets on this shared machine,
+under `nice`. The machine was carrying other work throughout.
+
+**MAME's `genesis` for every image**, not a driver chosen per region. Both machines
+then run the same console, which is what makes the comparison a comparison: a
+Japanese or European cartridge that refuses to run on an overseas NTSC machine
+refuses on both and shows the same screen (milestone 7 measured exactly that against
+MAME's three drivers).
+
+### Two traps of this board's own, both measured
+
+**MAME's file loader gives almost every cartridge battery RAM it does not have.**
+sms-python's trap 8 -- MAME guesses a board from the image -- has a worse form here.
+`md_slot.cpp`'s `get_cart_type` matches a table of code signatures by exact file
+length and, when nothing matches, returns `SEGA_SRAM_FALLBACK`: 64 KB of battery RAM
+at $200000, "in case this is a broken header", where the board mirrors its ROM (Eke's
+mirroring rule). Counted over the local romset: of the 1,799 present images MAME's
+`megadriv` software list names, **1,523 would run on a different board in MAME if
+handed to it as a file** -- 1,347 of them exactly this way, and the rest as
+`rom_sram`, `rom_eeprom`, `rom_codemast` and so on. So `scripts/mame_media.py` hands
+MAME a **software-list name** for every listed image, from a scratch rompath holding
+that one image under the name the list expects, which is the same board
+`Cartridge.from_image` reads from the same list. The 874 unlisted images have to go
+as files, and `mame_guess` -- a port of `get_cart_type`'s table -- says which board
+MAME then puts each on, so that a differing frame can be attributed to that rather
+than to the board. (Checked against the list itself: for every listed image the
+board's own slot equals the list's, 1,799 of 1,799.)
+
+**The board's picture is a few frames behind MAME's at the same emulated time.**
+MAME's exit snapshot is the frame it completes after `-seconds_to_run`; the board's
+is the first frame it completes at or after the same master clock. Those are not the
+same field of an animation. Fitted over the 35 cartridges of a 207-cartridge sample
+whose picture is identical at *some* offset and not at all of them, at three lengths:
+
+| length | the offset at which most of the 35 are identical | how many |
+| --- | --- | --- |
+| 5 emulated seconds | **+4** | 29 of 35 (0: 22) |
+| 10 | **+3** | 24 of 35 (0: 10) |
+| 20 | +4, +5 | 19 of 35 (0: 11) |
+
+The offset does **not** grow with the length of the run, which is what says it is a
+one-off shift and not a rate difference: the two machines run the frame at the same
+rate, and the board's game simply starts its animation two to five frames later.
+Why it would: the board charges the 68000 stalls MAME does not model at all -- both
+refreshes, the arbiter's bank-access delays, the DMA's start-up -- so a game's
+CPU-bound initialisation (a checksum over a 2 MB ROM is a second of 68000 time) ends
+a little later on it. That is measured below rather than argued.
+
+`compat_sweep.FRAME_OFFSET` is therefore **3**, one figure for the whole sweep, and
+the frames within `--window` of it are scored as well, so that a cartridge whose
+picture is identical a frame or two away is reported as `phase` rather than as a
+difference in what the machine drew. A search per cartridge was not used: it picks a
+wrong frame on a mostly uniform picture, which is the trap sms-python's sweep found.
+
+### What a row of the sweep means
+
+`tests/compat/megadrive.csv` (git-ignored, as sms-python's is) has a row per entry:
+the cartridge, the board `Cartridge.from_image` puts it on, the board MAME runs it on
+when that differs, the status, the differing pixels, and every offset in the window
+at which the two pictures are identical.
+
+| status | what it means |
+| --- | --- |
+| `same` | the frame compared is identical to MAME's, pixel for pixel |
+| `phase` | it is not, but a frame within 12 either side of it is: the same picture, a different field of an animation |
+| `differs` | no frame in that window is identical |
+| `size` | the two pictures are not even the same size (H32 against H40, or interlace) |
+| `unsupported` | `Cartridge.unsupported`: a board the emulator does not model (the unlicensed mappers, the SVP, the Game Genie) |
+| `mame-board` | the frame differs *and* MAME ran the image on another board (an unlisted image) |
+| `lockup` | the board raised `Lockup` -- CMD's rule that some accesses stop the machine -- where MAME went on |
+| `missing` | a broken symlink in the local romset |
+| `error: …` | MAME would not run it, or the board raised something else |
+
+### The triage, and why it is two passes
+
+sms-python's triage was one pass: run the MAME lockstep on every differing
+cartridge and read the verdict off it. That still works here and is pass 1
+(`--lockstep`): MAME's two traces recorded for the sweep's own emulated time, the
+board stepped against them instruction for instruction, and the verdict taken from
+its report -- `cpu` for a divergence or an unexplained read, else the first non-empty
+class of *differing device read* (`vdp-reads`, `fm-status`, `z80-order`,
+`mame-rand`), and `identical` when nothing differed at all, which says the difference
+is in the picture and not in what either program did.
+
+But the lockstep has a blind spot on this board that it did not have on the Master
+System, and it is the one the user's decision 5 points at. `lockstep_mame.py` turns
+the refresh and the arbiter **off**, because MAME models neither and with them on the
+two machines interleave the CPUs differently and the replay is no longer
+instruction-exact. So the lockstep cannot see a difference the board's own bus timing
+causes -- which is exactly where the work-RAM refresh's unmodelled 7- and 35-MCLK
+stretches would show.
+
+Pass 2 (`--sensitivity`) is for that, and it needs no MAME trace: run the sweep's own
+comparison again with one model turned off at a time -- the work-RAM refresh, the
+cartridge refresh, the arbiter, and the cartridge put on MAME's fallback SRAM board
+-- and see which of them moves the frame. A cartridge whose picture is the same
+whether the work-RAM refresh runs or not is one where that model cannot be the cause;
+one whose picture moves is a candidate, and it is named as one. None of it needs a
+change in `src/`: both refreshes are due at a master clock the board keeps in a
+field, so a clock they never reach turns them off.
+
+### What is *not* claimed by this milestone
+
+- **Nothing about sound.** The sweep runs with the generator off; the FM and PSG are
+  judged cycle for cycle by milestone 4's die-derived referees and nothing here
+  touches them.
+- **Nothing about timing** beyond what the sensitivity pass measures: MAME models no
+  refresh, no arbiter and no DMA start-up, so it cannot judge any of them, and the
+  lockstep turns them off to compare at all.
+- **Nothing about a cartridge whose board the emulator does not model**: those are
+  counted and named, not run.
+- **Nothing about Overdrive 2's four wrong frames**, which are the user's own next
+  session.
+- **Nothing hardware.** MAME is a detector throughout. The only judge in this
+  session is Sega's MD Soft Checker, and it judges that the memories and the DMA
+  work, not how they are timed.
+
+
+### Why the board's picture is behind MAME's, measured
+
+The alignment above is a fitted constant, so what it is fitting matters. The claim
+is that the board charges the 68000 stalls MAME models nothing of -- both refreshes
+and the arbiter -- so a game's CPU-bound initialisation ends later on it and its
+whole animation starts a few frames later. That is testable with the board's own
+knobs: run the same comparison with all three turned off.
+`/tmp/.../lag.py` (`compat_sweep.run_one` with a `disable` that clears both refresh
+timers and `arbiter_enabled`), 10 emulated seconds, `--window 12`, the offsets given
+relative to the frame the sweep compares (so `FRAME_OFFSET` = 3 is already in them):
+
+| cartridge | as the board ships | with both refreshes and the arbiter off |
+| --- | --- | --- |
+| Sonic The Hedgehog (USA, Europe) | identical at **+9** | identical at **+1** |
+| Phelios (USA) | identical at **0** | identical at **-1** |
+| Zero Wing (Japan) | identical at 0, 1, 2, 3 | the same four |
+| JuJu Densetsu (Japan) (En) | identical at 0 to 7 | the same eight |
+
+**Sonic's picture moves eight frames closer to MAME's when the stalls the board
+charges and MAME does not are taken away**, which is the claim, measured. Phelios
+moves one frame. The two whose animation is locked to the vertical blank from the
+first frame do not move at all, which is the other half of it: the lag is in how
+long a game's *initialisation* takes, not in how fast the frames come.
+
+So `FRAME_OFFSET` is not a fudge of unknown origin: it is the accumulated cost of
+milestone 5's and the timing session's own work, which MAME cannot see. It is also
+why it cannot be one exact number -- how much CPU-bound work a game does before its
+first drawn frame differs from game to game.
+
+### The sweep: the run, and what it found (2026-09-23)
+
+`.venv-pypy/bin/python scripts/compat_sweep.py --seconds 10 --jobs 16 --window 12
+--frames --offsets`, 14,423 s (4 h 0 m) on 16 processes under `nice`.
+
+| status | count | what it means |
+| --- | ---: | --- |
+| `same` | 1,609 | identical to MAME's frame, pixel for pixel |
+| `phase` | 461 | identical at another frame within 12 either side |
+| `missing` | 841 | a broken symlink in the local romset |
+| `differs` | 261 | no frame in the window is identical |
+| `mame-board` | 229 | the frame differs *and* MAME ran the image on another board |
+| `unsupported` | 65 | a board the emulator does not model, across 40 distinct slots |
+| `size` | 32 | the two pictures are not the same size |
+| `error:` | 11 | MAME would not run it, or the board raised |
+| `lockup` | 5 | the board raised `Lockup` where MAME went on |
+
+**2,070 of the 2,673 present cartridges -- 77.4% -- are identical to MAME's picture
+or identical a frame or two away.** That figure is a detector's, not a judge's, and
+it is deliberately not called a pass rate: the sections below say what the
+remainder is, and a good part of it is MAME's.
+
+### The triage, pass 1: which of the board's own models moves the picture
+
+`scripts/triage_diffs.py --sensitivity --jobs 16 --seconds 10 --window 12 --sample 60`,
+4,057 s. Each of 60 differing cartridges was run again with one model turned off at
+a time.
+
+| what moves the picture | cartridges of 60 |
+| --- | ---: |
+| MAME's fallback SRAM board | 31 |
+| the work-RAM refresh | 26 |
+| the cartridge refresh | 26 |
+| the arbiter | 15 |
+| the DMA's start-up cost | 8 |
+| **nothing: unmoved by every model** | **14** |
+
+The largest single cause is **MAME's**, not the board's: 31 of 60 move when the
+cartridge is put on the `SEGA_SRAM_FALLBACK` board MAME's file loader would have
+chosen. Fourteen move for none of the five, which says the board's timing models are
+not implicated in those at all. A model "moving" a picture implicates it; it does
+not convict it, and nothing here was changed on the strength of it.
+
+### The triage, pass 2: the lockstep's verdict
+
+`scripts/triage_diffs.py --lockstep --jobs 16 --seconds 10 --status differs,size,lockup`,
+9,902 s (2 h 45 m) over 298 cartridges.
+
+| verdict | count | what it means |
+| --- | ---: | --- |
+| `vdp-reads` | 181 | the two programs read different values from the VDP |
+| `cpu` | 112 | the two programs diverged, or made an unexplained read |
+| `identical` | 4 | the programs ran identically and no read differed |
+| `fm-status` | 1 | the FM's status register read differently |
+
+`vdp-reads` dominating is expected and is not a finding about the board: the
+lockstep runs with the refreshes and the arbiter **off** (MAME models none of them),
+so the two machines reach the VDP's counters and status at different times by
+construction.
+
+### The four cartridges that ran identically, which are the cleanest result here
+
+`Breach (USA) (Proto)`, `Joshua & the Battle of Jericho (USA) (Unl)`,
+`Zany Golf (USA) (Unl)` and `Exodus - Journey to the Promised Land (USA)` each ran
+**5.9 to 6.8 million 68000 instructions with not one read differing from MAME's**,
+and their pictures are still not the same: the board draws 256x224 where MAME draws
+320x224.
+
+Identical execution and identical device reads leave nothing for the difference to
+be except the picture itself, so this is the sharpest thing the sweep produced: it
+is about the width the renderer settles on, not about timing, the bus or the CPUs.
+`Renderer.frame` takes `width = max(self.widths[:height], ...)`, so the two machines
+disagree about H32 against H40 for a frame whose program neither disputes. Ten more
+cartridges show the same 256-against-320 shape without an identical lockstep behind
+them. Not chased in this milestone; it is a QUESTION below.
+
+### The `size` rows are three different things, and should never be one number
+
+Of the 32:
+
+- **17 are the partial-frame capture** (320x1, 320x4, 320x13, 320x48, 320x55,
+  320x56, 320x101, 320x223, 256x4): `System.run_frame` returned part way into the
+  *next* frame. Diagnosed in full under "The partial-frame capture" above; it is a
+  limitation of the harness and of `Renderer`, not a rendering difference.
+- **15 are a width or mode difference** (256x224 against 320x224 and four the other
+  way round), the four identical ones among them.
+- **Overdrive 2 is neither**: 320x240 against 320x224, because the board runs it on
+  a PAL machine, as the demo demands, and MAME's snapshot is 224 lines.
+
+### Two things MAME could not do, both attributable to MAME
+
+**MAME 0.285 cannot run the Demons of Asteborg family.** All nine `error: MAME` rows
+are one family -- `Astebros (World) (PixelHeart)` and eight `Demons of Asteborg`
+releases -- and every one exits with glibc's `corrupted size vs. prev_size`, a heap
+error inside MAME rather than a refusal to load. Deterministic: every member fails
+and nothing else does. MAME's own software list marks the entry `supported="no"`.
+The detector is unavailable for those nine; they say nothing about the board.
+
+**`Phantasy Star Fukkokuban (Japan)` is a bad dump.** Its initial PC is `00CB187F`,
+which is odd, and the header at $100 is not a console string. It is not an
+interleaved dump: neither a whole-file de-interleave nor an SMD 16 KB-block
+de-interleave yields a valid header or an even PC. MAME runs it for ten seconds and
+snapshots 256x224 with every pixel 0 (the PNG was decoded here: one distinct byte
+value). The board raises `GroupZero (3, 13310079, False, True)` out of
+`System.__init__`, at the initial PC's prefetch. Both machines agree that nothing
+runs; a real 68000 takes an address error *during* reset processing, which is a
+double bus fault, so it halts with a black screen -- MAME's behaviour. The board's
+verdict is right and its presentation is not. A `src/` change, so it is in
+[polish.md](polish.md), not made here.
+
+### An image larger than the cartridge window is silently truncated
+
+Found while triaging the `error:` rows and larger than the rows that led to it.
+`Cartridge.from_image`'s fallback returns `cls(image)` with no size check, so an
+image larger than `ROM_WINDOW` ($000000-$3FFFFF) loads with the rest unreachable.
+**36 romset images exceed the window; 29 of them are unlisted and get `rom` or
+`rom_sram` with `unsupported = None`.** The mapper machinery is not at fault: the
+*listed* Super Street Fighter II gets `rom_ssf2` and runs, while its unlisted
+Virtual Console re-release of the same 5 MB game gets plain `rom`.
+
+It distorts this sweep's own numbers: all nine `Earthion` images score `differs`,
+counted against the board where the cause is ours.
+
+These carts are **not on the SSF2 mapper**. They are on Krikzz's Extended SSF, a
+different device, and its designer documents it: `extended_ssf-v2.txt`, krikzz.com,
+22.09.2014, now pinned in `scripts/pinned_files.json` (specification tier).
+
+| | the Sega/SSF2 mapper the board implements | Krikzz Extended SSF v2 |
+| --- | --- | --- |
+| bank field | 6 bits (`ssf2tnc.txt`) | **5 bits**, 32 x 512 KB = 16 MB |
+| bank registers | odd $A130F3-$A130FF, windows 1-7 | even $A130F2-$A130FE, windows 1-7 |
+| $A130F0/F1 | SRAM enable and write protect | **mapper control**: protect, 32x, ROM write-enable, LED, and **the first bank** |
+| first bank | fixed | **switchable** |
+| extras | none | hardware multiply and divide at $A130D0-$A130DA, SD and USB IO |
+| activation | MAME's software list | the header at $100 reads `"SEGA SSF"` |
+
+The documented header rule covers 14 romset images -- 3 Demons of Asteborg, all 9
+Earthion, 2 Kunio no Nekketsu -- **and Overdrive 2**, which declares `"SEGA SSF"`
+and currently runs on `rom_titan`. It does not cover the other 6 Demons of Asteborg,
+which use a game-specific `"SEGA DOA"`, nor `Astebros`, which is 14.75 MB under a
+plain `"SEGA MEGA DRIVE"` header, so a size check is still needed behind it.
+
+One conflict is left open rather than guessed: MAME's `megadrive_hb_ssf_device::time_f0_w`
+implements $A130F0 as the Sega mapper's SRAM control with the comment "same as Sega
+mapper (Demons of Asteborg wants it this way)", which contradicts krikzz's own
+document. The document is specification tier and MAME is emulator-derived, so the
+document judges -- but MAME's comment claims a real game disagrees, and that is
+evidence about its own cartridge. It is in [polish.md](polish.md) to be resolved by
+observation before any of this is implemented.

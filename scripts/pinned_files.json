@@ -951,5 +951,15 @@
     "tier": "stress case",
     "date": "2026-09-22",
     "why": "Titan 2017: the hardest known real-hardware demo; output depends on VDP revision (readme)"
+  },
+  {
+    "path": "reference/docs/krikzz/extended_ssf-v2.txt",
+    "url": "https://krikzz.com/pub/support/mega-everdrive/v1/dev/extended_ssf-v2.txt",
+    "sha256": "886fc99e65e5d456858ab958c850ebec60542ae4b38f4c2b6ffd144c1def9953",
+    "size": 2230,
+    "kind": "document",
+    "tier": "specification",
+    "date": "2026-09-23",
+    "why": "Krikzz's own specification of the Extended SSF v2 mapper (the 'SEGA SSF' header): the 5-bit 512 KB bank registers at $A130F0-$A130FE, the mapper-control bits in $A130F0 (protect, 32x, ROM write-enable, LED, first bank), the hardware multiply/divide at $A130D0-$A130DA, and the activation rule. Demons of Asteborg, Earthion, Kunio no Nekketsu and Overdrive 2 are on this mapper, not on SSF2."
   }
 ]

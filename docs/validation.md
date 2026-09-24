@@ -67,6 +67,7 @@ entries over 50 MB (recordings and the FM document bundle).
 | Terakawa, 6-button pad protocol | 1.1 ms to detect two edges, the 1.8 ms timeout, 1.6 ms data validity | timed on real pads; "parameters differ one by one controller" | `reference/web/terakawa-6button.html` (mirror; the original page no longer answers) |
 | r57shell, `joy_speed` | pad re-read latency | a hardware tool (t=2308) | `tests/test_roms/r57shell/joy_speed_v1.02.bin` |
 | TMSS boot ROM | the licence screen and the lock | dumps of several chips agree (TmEE, t=3197) | local No-Intro `[BIOS] Sega Mega Drive - Genesis - Boot ROM (World).zip` (SHA-1 `3f50b76b…`); a disassembly in `reference/src/TMSS-Disassembly` |
+| **MD Soft Checker v0.30** | Sega's own factory diagnostic: the 68000's registers and whole instruction set, work RAM, the Z80's bus request and RAM, VRAM, CRAM, VSRAM, the I/O registers, every kind of DMA, the VRAM fill and copy, and which pad is on each port | Sega wrote it to test the machine; it prints its own verdict per check | `tests/test_roms/sega/MD Soft Checker (USA) (Proto) (Unl).zip` (zip SHA-256 `688debcf…`, image SHA-1 `bd716dbb…`), from the local No-Intro mirror |
 
 ### Sound: hardware-captured and hardware-corrected
 
@@ -142,8 +143,10 @@ own.
   which would be the strongest detector available, not a capture.
 - **No YM2612 datasheet**, and no self-checking FM test ROM: the FM judges are
   the recordings (by ear or by measurement) and the die-derived models.
-- **MD Soft Checker v0.30** (Sega's diagnostic): the local symlink is broken and
-  the only link is a mega.nz page.
+- ~~**MD Soft Checker v0.30**~~ (Sega's diagnostic): **found** (milestone 8). The
+  local No-Intro mirror has it as `MD Soft Checker (USA) (Proto) (Unl)`; the
+  romset's symlink dangles because No-Intro dropped the `(v0.30)` from the name.
+  Pinned in `scripts/pinned_files.json` and run in milestone 8.
 - **Dead links**: TmEE's sine recordings, blargg's Genesis recordings, a
   Reptilia Design recording, Terakawa's original page, CMD's documents on the
   SpritesMind mirror.
@@ -606,3 +609,56 @@ and nothing else.
 | the YM2612 against Nuked-OPN2, 18 streams, both variants | 0 of 110,549,790 x 3 x 2 | **0 of 110,502,778 x 3 x 2** -- 663,016,668 values, none different |
 | `run_nuked_md.py roms`, ten ROMs | as milestone 6's table | **unchanged**, every figure |
 | `pytest -q`, PyPy and CPython 3.14.4 | 49 passed, 1 deselected | **73 passed, 1 deselected** on both (154 s on PyPy, 404 s on CPython): 24 new tests |
+
+### Milestone 8: the compatibility sweep (detector), and Sega's own diagnostic
+
+**Sega's MD Soft Checker v0.30** (hardware-corrected, and the only *judge* in this
+milestone): `.venv-pypy/bin/python scripts/run_soft_checker.py`, 96 s for all nine
+machines. The ROM prints one line per check with its own verdict; the script reads
+each line's last two glyphs off the rendered picture and the glyphs were read once
+by eye. **17 result lines on every one of the nine machines, all seventeen with the
+same verdict, and that verdict reads OK** -- the 68000's registers and whole
+instruction set, work RAM, the Z80's bus request and RAM, VRAM, CRAM, VSRAM, the I/O
+registers, DMA from ROM and from work RAM to each of the three memories, and the
+VRAM fill and copy. Its header is the version register read back by Sega's own
+program: `OVERSEA mode NTSC VER.0` on `genesis`, `OVERSEA mode PAL VER.1` on
+`megadrive2`, `JAPAN mode NTSC VER.0` on `megadrive-japan`. At 600 frames it shows
+its pad screen, which finds a 3-button pad on both ports. What it does not cover:
+timing, the picture, and sound.
+
+**The compatibility sweep (MAME 0.285, a detector)**: `scripts/compat_sweep.py
+--seconds 10 --jobs 16 --window 12 --frames --offsets`, 14,423 s over the local
+romset's 3,514 cartridge entries. **2,070 of the 2,673 present cartridges (77.4%)
+draw a picture identical to MAME's, or identical a frame or two either side**
+(1,609 `same`, 461 `phase`). The rest: 261 `differs`, 229 `mame-board`, 65
+`unsupported` across 40 slots, 32 `size`, 11 `error:`, 5 `lockup`; 841 entries are
+broken symlinks in the romset and were not run. This is a detector's figure and is
+not a pass rate -- MAME is never the judge, and several of the differences are
+MAME's own.
+
+**The triage, pass 1 (sensitivity, no oracle)**: 60 differing cartridges re-run with
+one of the board's models disabled at a time. **The largest single cause is MAME's**
+-- 31 of 60 move when the cartridge is put on the `SEGA_SRAM_FALLBACK` board MAME's
+file loader would choose -- and **14 of 60 move for none of the five models**, so
+the board's timing is not implicated in those. Work-RAM refresh 26, cartridge
+refresh 26, arbiter 15, DMA start-up 8. Nothing was changed on the strength of it.
+
+**The triage, pass 2 (lockstep against MAME, a detector)**: 298 cartridges, 9,902 s.
+181 `vdp-reads`, 112 `cpu`, 4 `identical`, 1 `fm-status`. `vdp-reads` dominating is
+by construction: the lockstep runs with both refreshes and the arbiter off, because
+MAME models none of them.
+
+**Four cartridges ran identically and still drew a different picture**: `Breach
+(USA) (Proto)`, `Joshua & the Battle of Jericho (USA) (Unl)`, `Zany Golf (USA)
+(Unl)` and `Exodus - Journey to the Promised Land (USA)` each executed 5.9 to 6.8
+million 68000 instructions with **no read differing from MAME's**, yet the board
+draws 256x224 where MAME draws 320x224. With execution and every device read
+identical, the difference is in the width the renderer settles on and nothing else.
+Ten more cartridges show the same shape. Open, and recorded as a QUESTION.
+
+**What this milestone does *not* claim**: nothing about sound (the sweep runs with
+the generator off), nothing about timing beyond what the sensitivity pass
+implicates, nothing about the 65 cartridges whose board is not modelled, nothing
+about the 29 oversized images the loader silently truncates (see
+[polish.md](polish.md)), and nothing hardware. The only judge in milestone 8 is
+Sega's MD Soft Checker.
