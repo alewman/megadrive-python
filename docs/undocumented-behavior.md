@@ -561,7 +561,23 @@ source, the way sms-python does.
       whole word before the mapper could be implemented. The observation says
       otherwise for these four carts, and it is recorded here rather than acted on.)
 
-21. **The board runs Earthion's loading loop about twice as fast as BlastEm does,
+21. **Withdrawn: there is no rate difference.** *(Corrected 2026-09-24, later the same
+    day.)* Everything below that says the board runs Earthion's loading loop "twice as
+    fast" as BlastEm, or that BlastEm "takes about 2.6 times longer", came from
+    reading BlastEm's clock as half a master clock. It is one master clock (``vdp.c``
+    3815 at 542164d advances it 3,420 a line, and Overdrive 2's once-a-line writes
+    land 3,420 apart in the log), and ``-b 600`` runs 300 frames, not 600. Read
+    right, both emulators take **300 frames** for the same work, running the same
+    31 transfers every other frame one frame apart, and the median gap between DMA
+    set-ups is **1,712 MCLK on the board against 1,804 on BlastEm**, a ratio of 1.05
+    (re-measured on `Earthion (World) (En) (Aftermarket) (Unl)`, `genesis`, 300
+    frames; docs/worklog.md, "The BlastEm clock"). What stands is the part that
+    never rested on BlastEm: the board's transfers are the Manual's, ratio 1.00. What
+    is withdrawn is the disagreement, and with it "BlastEm is the outlier".
+
+    The original entry, kept as it was written:
+
+    **The board runs Earthion's loading loop about twice as fast as BlastEm does,
     and the Manual says the board is right.** Chasing what looked like a divergence
     (the board appeared to run the game's VDP initialisation twice where BlastEm ran
     it once) showed there is no divergence at all: **the first 9,062 VDP register
