@@ -628,11 +628,18 @@ timing, the picture, and sound.
 
 **The compatibility sweep (MAME 0.285, a detector)**: `scripts/compat_sweep.py
 --seconds 10 --jobs 16 --window 12 --frames --offsets`, 14,423 s over the local
-romset's 3,514 cartridge entries. **2,070 of the 2,673 present cartridges (77.4%)
+romset's 3,514 cartridge entries. **2,063 of the 2,673 present cartridges (77.2%)
 draw a picture identical to MAME's, or identical a frame or two either side**
-(1,609 `same`, 461 `phase`). The rest: 261 `differs`, 229 `mame-board`, 65
-`unsupported` across 40 slots, 32 `size`, 11 `error:`, 5 `lockup`; 841 entries are
-broken symlinks in the romset and were not run. This is a detector's figure and is
+(1,602 `same`, 461 `phase`), and 2,063 of the 2,579 whose board the emulator models
+(80.0%). The rest: 252 `differs`, 226 `mame-board`, 94 `unsupported`, 32 `size`, 5
+`lockup`, 1 `error:`; 841 entries are broken symlinks in the romset and were not run.
+
+These are the figures **after** the two fixes of 2026-09-24 (docs/worklog.md, "Two
+fixes taken from the triage"): the oversize guard, which moved 29 images to
+`unsupported` and cost eight cartridges a `same` they had matched on a truncated
+image, and `load_image` picking the cartridge rather than a zip's first member,
+which recovered `Sonic & Knuckles (World)` from `error:` to `same`. As first run the
+sweep read 1,609 `same` and 77.4%. This is a detector's figure and is
 not a pass rate -- MAME is never the judge, and several of the differences are
 MAME's own.
 

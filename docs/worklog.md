@@ -3415,3 +3415,71 @@ document. The document is specification tier and MAME is emulator-derived, so th
 document judges -- but MAME's comment claims a real game disagrees, and that is
 evidence about its own cartridge. It is in [polish.md](polish.md) to be resolved by
 observation before any of this is implemented.
+
+### Two fixes taken from the triage, and the numbers they correct (2026-09-24)
+
+The user took the recommendation to make the oversize guard first, "because it is
+cheap and makes the 77.4% honest". It was, and it did -- and validating it turned up
+a second bug that was not on any list.
+
+**1. An image larger than the window is no longer silently truncated.**
+`Cartridge.__init__` sets `unsupported` when the image exceeds `ROM_WINDOW` and no
+mapper slot was chosen. Checked against the romset: **29 images are flagged, and the
+seven that must not change did not** -- Overdrive 2 (`rom_titan`) and the three
+listed Super Street Fighter IIs (`rom_ssf2`) keep their mappers, and the three Pier
+Solars keep their own, more specific `rom_stm95`.
+
+The guard does not guess a mapper from a size. That is precisely what MAME's
+`SEGA_SRAM_FALLBACK` does and what this milestone counted against it; the Krikzz
+Extended SSF work stays queued in [polish.md](polish.md).
+
+**It costs more `same` rows than it gains, which is the point**: eight cartridges
+lose a `same` they had not earned, because they matched MAME on their first 4 MB and
+nothing else. Nine `Earthion` images stop being counted as the board's failures.
+
+**2. `Sonic & Knuckles (World)` was being loaded as its lock-on adapter.** Chasing
+the last `error:` rows left two `GroupZero`s: the known-bad Phantasy Star dump, and a
+flagship retail cartridge, which is not a thing to leave as "a bad dump". The archive
+holds two image members:
+
+```text
+    262144  Sonic & Knuckles (World) (Lock-on).bin
+   2097152  Sonic & Knuckles (World).md
+```
+
+`load_image` took the zip's first image member and both suffixes are image suffixes,
+so the board was handed the **256 KB lock-on adapter ROM** instead of the 2 MB game.
+Its initial PC is odd, so `m68k.reset()`'s prefetch raised out of `System.__init__`
+-- the same signature as the genuinely bad dump, from an entirely different cause.
+
+`_pick_image` now takes the member named after the archive, falling back to the
+largest. The blast radius was measured before the change: **exactly one archive in
+the romset's 3,514 entries holds more than one image member.** Sonic & Knuckles now
+loads the real image (`SEGA GENESIS` header, even PC) and scores `same`, 0 of 71,680
+pixels differing, at offset 0.
+
+### The sweep's numbers, corrected
+
+| status | as first run | after the two fixes |
+| --- | ---: | ---: |
+| `same` | 1,609 | **1,602** |
+| `phase` | 461 | 461 |
+| `differs` | 261 | **252** |
+| `mame-board` | 229 | **226** |
+| `unsupported` | 65 | **94** |
+| `size` | 32 | 32 |
+| `lockup` | 5 | 5 |
+| `error:` | 11 | **1** |
+| `missing` | 841 | 841 |
+
+**2,063 of the 2,673 present cartridges: 77.2%**, against 77.4% before. The figure
+goes *down* because eight cartridges stopped passing on a truncated image, which is
+the fix working. Counted against the cartridges whose board the emulator actually
+models, it goes up: **2,063 of 2,579, 80.0%**, from 79.4%.
+
+The single remaining `error:` row is `Phantasy Star Fukkokuban (Japan)`, the bad
+dump, whose presentation is still queued in [polish.md](polish.md).
+
+Six tests were added (`tests/test_milestone8.py`): the guard fires, a mapper board
+may exceed the window, an unmodelled board keeps its own reason, and the three
+`load_image` cases. `pytest`: **86 passed, 1 deselected** on both interpreters.

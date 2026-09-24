@@ -126,3 +126,46 @@ def test_an_unmodelled_board_keeps_its_own_reason_when_it_is_also_oversize():
     from megadrive_python.cartridge import Cartridge
 
     assert Cartridge(_image(0x800000), slot="rom_stm95").unsupported == "rom_stm95"
+
+
+def test_a_zip_with_two_images_yields_the_cartridge_not_the_lock_on(tmp_path):
+    # ``Sonic & Knuckles (World).zip`` holds the 256 KB ``(Lock-on).bin`` adapter ROM
+    # before the 2 MB game, and taking the zip's first image member gave the adapter:
+    # a 256 KB image whose initial PC is odd, which raised ``GroupZero`` out of
+    # ``System.__init__`` on a flagship retail cartridge (milestone 8's sweep found
+    # it as one of two remaining ``error:`` rows). The member named after the archive
+    # is the cartridge.
+    import zipfile
+
+    from megadrive_python.cartridge import load_image
+
+    path = tmp_path / "Sonic & Knuckles (World).zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Sonic & Knuckles (World) (Lock-on).bin", _image(0x40000, {0: b"LOCK"}))
+        archive.writestr("Sonic & Knuckles (World).md", _image(0x200000, {0: b"GAME"}))
+    image = load_image(path)
+    assert len(image) == 0x200000
+    assert image[:4] == b"GAME"
+
+
+def test_a_zip_with_two_images_and_no_name_match_takes_the_largest(tmp_path):
+    import zipfile
+
+    from megadrive_python.cartridge import load_image
+
+    path = tmp_path / "whatever.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("small.bin", _image(0x40000, {0: b"SMAL"}))
+        archive.writestr("big.md", _image(0x200000, {0: b"BIGG"}))
+    assert load_image(path)[:4] == b"BIGG"
+
+
+def test_a_zip_with_one_image_is_unchanged(tmp_path):
+    import zipfile
+
+    from megadrive_python.cartridge import load_image
+
+    path = tmp_path / "one.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("only.md", _image(0x80000, {0: b"ONLY"}))
+    assert load_image(path)[:4] == b"ONLY"

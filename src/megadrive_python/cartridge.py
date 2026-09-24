@@ -53,7 +53,7 @@ import hashlib
 import zipfile
 from dataclasses import dataclass
 from functools import cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
 from .eeprom import MODE1, MODE2, MODE3, SerialEEPROM
@@ -195,18 +195,43 @@ def _deinterleave_smd(data: bytes) -> bytes:
     return bytes(out)
 
 
+def _pick_image(archive: zipfile.ZipFile, stem: str) -> str:
+    """Which member of a zip is the cartridge.
+
+    Almost every romset entry holds one image and the question does not arise. Where
+    it does, the first member is the wrong answer: ``Sonic & Knuckles (World).zip``
+    holds the 256 KB ``(Lock-on).bin`` adapter ROM *before* the 2 MB ``.md`` game, so
+    taking the first gave a 256 KB image whose reset vector is an odd address, and
+    the board raised out of ``System.__init__`` on a flagship retail cartridge.
+
+    The member whose name matches the archive's own is the cartridge; failing that,
+    the largest image is. Both rules pick the game for Sonic & Knuckles, and there is
+    exactly one such archive in the local romset's 3,514 entries.
+    """
+    names = [n for n in archive.namelist() if n.lower().endswith(IMAGE_SUFFIXES)]
+    if not names:
+        names = [n for n in archive.namelist() if not n.endswith("/")]
+    if not names:
+        raise ValueError("no image inside")
+    if len(names) == 1:
+        return names[0]
+    for name in names:
+        if PurePosixPath(name).stem == stem:
+            return name
+    return max(names, key=lambda n: archive.getinfo(n).file_size)
+
+
 def load_image(path: str | Path) -> bytes:
-    """Read a cartridge image, from a zip if need be (its first image member)."""
+    """Read a cartridge image, from a zip if need be (see :func:`_pick_image`)."""
     path = Path(path)
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as archive:
-            names = [n for n in archive.namelist() if n.lower().endswith(IMAGE_SUFFIXES)]
-            if not names:
-                names = [n for n in archive.namelist() if not n.endswith("/")]
-            if not names:
-                raise ValueError(f"{path}: no image inside")
-            data = archive.read(names[0])
-            smd = names[0].lower().endswith(".smd")
+            try:
+                name = _pick_image(archive, path.stem)
+            except ValueError as exc:
+                raise ValueError(f"{path}: {exc}") from None
+            data = archive.read(name)
+            smd = name.lower().endswith(".smd")
     else:
         data = path.read_bytes()
         smd = path.suffix.lower() == ".smd"
