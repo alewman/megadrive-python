@@ -64,8 +64,29 @@ ROM_WINDOW = 0x400000
 
 #: Boards that are ROM plus battery RAM.
 SRAM_SLOTS = ("rom_sram", "rom_fram", "rom_hardbl95")
-#: Boards on the Sega (SSF2) mapper.
-MAPPER_SLOTS = ("rom_ssf2", "rom_titan")
+#: Boards on Krikzz's Extended SSF, with and without battery RAM. MAME's names for
+#: them (``bus/megadrive/cart/options.cpp``); it marks its own entry ``supported="no"``.
+SSF_SLOTS = ("ssf", "ssf_sram")
+#: Boards on a Sega-mapper-shaped board: the SSF2 mapper, Titan's Overdrive 2 board
+#: (MAME's own comment says it is the same mapper), and Krikzz's Extended SSF.
+MAPPER_SLOTS = ("rom_ssf2", "rom_titan", *SSF_SLOTS)
+
+#: The bank number a board's page registers take, as a mask.
+#:
+#: Six bits on the Sega mapper -- "A page is specified with 6 bits (bits 7 and 6 are
+#: always 0)" (Trzynadlowski, ``ssf2tnc.txt``) -- and **five** on Krikzz's Extended
+#: SSF, whose own document writes the field ``...RRRRR``
+#: (``reference/docs/krikzz/extended_ssf-v2.txt``). Five is not a formality: Demons of
+#: Asteborg was observed writing page $1C, which MAME's *legacy* ``rom_ssf2`` device
+#: would mask to $0C with its ``data & 0xf`` (docs/undocumented-behavior.md item 20).
+BANK_MASK = dict.fromkeys(SSF_SLOTS, 0x1F)
+DEFAULT_BANK_MASK = 0x3F
+
+#: What a cartridge on Krikzz's Extended SSF says at $100 instead of "SEGA GENESIS".
+#: krikzz: "Mapper will be activated in case if ROM header contains "SEGA SSF" string".
+#: ``SEGA DOA`` is Demons of Asteborg's own variant of the same announcement, which
+#: five of its releases use and four do not; both behave identically (item 20).
+SSF_HEADERS = (b"SEGA SSF", b"SEGA DOA")
 
 
 @dataclass(frozen=True)
@@ -315,6 +336,7 @@ class Cartridge:
         # The Sega mapper: bank n shows page banks[n] (512 KB pages).
         self.banks = list(range(8))
         self.mapper = slot in MAPPER_SLOTS
+        self.bank_mask = BANK_MASK.get(slot, DEFAULT_BANK_MASK)
         if self.mapper:
             self.full = image + b"\xff" * (-len(image) % 0x80000)
         #: The serial EEPROM, its board, and its two line levels, or None.
@@ -380,6 +402,27 @@ class Cartridge:
             if slot in SRAM_SLOTS and not sram:
                 sram = 0x8000  # MAME's default range, $200000 + $FFFF
             return cls(image, slot=slot, sram_size=sram, name=str(listed["name"]))
+        if image[0x100:0x108] in SSF_HEADERS:
+            # Krikzz's Extended SSF announces itself in the console field, which is
+            # the activation rule his own document gives. These cartridges are
+            # aftermarket and almost none is in MAME's software list, so the header
+            # is the only thing that names the board -- and it is a statement by the
+            # cartridge rather than a guess from its size, which is the difference
+            # between this and MAME's ``SEGA_SRAM_FALLBACK``.
+            #
+            # The backup-RAM header then says which of the two boards it is. Twenty
+            # of the romset's twenty-two announce ``RA`` over $200000-$20FFFF, which
+            # is exactly the range MAME's ``ssf_sram`` device answers with a 32 KB
+            # chip on the odd byte; Overdrive 2 and the Joyzz test program announce
+            # none and are the plain board.
+            backup = header_backup_ram(image)
+            if backup is None:
+                return cls(image, slot="ssf")
+            start, end = backup
+            cart = cls(image, slot="ssf_sram", sram_size=min((end - start) // 2 + 1, 0x8000))
+            cart.sram_start = start & 0x3FFFFE
+            cart.sram_end = cart.sram_start + 2 * len(cart.sram)
+            return cart
         backup = header_backup_ram(image)
         if backup is not None:
             start, end = backup
@@ -560,8 +603,9 @@ class Cartridge:
             self.sram_mapped = bool(value & 1)
             self.sram_protected = bool(value & 2)
         elif self.mapper and register & 1 and register >= 0xF3:
-            # "A page is specified with 6 bits (bits 7 and 6 are always 0)".
-            self.banks[(register - 0xF1) >> 1] = value & 0x3F
+            # The page's width is the board's (:data:`BANK_MASK`): six bits on the
+            # Sega mapper, five on Krikzz's Extended SSF.
+            self.banks[(register - 0xF1) >> 1] = value & self.bank_mask
 
     def read_time(self, address: int) -> int | None:
         """A byte read from $A130xx, or None when no cartridge chip drives the bus."""

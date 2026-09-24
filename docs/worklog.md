@@ -3531,3 +3531,62 @@ PAL 240-line picture against MAME's 224.
 
 **2,070 of the 2,673 present cartridges: 77.4%**, and 2,070 of the 2,579 whose board
 the emulator models: **80.3%**.
+
+### Krikzz's Extended SSF, implemented (2026-09-24)
+
+With the $A130F0 conflict settled by observation the day before, the mapper itself
+was small. The board already had a Sega-mapper-shaped implementation; what these
+cartridges lacked was a **board**, because almost none of them is in MAME's software
+list and an unlisted image fell through to plain ROM.
+
+**Detection is the cartridge's own statement, not a guess.** krikzz: "Mapper will be
+activated in case if ROM header contains "SEGA SSF" string". Twenty-two of the
+romset's images say so at $100 -- seventeen `SEGA SSF` and five `SEGA DOA`, Demons of
+Asteborg's own variant of the same announcement, which item 20 showed behaves
+identically. That is the difference between this and MAME's `SEGA_SRAM_FALLBACK`,
+which invents a board from a file's length.
+
+**The backup-RAM header picks which of the two boards it is.** Twenty declare `RA`
+over $200000-$20FFFF, which is exactly the range MAME's `ssf_sram` device answers
+with a 32 KB chip on the odd byte -- and exactly the 32 KB krikzz reserves ("First
+32Kbyte of this bank will be copied to SD card"). Overdrive 2 and the Joyzz test
+program declare none and are the plain `ssf` board.
+
+**Two of the twenty-two are under the 4 MB window**, so the oversize guard had never
+touched them and nothing else would have found them: `Castle Cat 3 - The Vegas
+Connection` (3.88 MB) and `Joyzz Controller Test Program` (64 KB). A size rule would
+have missed both.
+
+The bank field is five bits on these boards (`BANK_MASK`) and stays six on the Sega
+mapper, and $A130F0/$A130F1 stays SRAM control, both on the evidence of item 20.
+Overdrive 2 is listed, so `identify` still puts it on `rom_titan` and nothing about
+it moved.
+
+#### The board is now more right than the detector
+
+| cartridge | the board draws | MAME draws |
+| --- | --- | --- |
+| Demons of Asteborg | its language-select screen, six flags, "Press A to confirm" | nothing: MAME 0.285 exits with a glibc heap error on this family |
+| Earthion | its title screen: the logo, "PRESS BUTTON", the credits line | **noise** -- MAME puts it on `rom_sram`, a flat 7 MB ROM with no mapper |
+| Kunio no Nekketsu | its disclaimer screen, legible | the same, and the two agree pixel for pixel |
+
+MAME's file loader has no rule for the `SEGA SSF` header; only its software list
+names the board, and these images are not in it. So for Earthion and Castle Cat 3 it
+runs the very bug this change fixed, and its picture is garbage while the board's is
+the game. The 70,000-odd differing pixels on those rows are the detector's, and the
+rows are counted `mame-board` for exactly that reason.
+
+#### What it moved
+
+| status | before | after |
+| --- | ---: | ---: |
+| `same` | 1,608 | **1,610** |
+| `unsupported` | 94 | **75** |
+| `mame-board` | 225 | 243 |
+| `differs` | 262 | 261 |
+
+**2,072 of 2,673 present cartridges, 77.5%.** Counted against the boards the emulator
+models the figure *falls*, 80.3% to 79.8%, and that is not a regression: nineteen
+cartridges left `unsupported`, so the denominator grew by nineteen while two became
+`same`. The other seventeen are cartridges the board now runs and MAME cannot, which
+no comparison against MAME can score.

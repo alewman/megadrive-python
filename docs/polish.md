@@ -37,17 +37,16 @@ and are gone from this list. What each became is in [worklog.md](worklog.md),
 
 ## Waiting on a decision the user has to make
 
-Two changes to `src/` that milestone 8 diagnosed and did not make, because a
+One change to `src/` that milestone 8 diagnosed and did not make, because a
 sweep is not the place to change the thing being swept. Each is a decision
 rather than a repair: the board's present behaviour is defensible, and the
-alternative is better for a reason the user should weigh. Three more have been retired: the oversize
-guard and the renderer's two buffers were taken on 2026-09-24, and the $A130F0
-conflict was settled by observation the same day (below).
+alternative is better for a reason the user should weigh. Four more have been retired, all on 2026-09-24: the
+oversize guard, the renderer's two buffers, the $A130F0 conflict (settled by
+observation) and Krikzz's Extended SSF mapper itself (below).
 
 | What | What the board does now | What to do instead | Re-run after |
 | --- | --- | --- | --- |
 | **An odd initial PC raises out of the constructor.** `Phantasy Star Fukkokuban (Japan)` has initial PC `00CB187F`. It is not an interleaved dump (neither a whole-file nor an SMD 16 KB de-interleave gives a valid header or an even PC): the dump is bad | `System.__init__` raises `GroupZero (3, 13310079, False, True)` from `m68k.reset()`'s prefetch, which the sweep records as `error:` | a real 68000 takes an address error *during* reset exception processing, which is a double bus fault: the CPU halts and the screen stays black. MAME shows exactly that (256x224, every pixel 0, checked here). Constructing a `System` should not raise; it should halt | the sweep's `error:` rows |
-| **These carts are not on the SSF2 mapper; they are on Krikzz's Extended SSF, which is a different device.** Its specification is the designer's own: `extended_ssf-v2.txt`, krikzz.com, 2014-09-22, pinned in `scripts/pinned_files.json` (specification tier). Differences from the Sega/SSF2 mapper the board implements: the bank field is **5 bits** (32 x 512 KB = 16 MB), not the 6 bits `ssf2tnc.txt` gives; the bank registers are the **even** words $A130F2-$A130FE for windows 1-7; **$A130F0 is not SRAM control at all** but mapper control, `[PXWL.... ...RRRRR]` -- P an enable bit that must be set for the write to take, X 32x mode, W ROM write-enable (the ROM can be written as RAM), L an LED, and the low 5 bits **the first bank**, which this mapper can switch and SSF2 cannot. It also adds hardware multiply and divide at $A130D0-$A130DA, and SD and USB IO. Activation is documented: the header at $100 reads `"SEGA SSF"` instead of `"SEGA GENESIS"` | `Cartridge.write_time` treats $A130F1 as the Sega mapper's SRAM enable and write-protect, ignores $A130F0, masks banks with `& 0x3F`, and never lets bank 0 move | decide how far to go. **The $A130F0 conflict that stood in the way is resolved** (2026-09-24): the games were observed, they use $A130F1 as the Sega mapper's SRAM control exactly as MAME has it, they never write the high byte krikzz's flag bits live in, and they need the fifth bank bit ($1C is written). So the work is the **five-bit bank field plus $A130F0 left as it is**, not krikzz's mapper-control word; item 20 of [undocumented-behavior.md](undocumented-behavior.md) has the evidence. The header rule covers 14 of the romset's images (3 Demons of Asteborg, all 9 Earthion, 2 Kunio no Nekketsu) **and Overdrive 2**, which declares `"SEGA SSF"` and currently runs on `rom_titan`. It does not cover the other 6 Demons of Asteborg, which use a game-specific `"SEGA DOA"`, nor Astebros, which is 14.75 MB under a plain `"SEGA MEGA DRIVE"` header | `run_mapper.py`, the sweep, and milestone 5's Overdrive 2 runs |
 
 *(The oversize guard that stood here was taken on 2026-09-24, with the user's
 decision to do it first: `Cartridge.__init__` now marks an image larger than

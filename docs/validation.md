@@ -628,14 +628,18 @@ timing, the picture, and sound.
 
 **The compatibility sweep (MAME 0.285, a detector)**: `scripts/compat_sweep.py
 --seconds 10 --jobs 16 --window 12 --frames --offsets`, 14,423 s over the local
-romset's 3,514 cartridge entries. **2,070 of the 2,673 present cartridges (77.4%)
+romset's 3,514 cartridge entries. **2,072 of the 2,673 present cartridges (77.5%)
 draw a picture identical to MAME's, or identical a frame or two either side**
-(1,608 `same`, 462 `phase`), and 2,070 of the 2,579 whose board the emulator models
-(80.3%). The rest: 262 `differs`, 225 `mame-board`, 94 `unsupported`, 16 `size`, 5
+(1,610 `same`, 462 `phase`), and 2,072 of the 2,598 whose board the emulator models
+(79.8%). The rest: 261 `differs`, 243 `mame-board`, 75 `unsupported`, 16 `size`, 5
 `lockup`, 1 `error:`; 841 entries are broken symlinks in the romset and were not run.
 Every one of the 16 `size` rows is now a genuine width or mode difference: the
 renderer's two buffers (2026-09-24) retired all 17 partial-frame captures, which a
-full re-sweep confirmed moved nothing else.
+full re-sweep confirmed moved nothing else. The figure against modelled boards falls
+from 80.3% the same day because Krikzz's Extended SSF mapper moved 19 cartridges out
+of `unsupported`, and 17 of those are cartridges the board now runs and MAME cannot
+-- Earthion's title screen against MAME's noise -- so no comparison against MAME can
+score them.
 
 These are the figures **after** the two fixes of 2026-09-24 (docs/worklog.md, "Two
 fixes taken from the triage"): the oversize guard, which moved 29 images to

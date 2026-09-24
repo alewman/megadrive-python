@@ -169,3 +169,75 @@ def test_a_zip_with_one_image_is_unchanged(tmp_path):
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("only.md", _image(0x80000, {0: b"ONLY"}))
     assert load_image(path)[:4] == b"ONLY"
+
+
+def _ssf_image(length: int, header: bytes, backup: bool) -> bytes:
+    pieces = {0x100: header}
+    if backup:
+        # The Manual's backup-RAM field: "RA", then the odd-byte flags, then the
+        # range. $200000-$20FFFF is what all twenty of the romset's battery-backed
+        # Extended SSF cartridges declare.
+        pieces[0x1B0] = b"RA\xf8\x20\x00\x20\x00\x00\x00\x20\xff\xff"
+    return _image(length, pieces)
+
+
+def test_a_sega_ssf_header_selects_krikzz_extended_ssf():
+    # krikzz: "Mapper will be activated in case if ROM header contains "SEGA SSF"
+    # string". The header is a statement by the cartridge, not a guess from its size,
+    # which is what separates this from MAME's SEGA_SRAM_FALLBACK.
+    from megadrive_python.cartridge import Cartridge
+
+    plain = Cartridge.from_image(_ssf_image(0x600000, b"SEGA SSF        ", False))
+    assert plain.slot == "ssf"
+    assert plain.mapper and plain.unsupported is None
+    assert not plain.sram
+
+    battery = Cartridge.from_image(_ssf_image(0x600000, b"SEGA SSF        ", True))
+    assert battery.slot == "ssf_sram"
+    assert len(battery.sram) == 0x8000  # 32 KB, as MAME's ssf_sram device allocates
+    assert battery.sram_start == 0x200000
+
+
+def test_sega_doa_is_the_same_board():
+    # Five Demons of Asteborg releases announce SEGA DOA and four announce SEGA SSF;
+    # both were observed writing the same registers (undocumented-behavior.md item 20).
+    from megadrive_python.cartridge import Cartridge
+
+    assert Cartridge.from_image(_ssf_image(0xE00000, b"SEGA DOA        ", True)).slot == "ssf_sram"
+
+
+def test_the_extended_ssf_bank_field_is_five_bits():
+    # Demons of Asteborg was observed writing page $1C. MAME's legacy rom_ssf2 device
+    # masks data & 0xf and would fetch $0C for it; krikzz's field is ...RRRRR.
+    from megadrive_python.cartridge import Cartridge
+
+    cart = Cartridge.from_image(_ssf_image(0xE00000, b"SEGA SSF        ", True))
+    assert cart.bank_mask == 0x1F
+    cart.write_time(0xA130FF, 0x1C)
+    assert cart.banks[7] == 0x1C
+    cart.write_time(0xA130FF, 0xFF)  # bits 7-5 are not part of the field
+    assert cart.banks[7] == 0x1F
+
+
+def test_the_sega_mapper_keeps_its_six_bit_field():
+    # Trzynadlowski: "A page is specified with 6 bits (bits 7 and 6 are always 0)".
+    from megadrive_python.cartridge import Cartridge
+
+    cart = Cartridge(_image(0x500000), slot="rom_ssf2")
+    assert cart.bank_mask == 0x3F
+    cart.write_time(0xA130FF, 0xFF)
+    assert cart.banks[7] == 0x3F
+
+
+def test_an_extended_ssf_cartridge_maps_its_ram_with_a130f1():
+    # $A130F1 stays the Sega mapper's SRAM control on these boards, which is what the
+    # games want and what MAME implements, against krikzz's own document
+    # (undocumented-behavior.md item 20). Demons of Asteborg writes $01 and $03.
+    from megadrive_python.cartridge import Cartridge
+
+    cart = Cartridge.from_image(_ssf_image(0xE00000, b"SEGA DOA        ", True))
+    assert not cart.sram_mapped  # ROM covers $200000 until the game asks for the RAM
+    cart.write_time(0xA130F1, 0x01)
+    assert cart.sram_mapped and not cart.sram_protected
+    cart.write_time(0xA130F1, 0x03)
+    assert cart.sram_mapped and cart.sram_protected
