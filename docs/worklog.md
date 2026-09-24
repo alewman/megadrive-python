@@ -3483,3 +3483,51 @@ dump, whose presentation is still queued in [polish.md](polish.md).
 Six tests were added (`tests/test_milestone8.py`): the guard fires, a mapper board
 may exceed the window, an unmodelled board keeps its own reason, and the three
 `load_image` cases. `pytest`: **86 passed, 1 deselected** on both interpreters.
+
+### The renderer's two buffers, and the full re-sweep that checked them (2026-09-24)
+
+The partial-frame capture diagnosed in milestone 8 is fixed. `Renderer.start_frame`
+now hands the finished frame over by **swapping** five row arrays -- pixels, widths,
+blanked, palettes and dots -- with a second set, so the next frame is drawn into what
+the *previous* finished picture used and cannot overwrite the one a caller is about
+to read. It costs five reference exchanges a frame and about 150 KB; nothing is
+copied. `frame()` and `frame_rgb()` both take their source from one `_finished()`
+helper, so they can never disagree about which picture they are showing.
+
+Before any frame has finished -- only at power-on -- `_finished` still returns what
+has been drawn, so a caller always gets a picture.
+
+**The whole romset was re-swept rather than the `size` rows the polish list asked
+for.** The change can move any cartridge whose `run_frame` overshoots a frame
+boundary, and which those are is exactly what was not known; 3 h 37 m of machine time
+is cheaper than a number nobody can defend.
+
+**17 rows moved, and all 17 are the partial-frame captures. Nothing else in the
+3,514 changed.**
+
+| what the 17 became | count |
+| --- | ---: |
+| `same` -- the picture was right all along | 6 |
+| `phase` | 1 |
+| `differs` -- a full frame, and a real difference the truncated one hid | 10 |
+
+Seven were being scored wrong purely because the wrong frame was handed out. Ten had
+a genuine difference that a 320x1 picture could not show. One of the 17 was not a
+`size` row at all: `Pac-Man (World) (Aftermarket) (Unl)` was `mame-board` with a
+`320x3` picture -- the same bug wearing a different label -- and it now matches
+exactly.
+
+**No partial-frame row is left.** All 16 surviving `size` rows are genuine width or
+mode differences (256x224 against 320x224 and four the other way), plus Overdrive 2's
+PAL 240-line picture against MAME's 224.
+
+| status | before | after |
+| --- | ---: | ---: |
+| `same` | 1,602 | **1,608** |
+| `phase` | 461 | **462** |
+| `differs` | 252 | 262 |
+| `size` | 32 | **16** |
+| `mame-board` | 226 | 225 |
+
+**2,070 of the 2,673 present cartridges: 77.4%**, and 2,070 of the 2,579 whose board
+the emulator models: **80.3%**.

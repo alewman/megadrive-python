@@ -112,6 +112,13 @@ class Renderer:
         self.widths = [0] * 480
         self.height = 0
         self.rows = 0
+        #: The finished picture, swapped in by :meth:`start_frame` so that drawing the
+        #: next frame cannot overwrite the one a caller is about to read. ``height``
+        #: and ``done_width`` above describe it; the arrays parallel the ones being
+        #: drawn into, and the two sets exchange places once a frame.
+        self.done_width = 320
+        self._done_pixels = [bytearray(320) for _ in range(480)]
+        self._done_widths = [0] * 480
         #: Sprite state that outlives a line (Kabuto, phase 3): whether the sprite read
         #: last had X != 0, which is what makes an X = 0 sprite mask the rest of a line.
         self.last_x_nonzero = False
@@ -130,17 +137,20 @@ class Renderer:
         #: a band at a time -- gets a row of its own, and one that rewrites it part way
         #: *along* a line gets an entry from that pixel on.
         self._palettes: list[list[tuple[int, tuple]]] = [[] for _ in range(480)]
+        self._done_palettes: list[list[tuple[int, tuple]]] = [[] for _ in range(480)]
         self._palette: tuple = ()
         #: Set by the VDP on a CRAM write: the next pixels drawn take a fresh palette.
         self.cram_dirty = True
         #: CRAM dots: ``(pixel, RGB)`` per row, from a CRAM write during the display.
         self._dots: list[list[tuple[int, int]]] = [[] for _ in range(480)]
+        self._done_dots: list[list[tuple[int, int]]] = [[] for _ in range(480)]
         #: Rows drawn with register $00 bit 0 set, which "actually turns off all
         #: display generation, as opposed to the screen blanking feature which simply
         #: shows the backdrop color" (CMD ``genvdp.txt`` 17). Such a row leaves the
         #: picture black whatever CRAM holds; it is kept per row rather than per pixel
         #: because there is no CRAM entry that means "nothing".
         self._blanked = bytearray(480)
+        self._done_blanked = bytearray(480)
         #: The line being drawn (``begin_line``): where it starts in master clocks, how
         #: much of it has been drawn, and everything its remaining pixels need.
         self.pending = False
@@ -656,23 +666,61 @@ class Renderer:
     # -- frames -------------------------------------------------------------------
 
     def start_frame(self) -> None:
-        """A new frame begins: the rows drawn so far are the finished picture."""
+        """A new frame begins: the rows drawn so far become the finished picture.
+
+        The finished rows are handed over by swapping the row arrays rather than
+        copied, so a frame costs five reference exchanges and the second set of
+        buffers (about 150 KB). Drawing then continues into what the *previous*
+        finished picture used, which nothing is reading any more.
+
+        This is what makes :meth:`frame` safe to call at any time. It used to hand
+        out ``self.pixels`` directly, and ``System.run_frame`` stops when the VDP's
+        frame counter changes, which happens *inside* a 68000 step: a step that holds
+        the bus for a whole 68000-memory DMA can carry the VDP tens of lines past the
+        boundary. The picture handed out was then the new frame's first few rows --
+        320x1, 320x4, 320x55 -- and the finished frame's own rows had already been
+        overwritten in place, so it could not be recovered either. Milestone 8's
+        sweep scored 17 cartridges ``size`` for exactly that (docs/worklog.md).
+        """
         self.finish_line()
         if self.rows:
             self.height = self.rows
+            self.done_width = max(self.widths[: self.rows], default=self.width) or self.width
+            self.pixels, self._done_pixels = self._done_pixels, self.pixels
+            self.widths, self._done_widths = self._done_widths, self.widths
+            self._blanked, self._done_blanked = self._done_blanked, self._blanked
+            self._palettes, self._done_palettes = self._done_palettes, self._palettes
+            self._dots, self._done_dots = self._done_dots, self._dots
         self.rows = 0
 
     def frame(self) -> tuple[int, int, list[bytearray]]:
         """The picture: its width, its height, and its rows of shaded CRAM indices.
 
-        Between frames (where :meth:`~megadrive_python.system.System.run_frame` stops)
-        that is the frame just finished; called part way through one, what it has drawn.
+        Always the last *finished* frame, whether or not the next one has begun (see
+        :meth:`start_frame`). Before any frame has finished -- only at power-on --
+        what has been drawn so far, so that a caller still gets a picture.
         """
-        height = self.rows or self.height
+        width, height, pixels, _blanked, _palettes, _dots = self._finished()
+        return width, height, [pixels[row] for row in range(height)]
+
+    def _finished(self) -> tuple[int, int, list, bytearray, list, list]:
+        """The finished frame's size and its four row arrays.
+
+        One place decides between the finished buffers and, before any frame has
+        finished, the ones being drawn into, so that :meth:`frame` and
+        :meth:`frame_rgb` can never disagree about which picture they are showing.
+        """
+        if self.height:
+            height, width = self.height, self.done_width
+            arrays = (self._done_pixels, self._done_blanked, self._done_palettes,
+                      self._done_dots)  # fmt: skip
+        else:  # power-on: nothing has finished yet, so show what has been drawn
+            height = self.rows
+            width = max(self.widths[:height], default=self.width) or self.width
+            arrays = (self.pixels, self._blanked, self._palettes, self._dots)
         if self.vdp.interlace_double:
             height = (height + 1) & ~1  # both fields make up the picture
-        width = max(self.widths[:height], default=self.width) or self.width
-        return width, height, [self.pixels[row] for row in range(height)]
+        return width, height, *arrays
 
     def _make_palette(self) -> tuple:
         """CRAM as RGB888: normal, shadowed and highlighted."""
@@ -692,24 +740,25 @@ class Renderer:
         with: a game that rewrites CRAM part way down a frame (CMD's shadow/highlight
         tests do, a band at a time) keeps each band's colours, and one that rewrites it
         part way along a line keeps each part's. CRAM dots are laid over the result."""
-        width, _height, rows = self.frame()
+        width, height, pixels, blanked, palettes_of, dots_of = self._finished()
+        rows = [pixels[row] for row in range(height)]
         default = [(0, self._palette or self._make_palette())]
         out = []
         for index, row in enumerate(rows):
-            if self._blanked[index]:
+            if blanked[index]:
                 # Register $00 bit 0: no display generation at all, so no colour of
                 # CRAM's reaches the screen (CMD ``genvdp.txt`` 17; r57shell's "VDP
                 # Blink Test (Reg 0 bit 0)" is what makes it visible).
                 out.append([0] * width)
                 continue
-            palettes = self._palettes[index] or default
+            palettes = palettes_of[index] or default
             line = [0] * width
             for span, (start, palette) in enumerate(palettes):
                 stop = palettes[span + 1][0] if span + 1 < len(palettes) else width
                 for x in range(start, min(stop, width)):
                     value = row[x]
                     line[x] = palette[value >> SHADE_SHIFT][value & 0x3F]
-            for x, colour in self._dots[index]:
+            for x, colour in dots_of[index]:
                 if x < width:
                     line[x] = colour
             out.append(line)

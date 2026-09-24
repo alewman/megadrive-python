@@ -507,3 +507,56 @@ source, the way sms-python does.
     reads a constant ($9F00 in the runs made); the board reads its Mode 5 HV counter
     whatever the mode. No test ROM of milestones 2-5 reads HV before setting Mode 5,
     and Mode 4 as a whole is milestone 10.
+
+20. **What an Extended SSF cartridge writes to $A130F0/$A130F1: MAME is right and
+    krikzz's own document does not describe these carts.** Krikzz's
+    `extended_ssf-v2.txt` (specification tier, the designer's own) gives that
+    register as `[PXWL.... ...RRRRR]` -- a protection bit, 32x mode, ROM
+    write-enable, an LED, and **the first bank** in the low five bits -- and puts no
+    SRAM control anywhere in the mapper. MAME's
+    `megadrive_hb_ssf_device::time_f0_w` implements it as the *Sega* mapper's SRAM
+    control instead (bit 1 disables the SRAM view, bit 0 write-protects it), with the
+    comment "same as Sega mapper (Demons of Asteborg wants it this way)".
+
+    The document outranks MAME on the tier rule, so the conflict was settled by
+    looking at what the games themselves write, which is evidence about their own
+    cartridges. `Board._system_write` was wrapped (the board's own dispatch drops the
+    high byte, so the cartridge is the wrong place to watch from) and four carts run
+    for 900 frames each on a forced `rom_ssf2` board:
+
+    | cartridge | header | what it writes to $A130F1 |
+    | --- | --- | --- |
+    | Demons of Asteborg (v1.1) | `SEGA DOA` | `$01` x6, `$03` x3 |
+    | Earthion (v3.3.0) | `SEGA SSF` | `$00` x1 |
+    | Kunio no Nekketsu (v1.6) | `SEGA SSF` | `$00` x1 |
+    | Overdrive 2 | `SEGA SSF` | never writes it |
+
+    `$00`, `$01` and `$03` use bits 0 and 1 and nothing else. Read krikzz's way those
+    are **first-bank selects**, and writing bank 1 or bank 3 over the window that
+    holds the vector table would break the running program immediately; read the Sega
+    mapper's way they are exactly its documented idiom -- Phantasy Star IV "will
+    always write $01 to $A130F1 before accessing the RAM" (CMD `gen-hw.txt` 4.3), and
+    `$03` is that plus the write-protect bit. Demons of Asteborg is the cart MAME's
+    comment names, it is the one with battery RAM (MAME's slot is `ssf_sram`), and it
+    is the only one of the four that writes anything but `$00`.
+
+    So: **these retail aftermarket cartridges are not krikzz's flashcart.** His
+    document describes the Mega Everdrive's own mapper, which has an LED, an SD card
+    and a USB port; a cartridge pressed for a game implements the bank registers and
+    leaves $A130F1 as the Sega mapper had it. Both statements are true of different
+    hardware, which is why the document and MAME disagree without either being wrong.
+
+    Two further things the same run settled:
+
+    - **The bank field is five bits, and four is not enough.** The largest bank
+      written is `$1C` (Demons of Asteborg, twice). MAME's *legacy* `rom_ssf2` device
+      masks `data & 0xf` and would fetch bank `$0C` for it; krikzz's five bits and the
+      board's six both carry it. Corroboration that the numbering is krikzz's: his
+      document reserves "Bank 28 ... for saves", and `$1C` is 28.
+    - **Every write is a byte write to an odd address** ($A130F1, F3, F5, ... FF) --
+      no game wrote a word, in 3,600 frames across the four. The high byte where all
+      of krikzz's flag bits live is therefore never written by these cartridges, so
+      the board's `write_time(address | 1, low)` dispatch loses nothing real here.
+      (An earlier note in this session guessed that dispatch would have to carry the
+      whole word before the mapper could be implemented. The observation says
+      otherwise for these four carts, and it is recorded here rather than acted on.)
