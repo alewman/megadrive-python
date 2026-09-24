@@ -34,7 +34,16 @@ keeps ``last_word_address`` and ``last_byte_address`` exactly as BlastEm's own d
   count happens to land near the frame count (599 for a 600-frame run), which is what
   made it look like one. Its gaps cluster: over a 600-frame Earthion run the mean gap
   is one frame and the median is two. Use :func:`frame_of` instead.
-- A cycle is **half a master clock** (about 26.85 MHz), not a 68000 clock.
+- A cycle is **one master clock**, not a 68000 clock and not half a master clock. The
+  VDP's clock, which stamps every VDP event, advances 3,420 a line (``vdp.c`` 3815,
+  ``MCLKS_LINE``) and 16 an H40 slot (``MCLKS_SLOT_H40``). This reader once took it
+  for half a master clock, which doubled every frame number it gave; the data says the
+  same as the source: Overdrive 2's once-a-line VSRAM writes land 3,420 apart.
+- **``-b N`` runs N/2 frames, not N**, at least headless at 542164d: the log of
+  ``-b 12000`` on Overdrive 2 ends 6,423,581,234 master clocks in, 6,001 PAL frames,
+  and its last write is the board's in frame 6,001. The frame counter ``-b`` reads is
+  bumped in two places (``vdp.c`` 2254, with a threaded renderer, and 3109). Ask for
+  twice the frames wanted, and trust :meth:`Reader.frame_of`, not the argument.
 - The logged counter is **32 bits and wraps**, and ``EVENT_ADJUST`` deducts a large
   amount from it to keep it from overflowing. BlastEm's own reader does that
   subtraction in ``uint32`` arithmetic, so it must be masked here too -- Python's
@@ -66,9 +75,10 @@ NAMES = {
     VDP_INTRAM: "intram", STATE: "state", MULTI: "multi",
 }  # fmt: skip
 
-#: A frame in BlastEm's cycles (half master clocks), by video standard: 262 lines
-#: NTSC and 313 PAL, 3,420 MCLK a line.
-FRAME_CYCLES = {0: 262 * 3420 // 2, 1: 313 * 3420 // 2}
+#: A line in BlastEm's cycles, which are master clocks (``vdp.h``, ``MCLKS_LINE``).
+LINE_CYCLES = 3420
+#: A frame in BlastEm's cycles, by video standard: 262 lines NTSC and 313 PAL.
+FRAME_CYCLES = {0: 262 * LINE_CYCLES, 1: 313 * LINE_CYCLES}
 
 
 @dataclass
@@ -112,9 +122,11 @@ class Reader:
         self.cycle = 0
         self.last_word_address = 0
         self.last_byte_address = 0
-        #: The VDP's auto-increment, which ``EVENT_VRAM_BYTE_AUTO`` steps by. BlastEm
-        #: carries it out of band; two is the value every log seen here uses.
-        self.autoinc = 2
+        #: The VDP's auto-increment, which ``EVENT_VRAM_BYTE_AUTO`` steps by. The log
+        #: carries it only as register 15's own writes, so it is tracked from them, as
+        #: BlastEm's reader does (``vdp.c`` 6908-6910 at 542164d, stepping by
+        #: ``context->regs[REG_AUTOINC]``), from the zero its ``calloc`` starts at.
+        self.autoinc = 0
 
     @property
     def frame_cycles(self) -> int:
@@ -146,7 +158,10 @@ class Reader:
             part, register, value = self._u8(), self._u8(), self._u8()
             return (part << 8) | register, value
         if kind == VDP_REG:
-            return self._u8(), self._u8()
+            register, value = self._u8(), self._u8()
+            if register == 15:
+                self.autoinc = value
+            return register, value
         if kind == VRAM_BYTE:
             self.last_byte_address = self._u16()
             return self.last_byte_address, self._u8()
@@ -224,7 +239,7 @@ def main() -> int:
     standard = "PAL" if reader.video_std & 1 else "NTSC"
     print(f"{args.log.name}: {reader.name!r}, {standard}, version {reader.version}")
     print(f"  {total:,} events over {reader.frame_of(last) + 1} frames "
-          f"({last:,} cycles at MCLK/2); decoded to byte {reader.pos:,} of "
+          f"({last:,} master clocks); decoded to byte {reader.pos:,} of "
           f"{len(reader.body):,}")  # fmt: skip
     if reader.pos != len(reader.body):
         print("  WARNING: the stream did not end on a byte boundary: the decode desynced")

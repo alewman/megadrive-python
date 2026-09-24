@@ -35,7 +35,7 @@ def test_the_header_is_read():
     reader = be.Reader(_log(b"", name=b"EARTHION", video=1))
     assert reader.name == "EARTHION"
     assert reader.video_std == 1
-    assert reader.frame_cycles == 313 * 3420 // 2  # PAL
+    assert reader.frame_cycles == 313 * 3420  # PAL: a cycle is a master clock
     assert list(reader) == []
 
 
@@ -76,13 +76,26 @@ def test_a_multi_header_repeats_the_event_with_its_own_payload():
 
 
 def test_vram_byte_addresses_are_carried_as_deltas():
-    body = _short(be.VRAM_BYTE, 16) + (0x1000).to_bytes(2, "big") + bytes([0xAA])
+    body = _short(be.VDP_REG, 16) + bytes([15, 2])
+    body += _short(be.VRAM_BYTE, 16) + (0x1000).to_bytes(2, "big") + bytes([0xAA])
     body += _short(be.VRAM_BYTE_ONE, 16) + bytes([0xBB])
     body += _short(be.VRAM_BYTE_AUTO, 16) + bytes([0xCC])
     body += _short(be.VRAM_BYTE_DELTA, 16) + bytes([0x10, 0xDD])
-    events = list(be.Reader(_log(body)))
+    events = list(be.Reader(_log(body)))[1:]
     assert [e.address for e in events] == [0x1000, 0x1001, 0x1003, 0x1013]
     assert [e.value for e in events] == [0xAA, 0xBB, 0xCC, 0xDD]
+
+
+def test_an_auto_step_follows_register_fifteen():
+    """BlastEm logs ``VRAM_BYTE_AUTO`` when a write lands register 15's value past the
+    last one, whatever that value is; 2 was once assumed here and is not the only one."""
+    body = _short(be.VDP_REG, 16) + bytes([15, 0x80])
+    body += _short(be.VRAM_BYTE, 16) + (0x1000).to_bytes(2, "big") + bytes([0xAA])
+    body += _short(be.VRAM_BYTE_AUTO, 16) + bytes([0xBB])
+    body += _short(be.VDP_REG, 16) + bytes([15, 0x40])
+    body += _short(be.VRAM_BYTE_AUTO, 16) + bytes([0xCC])
+    events = [e for e in be.Reader(_log(body)) if e.kind != be.VDP_REG]
+    assert [e.address for e in events] == [0x1000, 0x1080, 0x10C0]
 
 
 def test_word_addresses_are_carried_as_deltas_too():
@@ -101,7 +114,7 @@ def test_a_frame_is_taken_from_the_cycle_and_not_from_flush():
     assert reader.frame_of(0) == 0
     assert reader.frame_of(reader.frame_cycles - 1) == 0
     assert reader.frame_of(reader.frame_cycles) == 1
-    assert reader.frame_cycles == 262 * 3420 // 2  # NTSC
+    assert reader.frame_cycles == 262 * 3420  # NTSC
 
 
 def test_register_writes_are_grouped_by_frame():
