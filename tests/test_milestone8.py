@@ -90,3 +90,39 @@ def test_the_software_list_is_read_by_sha1():
     for sha1, (setname, romname, slot) in entries.items():
         assert len(sha1) == 40 and setname and romname and slot
         break
+
+
+def test_an_image_larger_than_the_window_with_no_mapper_is_unsupported():
+    # Without a mapper ``_rom_offset`` is the identity and the board masks an access
+    # to $000000-$3FFFFF, so only the first 4 MB of a larger image is reachable: the
+    # cartridge would run as a truncated copy of itself and lose a comparison it
+    # could not win. Milestone 8 found 29 such images in the local romset, nine of
+    # them ``Earthion`` scoring ``differs`` for this reason alone.
+    from megadrive_python.cartridge import Cartridge
+
+    big = Cartridge(_image(0x800000))
+    assert big.unsupported is not None
+    assert big.unsupported.startswith("oversize")
+    assert "8.00 MB" in big.unsupported
+
+    # Exactly the window is fine, and so is anything under it.
+    assert Cartridge(_image(0x400000)).unsupported is None
+    assert Cartridge(_image(0x80000)).unsupported is None
+
+
+def test_a_mapper_board_may_be_larger_than_the_window():
+    # The whole point of the Sega mapper: Super Street Fighter II is 5 MB and
+    # Overdrive 2 is 8 MB, and both page 512 KB windows in. Neither is oversize.
+    from megadrive_python.cartridge import MAPPER_SLOTS, Cartridge
+
+    for slot in MAPPER_SLOTS:
+        cart = Cartridge(_image(0x800000), slot=slot)
+        assert cart.unsupported is None, slot
+
+
+def test_an_unmodelled_board_keeps_its_own_reason_when_it_is_also_oversize():
+    # Pier Solar is 8 MB on ``rom_stm95``, which the board does not model at all.
+    # The more specific reason wins; "oversize" would say less.
+    from megadrive_python.cartridge import Cartridge
+
+    assert Cartridge(_image(0x800000), slot="rom_stm95").unsupported == "rom_stm95"

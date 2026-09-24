@@ -317,6 +317,22 @@ class Cartridge:
         self.special = bool(self.sram) or self.decoded
         if slot not in ("rom", *SRAM_SLOTS, *MAPPER_SLOTS) and not self.decoded:
             self.unsupported = slot
+        elif len(image) > ROM_WINDOW and slot not in MAPPER_SLOTS:
+            # Larger than the 68000's cartridge window with no mapper to page it in.
+            # ``_rom_offset`` is the identity without a mapper and the board masks an
+            # access to $000000-$3FFFFF, so only the first 4 MB is ever reachable and
+            # the rest is unreachable rather than mirrored: the cartridge would run
+            # as a truncated copy of itself. Say so instead, so that it is counted
+            # apart rather than losing a comparison it cannot win (milestone 8: nine
+            # ``Earthion`` images scored ``differs`` for exactly this reason).
+            #
+            # These boards are real and documented -- most are Krikzz's Extended SSF
+            # (``reference/docs/krikzz/extended_ssf-v2.txt``), which the header at
+            # $100 announces as "SEGA SSF" -- but implementing that mapper is its own
+            # piece of work, and guessing one from the image's size is the very thing
+            # MAME's ``SEGA_SRAM_FALLBACK`` does and that this repository counts
+            # against it. See docs/polish.md.
+            self.unsupported = f"oversize: {len(image) / (1 << 20):.2f} MB, no mapper"
 
     @classmethod
     def from_file(cls, path: str | Path) -> Cartridge:
