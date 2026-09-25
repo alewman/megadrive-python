@@ -69,7 +69,69 @@ void Audio_Shutdown(void) {}
 void Video_Init(char *f, int ntsc) { (void)f; (void)ntsc; }
 void Video_Shutdown(void) {}
 void Video_Blit(void) {}
-void Video_PlotVDP(void) {}
+/* The picture, when asked for (NMD_PLOT=file, NMD_PLOT_FRAME=n): the VDP's RGB
+   outputs sampled at every rising edge of its clock, which md.c reports here, one row
+   per /HSYNC and one frame per /VSYNC, both counted on their falling edges from the
+   start of the run.  Written our own way from the chip's output pins; the frame is
+   raw so that nothing about where the picture sits in the line is assumed. */
+#define PLOT_LINES 400
+#define PLOT_SAMPLES 2048
+static const char *plot_file = 0;
+static long plot_frame = -1;
+static long plot_frames_seen = 0;
+static int plot_line = -1, plot_x = 0, plot_ohsync = 1, plot_ovsync = 1, plot_done = 0;
+static unsigned char plot_buf[PLOT_LINES][PLOT_SAMPLES][3];
+static unsigned short plot_count[PLOT_LINES];
+static unsigned short plot_vcount[PLOT_LINES]; /* the die's V counter at each row's /HSYNC */
+/* the vertical-scroll log's file and window (see vdpsig_sample) */
+static FILE *vdpsig_file = 0;
+static uint64_t vdpsig_from = 0, vdpsig_to = ~0ull;
+
+static void plot_write(void)
+{
+    FILE *f = fopen(plot_file, "wb");
+    unsigned int header[3] = { 0x504D444Eu, PLOT_LINES, PLOT_SAMPLES }; /* "NDMP" */
+    if (!f) {
+        fprintf(stderr, "cannot write %s\n", plot_file);
+        return;
+    }
+    fwrite(header, sizeof header, 1, f);
+    fwrite(plot_count, sizeof plot_count, 1, f);
+    fwrite(plot_buf, sizeof plot_buf, 1, f);
+    fwrite(plot_vcount, sizeof plot_vcount, 1, f);
+    fclose(f);
+}
+
+void Video_PlotVDP(void)
+{
+    int hsync = ym.vdp.o_hsync, vsync = ym.vdp.o_vsync;
+    if (!plot_file || plot_done)
+        return;
+    if (plot_ovsync && !vsync) {
+        if (plot_frames_seen == plot_frame) {
+            plot_write();
+            plot_done = 1;
+        }
+        plot_frames_seen++;
+        plot_line = -1;
+    }
+    if (plot_ohsync && !hsync) {
+        plot_line++;
+        plot_x = 0;
+        if (plot_line >= 0 && plot_line < PLOT_LINES)
+            plot_vcount[plot_line] = (unsigned short)ym.vdp.l105[1];
+    }
+    plot_ohsync = hsync;
+    plot_ovsync = vsync;
+    if (plot_frames_seen != plot_frame || plot_line < 0 || plot_line >= PLOT_LINES
+        || plot_x >= PLOT_SAMPLES)
+        return;
+    plot_buf[plot_line][plot_x][0] = (unsigned char)ym.vdp.rgb_out[0];
+    plot_buf[plot_line][plot_x][1] = (unsigned char)ym.vdp.rgb_out[1];
+    plot_buf[plot_line][plot_x][2] = (unsigned char)ym.vdp.rgb_out[2];
+    plot_x++;
+    plot_count[plot_line] = (unsigned short)plot_x;
+}
 void Video_UpdateTitle(uint64_t ms) { (void)ms; }
 
 /* --- the trace record -------------------------------------------------------- */
@@ -215,6 +277,11 @@ static void setup(void)
     dump_ram = getenv("NMD_DUMP_RAM");
     dump_zram = getenv("NMD_DUMP_ZRAM");
     dump_vram = getenv("NMD_DUMP_VRAM");
+    plot_file = getenv("NMD_PLOT");
+    if ((s = getenv("NMD_VDPSIG"))) vdpsig_file = fopen(s, "w");
+    if ((s = getenv("NMD_VDPSIG_FROM"))) vdpsig_from = strtoull(s, 0, 0);
+    if ((s = getenv("NMD_VDPSIG_TO"))) vdpsig_to = strtoull(s, 0, 0);
+    if ((s = getenv("NMD_PLOT_FRAME"))) plot_frame = strtol(s, 0, 0);
     if ((s = getenv("NMD_TRACE"))) {
         trace_file = fopen(s, "wb");
         if (!trace_file)
@@ -225,6 +292,10 @@ static void setup(void)
 static void finish(void)
 {
     flush_events();
+    if (vdpsig_file) {
+        fclose(vdpsig_file);
+        vdpsig_file = 0;
+    }
     if (trace_file) {
         fclose(trace_file);
         trace_file = 0;
@@ -240,6 +311,34 @@ static void finish(void)
     }
 }
 
+/* The vertical-scroll path, when asked for (NMD_VDPSIG=file, NMD_VDPSIG_FROM/TO in
+   half-MCLK): one text line per change of the VDP's two vertical-scroll latches
+   (l184, l185), of the flag that picks between them in full-screen mode (l178), and
+   of VSRAM words 0 and 1, plus every /HSYNC fall, each with the die's H and V counters
+   (l106, l105) -- so where in a line a scroll value is taken can be read from the
+   die model itself, not inferred. */
+static int vs_l184 = -1, vs_l185 = -1, vs_l178 = -1, vs_w0 = -1, vs_w1 = -1, vs_hsync = 1;
+
+static void vdpsig_sample(void)
+{
+    const vdp_t *v = &ym.vdp;
+    if (!vdpsig_file || mcycles < vdpsig_from || mcycles >= vdpsig_to)
+        return;
+    if (vs_hsync && !v->o_hsync)
+        fprintf(vdpsig_file, "%llu H 0 %d %d\n", (unsigned long long)mcycles, v->l106[1], v->l105[1]);
+    vs_hsync = v->o_hsync;
+    if (v->l184 != vs_l184)
+        fprintf(vdpsig_file, "%llu L184 %d %d %d\n", (unsigned long long)mcycles, vs_l184 = v->l184, v->l106[1], v->l105[1]);
+    if (v->l185 != vs_l185)
+        fprintf(vdpsig_file, "%llu L185 %d %d %d\n", (unsigned long long)mcycles, vs_l185 = v->l185, v->l106[1], v->l105[1]);
+    if (v->l178[1] != vs_l178)
+        fprintf(vdpsig_file, "%llu L178 %d\n", (unsigned long long)mcycles, vs_l178 = v->l178[1]);
+    if (v->vsram[1] != vs_w1)
+        fprintf(vdpsig_file, "%llu W1 %d %d %d\n", (unsigned long long)mcycles, vs_w1 = v->vsram[1], v->l106[1], v->l105[1]);
+    if (v->vsram[0] != vs_w0)
+        fprintf(vdpsig_file, "%llu W0 %d %d %d\n", (unsigned long long)mcycles, vs_w0 = v->vsram[0], v->l106[1], v->l105[1]);
+}
+
 /* Called once per half-MCLK, after md.c has resolved every bus. */
 void Audio_Update(void)
 {
@@ -247,6 +346,8 @@ void Audio_Update(void)
 
     if (!inited)
         setup();
+
+    vdpsig_sample();
 
     for (i = 0; i < presses; i++)
         if (mcycles == press_at[i])
