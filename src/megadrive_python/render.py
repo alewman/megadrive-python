@@ -358,7 +358,6 @@ class Renderer:
         registers = vdp.registers
         size = registers[16]
         two_cell = bool(registers[11] & 4)
-        vsram = vdp.vsram
         words = vdp.vsram_words
         # Register 2 bits 5-3 are plane A's A15-A13 and register 4 bits 2-0 plane B's
         # (CMD ``genvdp.txt``), so both bases mask to 0xE000.
@@ -372,7 +371,7 @@ class Renderer:
                 x = first & ~15
                 while x < last:
                     index = (x >> 4) * 2 + plane
-                    vscroll = vsram[index] if index < words else 0
+                    vscroll = vdp.column_scroll(index) if index < words else 0
                     self._plane_columns(line, base, screen_row + vscroll, size, scroll,
                                         im2, window_bug, max(x, first),
                                         min(x + 16, last))  # fmt: skip
@@ -544,13 +543,14 @@ class Renderer:
         self._line_start = vdp.line_start
         self.pending = True
 
-    def catch_up(self, offset: int, output: bool = False) -> None:
+    def catch_up(self, offset: int, output: bool = False, limit: int | None = None) -> None:
         """Draw the line under way up to the pixel ``offset`` master clocks into it.
 
         Called by the VDP before anything the rest of the line is drawn from changes
         (:mod:`megadrive_python.vdp`, ``_slot`` and ``_write_register``). ``output``:
         the change acts where the colour is looked up, which runs ``OUTPUT_DELAY``
         pixels behind the H counter, so it takes effect that much further left.
+        ``limit``: a pixel not to draw past yet (a 2-cell column still to be latched).
         """
         if not self.pending or self.vdp.line_start != self._line_start:
             return
@@ -558,6 +558,8 @@ class Renderer:
         x = mode.position(offset) - mode.display_at
         if output:
             x -= OUTPUT_DELAY[mode.name]
+        if limit is not None:
+            x = min(x, limit)
         self._draw_to(x)
 
     def finish_line(self) -> None:

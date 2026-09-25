@@ -168,7 +168,7 @@ source, the way sms-python does.
     model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
     with 64 words, returns the words themselves and fails those tests.
 23. **Full-screen vertical scroll is latched once a line, at the end of the line
-    before.** Plane A's word at internal H $149 and plane B's at $143 in H40 ($109
+    before; 2-cell column scroll once a line, column by column.** Plane A's word at internal H $149 and plane B's at $143 in H40 ($109
     and $103 in H32), the last pixels before the V counter increments; display line
     v is drawn from what was latched on line v - 1, and a VSRAM write made during a
     line -- including in the horizontal blank that precedes its display -- reaches
@@ -184,8 +184,19 @@ source, the way sms-python does.
     also untested (forum t=1291). The board read VSRAM as it stood whenever it drew,
     so a write early in a line split that line in two; Overdrive 2's fractal zoom
     (frames 7,066-7,598) writes VSRAM every line and was drawn chopped because of it.
-    Not measured: the 2-cell column mode (still read as it stands, per column),
-    interlace mode 2, and a line with the display off.
+    **In 2-cell column mode each column's word is latched once a line, during the
+    line itself**, as the column is fetched: plane A's column k at the die's H counter
+    16k + 1 and plane B's at 16k + 9, in both modes, and display line v shows what
+    counter line v latched (224 of 224 lines for columns 0, 10 and 19 in H40 and 0, 8
+    and 15 in H32; ``scripts/run_vscroll_columns.py``). In the board's H40 counter that
+    is 16k - 2 and 16k + 6 (the die counts three above it, item 20), so plane A's column
+    0 is latched in the blank just before the display. A write landing after a column's
+    latch reaches it on the next line; one landing before reaches the whole column --
+    including, for plane B, a write that lands after the board has begun drawing the
+    column, since the die outputs it about 21 pixels later (item 20), after its latch.
+    The board read the column's word as it stood whenever it drew and split such
+    columns in two (7 to 20 of 224 lines on the test cartridge; none since).
+    Not measured: interlace mode 2, and a line with the display off.
 
 ## The pads and the I/O chip
 

@@ -85,3 +85,43 @@ def test_no_line_changes_plane_row_part_way_along() -> None:
     colours = [{p for p in row if p in (0xFF0000, 0x00FF00)} for row in rows]
     assert all(len(seen) == 1 for seen in colours)
     assert {0xFF0000} in colours and {0x00FF00} in colours
+
+
+def _two_cell():
+    vdp = _vdp()
+    vdp.registers[11] = 0x04  # 2-cell column vertical scroll
+    return vdp
+
+
+def test_a_column_write_before_its_latch_reaches_the_same_line() -> None:
+    """Plane A's column 10 is latched at the board's H $09E in H40 (the die's 161)."""
+    vdp = _two_cell()
+    _at(vdp, 0x092)  # a slot before column 10's latch
+    vdp._vsram_store(20, 0x40)
+    assert vdp.column_scroll(20) == 0x40
+
+
+def test_a_column_write_after_its_latch_waits_a_line() -> None:
+    vdp = _two_cell()
+    vdp.vsram[20] = 0x11
+    _at(vdp, 0x0A2)  # the slot after column 10's latch
+    vdp._vsram_store(20, 0x22)
+    assert vdp.column_scroll(20) == 0x11  # what this line's column 10 is drawn from
+    vdp._next_line()
+    assert vdp.column_scroll(20) == 0x22
+
+
+def test_the_line_is_not_drawn_into_a_column_still_to_be_latched() -> None:
+    """Plane B's column k is latched six pixels into it (H40), after the board has
+    begun drawing it: a write landing before the latch holds the drawing at the
+    column's first pixel, so the whole column takes the new value, as on the die."""
+    from megadrive_python.vdp import WRITE_VSRAM
+
+    vdp = _two_cell()
+    _at(vdp, 0x0A2)  # column 10 begins at pixel 160; plane B latches it at $0A6
+    assert vdp._column_limit(WRITE_VSRAM, 2 * 21) == 160
+    _at(vdp, 0x0B2)
+    assert vdp._column_limit(WRITE_VSRAM, 2 * 21) is None
+    vdp.registers[11] = 0x00
+    _at(vdp, 0x0A2)
+    assert vdp._column_limit(WRITE_VSRAM, 2 * 21) is None  # full-screen: no columns

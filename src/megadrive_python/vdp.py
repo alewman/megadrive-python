@@ -303,6 +303,16 @@ def _idle_slots(mode: HMode) -> list[int]:
 #: hardware-captured covers the question.
 VSCROLL_LATCH_H = {"H40": (0x149, 0x143), "H32": (0x109, 0x103)}
 
+#: Where in its line each 2-cell column's vertical scroll is latched, as (the board's
+#: internal H for column 0, the step per column), planes A and B: column k's word at
+#: first + 16k. Nuked-MD latches plane A's column k at its H counter 16k + 1 and plane
+#: B's at 16k + 9, in both modes, and display line v shows what counter line v latched
+#: (224 of 224 lines, columns 0, 10 and 19 in H40, 0, 8 and 15 in H32); its H40
+#: counter runs three above the board's (docs/undocumented-behavior.md VDP item 20),
+#: so H40's column 0 of plane A is the board's $1FE, in the blank before the display.
+#: docs/worklog.md, "The 2-cell column latch".
+VSCROLL_COLUMN_H = {"H40": ((0x1FE, 16), (0x006, 16)), "H32": ((0x001, 16), (0x009, 16))}
+
 #: Internal H of display pixel 0 (``HMode.display_at``).
 _DISPLAY_START = {"H32": 0x000, "H40": 0x000}
 
@@ -423,6 +433,11 @@ class VDP:
         #: What a plane's word held before a write landed after that plane's latch point
         #: in the current line, which is what the latch took; None when no write has.
         self._vscroll_before = [None, None]
+        #: The same for 2-cell column scroll, word by word: each column's word is
+        #: latched once a line, during that line, as the column is fetched
+        #: (``VSCROLL_COLUMN_H``), so a write after that point in the line reaches the
+        #: column on the next line. None where no such write has landed.
+        self._column_before: list[int | None] = [None] * 40
         # Command state (Exodus _commandCode, _commandAddress, _originalCommandAddress).
         self.code = 0
         self.address = 0
@@ -618,6 +633,10 @@ class VDP:
             before = self._vscroll_before[plane]
             self.vscroll_latch[plane] = self.vsram[plane] if before is None else before
             self._vscroll_before[plane] = None
+        # Every 2-cell column is latched afresh in the line now starting.
+        column_before = self._column_before
+        for index in range(40):
+            column_before[index] = None
         vmode = self.vmode
         new_v = vmode.next(self.v, self.interlace, self.odd)
         self.previous_v = self.v
@@ -803,7 +822,11 @@ class VDP:
             # (``render.OUTPUT_DELAY``); everything else here is drawn at the slot's pixel.
             entry = fifo[self.fifo_read]
             code = entry[0] if entry[4] else self.code
-            self.renderer.catch_up(self.mclk - self.line_start, output=(code & 0x0F) == WRITE_CRAM)
+            self.renderer.catch_up(
+                self.mclk - self.line_start,
+                output=(code & 0x0F) == WRITE_CRAM,
+                limit=self._column_limit(code, entry[1] if entry[4] else self.address),
+            )
         dmd = self.registers[23] >> 6
         while (
             self.code & 0x20 and dmd < 2 and self.transfer_active
@@ -908,13 +931,48 @@ class VDP:
                 self.transfer_next_read = self.mclk
 
     def _vsram_store(self, index: int, value: int) -> None:
-        """Store one VSRAM word, keeping what the vertical scroll latch took if the write
-        lands after the latch point of its plane (see :attr:`vscroll_latch`)."""
+        """Store one VSRAM word, keeping what the vertical scroll latches took if the
+        write lands after the latch point of its plane (see :attr:`vscroll_latch`) or,
+        in 2-cell column mode, of its column (:meth:`column_scroll`)."""
+        offset = self.mclk - self.line_start
+        mode = self.hmode
         if index < 2 and self._vscroll_before[index] is None:
-            latch_h = VSCROLL_LATCH_H[self.hmode.name][index]
-            if self.mclk - self.line_start > self.hmode.offset_of[latch_h]:
+            latch_h = VSCROLL_LATCH_H[mode.name][index]
+            if offset > mode.offset_of[latch_h]:
                 self._vscroll_before[index] = self.vsram[index]
+        if index < 40 and self._column_before[index] is None:
+            first, per_column = VSCROLL_COLUMN_H[mode.name][index & 1]
+            latch_h = (first + (index >> 1) * per_column) & 0x1FF
+            at = mode.offset_of.get(latch_h)
+            if at is not None and offset > at:
+                self._column_before[index] = self.vsram[index]
         self.vsram[index] = value
+
+    def _column_limit(self, code: int, address: int) -> int | None:
+        """For a 2-cell VSRAM write that lands before its column's latch: that column's
+        first pixel, which the line may not be drawn past yet.
+
+        The board draws a column from its first pixel on, but the die outputs it about
+        21 pixels later (``render.OUTPUT_DELAY``), after its latch -- which for plane B
+        falls 6 (H40) or 9 (H32) pixels into the column. A write landing between the two
+        reaches the whole column on the die; drawing only up to the column keeps the
+        board from splitting it."""
+        if (code & 0x0F) != WRITE_VSRAM or not self.registers[11] & 0x04:
+            return None
+        index = (address & 0x7E) >> 1
+        if index >= 40:
+            return None
+        mode = self.hmode
+        first, per_column = VSCROLL_COLUMN_H[mode.name][index & 1]
+        at = mode.offset_of.get((first + (index >> 1) * per_column) & 0x1FF)
+        if at is None or self.mclk - self.line_start > at:
+            return None
+        return (index >> 1) * 16
+
+    def column_scroll(self, index: int) -> int:
+        """The 2-cell column scroll word ``index`` as the line being drawn latched it."""
+        before = self._column_before[index] if index < 40 else None
+        return self.vsram[index] if before is None else before
 
     def _read_cache(self) -> None:
         """Fill the read buffer (Exodus ``PerformReadCacheOperation``, General.cpp
