@@ -158,13 +158,15 @@ def main() -> int:
         "--verify", action="store_true", help="check what is present; fetch nothing"
     )
     parser.add_argument("--no-repos", action="store_true", help="skip the git repositories")
+    parser.add_argument("--no-files", action="store_true",
+                        help="skip the pinned files (with --repo: just those repos)")  # fmt: skip
     parser.add_argument("--large", action="store_true", help="also the entries over 50 MB")
     parser.add_argument("--only", action="append",
                         help="only the files whose path starts with this (repeatable)")  # fmt: skip
     parser.add_argument("--repo", action="append",
                         help="only these repositories, by name (repeatable)")  # fmt: skip
     args = parser.parse_args()
-    problems = fetch_files(args.verify, args.large, args.only)
+    problems = 0 if args.no_files else fetch_files(args.verify, args.large, args.only)
     if not args.no_repos or args.repo:
         problems += fetch_repos(args.verify, args.repo)
     print("all pins satisfied" if not problems else f"{problems} problem(s)")

@@ -48,8 +48,11 @@ jobs:
       # Milestone 4's judges are die-derived models, which have to be built and run:
       # three small source trees at their pinned revisions, then one gcc each
       # (validation/build_referees.sh). Their binaries are referees, never shipped.
+      # --no-files: this step is for the three trees alone. Without it, it fetched
+      # every pinned file too, and failed from milestone 8 on, when a pin that only
+      # this machine's No-Intro mirror can supply (MD Soft Checker) was added.
       - run: |
-          python scripts/fetch_references.py --no-repos \
+          python scripts/fetch_references.py --no-files \
             --repo Nuked-OPN2 --repo Nuked-PSG --repo YM2608-LLE
           sh validation/build_referees.sh
       - run: python -m pytest -q
