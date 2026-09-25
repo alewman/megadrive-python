@@ -183,9 +183,11 @@ def _to_active_line(vdp: VDP) -> int:
 
 
 def test_a_cram_write_in_the_display_leaves_a_dot() -> None:
-    """A CRAM write during the active display shows the colour written for the pixel of
-    its access slot (docs/undocumented-behavior.md, "The VDP" item 5), and one made in
-    the horizontal blank does not."""
+    """A CRAM write during the active display shows the colour written for one pixel
+    (docs/undocumented-behavior.md, "The VDP" item 5) -- 21 pixels left of the pixel its
+    access slot's H counter names in H40, where the colour output runs behind the
+    counter (item 20, measured on Nuked-MD) -- and one made in the horizontal blank
+    does not."""
     system = _display_machine()
     vdp = system.vdp
     renderer = vdp.renderer
@@ -198,7 +200,7 @@ def test_a_cram_write_in_the_display_leaves_a_dot() -> None:
     dots = renderer._dots[row]
     assert len(dots) == 1, dots
     x, colour = dots[0]
-    assert 118 <= x <= 135, x  # the next access slot after pixel 120
+    assert 97 <= x <= 114, x  # the next access slot after pixel 120, less 21
     assert colour == 0xFFFFFF
 
     # The same write during the horizontal blank leaves nothing.

@@ -57,6 +57,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .vdp import VDP
 
+#: How many pixels the picture's output runs behind the H counter, by mode: a change
+#: that acts where the colour is looked up (a CRAM write, the backdrop index in
+#: register 7) shows that many pixels left of the pixel the H counter names when it
+#: lands. Nuked-MD shows a CRAM write committed at its H counter h from output pixel
+#: h - 24 in both modes, and its H40 slots are numbered three above the board's
+#: (the board's $042 is its $045); so 21 in H40 and 24 in H32, which puts H40's slot
+#: $012 at X = -3 -- Kabuto's figure for it ("Access timing"), a hardware
+#: measurement the die model agrees with. docs/worklog.md, "Where a mid-line write
+#: shows". Changes that act where tiles are fetched are not delayed: not measured.
+OUTPUT_DELAY = {"H40": 21, "H32": 24}
+
 #: The VDP's measured output levels, 0-255, for the 15 steps of its DAC ramp
 #: (Plutiedev ``vdp-color-ramp``: "In a scale from 0 to 255, the approximate values
 #: are: 0, 29, 52, 70, 87, 101, 116, 130, 144, 158, 172, 187, 206, 228, 255. The normal
@@ -533,16 +544,21 @@ class Renderer:
         self._line_start = vdp.line_start
         self.pending = True
 
-    def catch_up(self, offset: int) -> None:
+    def catch_up(self, offset: int, output: bool = False) -> None:
         """Draw the line under way up to the pixel ``offset`` master clocks into it.
 
         Called by the VDP before anything the rest of the line is drawn from changes
-        (:mod:`megadrive_python.vdp`, ``_slot`` and ``_write_register``).
+        (:mod:`megadrive_python.vdp`, ``_slot`` and ``_write_register``). ``output``:
+        the change acts where the colour is looked up, which runs ``OUTPUT_DELAY``
+        pixels behind the H counter, so it takes effect that much further left.
         """
         if not self.pending or self.vdp.line_start != self._line_start:
             return
         mode = self.vdp.hmode
-        self._draw_to(mode.position(offset) - mode.display_at)
+        x = mode.position(offset) - mode.display_at
+        if output:
+            x -= OUTPUT_DELAY[mode.name]
+        self._draw_to(x)
 
     def finish_line(self) -> None:
         """Draw whatever is left of the line under way."""
@@ -575,7 +591,7 @@ class Renderer:
             # The display was turned off part way along the line: the rest is the
             # backdrop, as the border stage gives (Kabuto, "Effects of 'disable
             # display'"; what the planes really show there is not modelled).
-            backdrop = self._backdrop
+            backdrop = self.vdp.registers[7] & 0x3F
             out = self._out
             for x in range(first, last):
                 out[x] = backdrop
@@ -588,8 +604,11 @@ class Renderer:
             self.cram_dirty = False
             self._palettes[self._row].append((first, self._palette))
         self._plane_span(first, last)
+        # The backdrop index is read as it stands: a mid-line write to register 7
+        # changes the rest of the line (Nuked-MD; docs/worklog.md, "Where a mid-line
+        # write shows"), where the board used to keep the line's first value.
         self._mix(self._out, self._line_a, self._line_b, self._line_s, first, last,
-                  self._backdrop)  # fmt: skip
+                  self.vdp.registers[7] & 0x3F)  # fmt: skip
         self._drawn = last
 
     # -- the mixer ----------------------------------------------------------------

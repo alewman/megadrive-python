@@ -138,13 +138,22 @@ source, the way sms-python does.
     refresh. The board follows the two hardware-tier sources, which puts its DMA
     rates on Kabuto's measured formulas and reproduces the Manual's whole table
     ([timing.md](timing.md); milestone 5).
-20. **Where a mid-line write lands.** The board draws a line in pieces and lets a
-    write take effect from the pixel its access slot's H counter names (the active
-    display being internal H $000 onwards). Kabuto places the second of a line's
-    mid-tiles slots "at the pixel with X=-3 (display area coordinates)", which would
-    put the output about 21 pixels behind the H counter -- a pipeline delay the board
-    does not model. Nothing pinned measures it directly, and r57shell's redraw-timing
-    tests, which would, cannot be reached until the 6-button pad exists (milestone 7).
+20. **Where a mid-line write lands.** The board draws a line in pieces, and a change
+    takes effect from the pixel the H counter names when it lands -- except a change
+    that acts where the colour is looked up, which shows **21 pixels further left in
+    H40 and 24 in H32**, because the colour output runs behind the H counter. Kabuto
+    measured one slot of it: H40's second mid-tiles slot "happens at the pixel with
+    X=-3 (display area coordinates)" ("Access timing"), where the board used to put
+    it at 18. Nuked-MD (die-derived) gives the rest: a CRAM write committed at its H
+    counter h shows from output pixel h - 24 on 153 of 154 lines in H40 and 155 of 158
+    in H32, and its H40 slots are numbered three above the board's (the board's $042
+    is its $045), which makes 21 and 24 in the board's terms and puts that slot at
+    -3, as Kabuto has it. A write to register 7 (the backdrop index) shows at the same
+    place, and changes the rest of the line where the board used to keep the line's
+    first value (``scripts/run_output_delay.py``). Both are modelled
+    (``render.OUTPUT_DELAY``). **Not measured**: changes that act where tiles are
+    fetched -- VRAM, the plane and scroll registers -- which the fetch runs ahead of the
+    output by some amount; they still take effect at the H counter's pixel.
 22. **Register $00 bit 0 turns off display generation altogether**, which is not the
     same as blanking: "Setting bit 0 actually turns off all display generation, as
     opposed to the screen blanking feature which simply shows the backdrop color"

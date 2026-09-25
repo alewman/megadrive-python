@@ -500,7 +500,9 @@ class VDP:
         # A register write reaches the VDP at once, not through the FIFO, so it too
         # lands part way along the line being drawn.
         if self.renderer.pending:
-            self.renderer.catch_up(self.mclk - self.line_start)
+            # The backdrop index acts where the colour is looked up, at the output,
+            # which runs behind the H counter (``render.OUTPUT_DELAY``).
+            self.renderer.catch_up(self.mclk - self.line_start, output=number == 7)
         old = self.registers[number]
         self.registers[number] = value
         if number == 0 and (value ^ old) & 0x02 and value & 0x02:
@@ -795,10 +797,14 @@ class VDP:
         Anything written here lands part way along the line being drawn, so the
         renderer is brought up to this slot's pixel first (milestone 5).
         """
-        if self.renderer.pending:
-            self.renderer.catch_up(self.mclk - self.line_start)
-        dmd = self.registers[23] >> 6
         fifo = self.fifo
+        if self.renderer.pending:
+            # A CRAM write acts at the output, which runs behind the H counter
+            # (``render.OUTPUT_DELAY``); everything else here is drawn at the slot's pixel.
+            entry = fifo[self.fifo_read]
+            code = entry[0] if entry[4] else self.code
+            self.renderer.catch_up(self.mclk - self.line_start, output=(code & 0x0F) == WRITE_CRAM)
+        dmd = self.registers[23] >> 6
         while (
             self.code & 0x20 and dmd < 2 and self.transfer_active
             and (not self.transfer_cached or not self._fifo_full())
