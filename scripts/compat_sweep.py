@@ -118,11 +118,21 @@ def _live_vscroll(board) -> None:
     renderer._plane_span = live
 
 
+def _live_columns(board) -> None:
+    """Undo the 2-cell column latch (docs/undocumented-behavior.md, VDP item 23): each
+    column's word is read as it stands whenever it is drawn, and the drawing is never
+    held back for a column still to be latched, as the board drew before it."""
+    vdp = board.vdp
+    vdp.column_scroll = lambda index: vdp.vsram[index]
+    vdp._column_limit = lambda code, address: None
+
+
 DISABLE = {
     "work_refresh": lambda board: setattr(board, "ram_refresh_due", 1 << 62),
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
     "arbiter": lambda board: setattr(board, "arbiter_enabled", False),
     "vscroll_latch": _live_vscroll,
+    "column_latch": _live_columns,
 }
 #: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
 #: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the

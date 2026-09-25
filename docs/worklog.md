@@ -4109,3 +4109,66 @@ changes in 180 pixels, all in its left quarter, where its mid-line CRAM dots now
 
 Both suites after it: **113 passed, 1 deselected** (PyPy 183 s, CPython 450 s); ruff
 check and format clean.
+
+### The 2-cell column latch
+
+Item 23 had left 2-cell column scroll unmeasured, and the board still read each
+column's word as it stood whenever it drew -- so it split columns the way it had split
+full-screen lines. It is also where tile fetching's lead over the output (the half of
+item 20 left open) shows first.
+
+`scripts/run_vscroll_columns.py`: a cartridge like the latch one, with 2-cell column
+scroll, every VSRAM word 0, and each line's write aimed at **one** column's word.
+Because only that word ever changes, the die's column-scroll latch `l185` takes 128
+exactly when it latches that column, so the log names the moment, and the picture
+says which value each line used. `NMD_VSRAM_WATCH` makes the log watch any one VSRAM
+word.
+
+| plane, mode | die H of column k's latch | columns measured | line v shows counter line v's latch |
+| --- | --- | --- | ---: |
+| A, H40 | 16k + 1 | 0, 10, 19 | 224 / 224 each |
+| B, H40 | 16k + 9 | 0, 10 | 224 / 224 each |
+| A, H32 | 16k + 1 | 0, 8, 15 | 224 / 224 each |
+| B, H32 | 16k + 9 | 8 | 224 / 224 |
+
+So each column is latched during its own line, 16 pixels after the one before, and
+the referee never splits a column. A first check of the rule from write positions
+missed the same lines for every column; it was the check that was wrong (the most
+common write position over three frames, and H values compared without the counter's
+wrap), and reading the latched value straight from `l185` line by line gave 224/224.
+
+The board now keeps, word by word, what a column's word held when a write landed
+after that column's latch in the current line (`VDP._column_before`, cleared at
+`_next_line`), and draws 2-cell columns from `VDP.column_scroll`. The latch points,
+in the board's counter (the die's H40 counts three above it), are
+`VSCROLL_COLUMN_H`: plane A 16k - 2 and plane B 16k + 6 in H40, 16k + 1 and 16k + 9 in
+H32.
+
+That alone left plane B splitting (7 lines in H40, 20 in H32): its latch falls 6 or 9
+pixels *into* the column, after the board has begun drawing it, while the die outputs
+the column about 21 pixels later (item 20), after the latch. So a slot committing a
+2-cell VSRAM write before its column's latch now holds the drawing at that column's
+first pixel (`VDP._column_limit`, `catch_up(limit=)`), and the whole column takes the
+value the latch will.
+
+| board against referee, lines matching / split | before | after |
+| --- | --- | --- |
+| A H40 column 0 | 207 / 0 | 222 / 0 |
+| A H40 column 10 | 216 / 7 | 223 / 0 |
+| A H40 column 19 | 219 / 0 | 219 / 0 |
+| B H40 column 10 | 216 / 7 | 223 / 0 |
+| A H32 column 8 | 202 / 20 | 222 / 0 |
+| B H32 column 8 | 201 / 20 | 220 / 0 |
+
+(The remaining lines are the 68000's polling phase, a slot either way, as before.)
+
+Checks: sprite masking 0 of 18, r57shell identical, `scripts/run_vscroll_columns.py`
+passing on all nine cases (board 218-224 of 224 lines, no split), both suites **116
+passed, 1 deselected** (the three new column tests; PyPy 178 s, CPython 460 s).
+
+**The re-sweep moved nothing**: `--seconds 10 --jobs 16 --window 12 --offsets --out
+tests/compat/megadrive-2cell.csv`, 14,719 s, 0 of 3,514 rows different from the sweep
+before it, in status or in pixel count. The romset's 2-cell games do not, at the frame
+the sweep compares, write a column's word in the window the two rules disagree on. The
+triage knob is there for when one does: `disable="column_latch"` reads each column's
+word as it stands again and never holds the drawing back.
