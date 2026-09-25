@@ -158,6 +158,25 @@ source, the way sms-python does.
     in full-screen vertical scroll; entries $26 AND $27 past the end): Exodus's
     model, which VDPFIFOTesting's DMA Fill to VSRAM tests judge. A Genesis 3,
     with 64 words, returns the words themselves and fails those tests.
+23. **Full-screen vertical scroll is latched once a line, at the end of the line
+    before.** Plane A's word at internal H $149 and plane B's at $143 in H40 ($109
+    and $103 in H32), the last pixels before the V counter increments; display line
+    v is drawn from what was latched on line v - 1, and a VSRAM write made during a
+    line -- including in the horizontal blank that precedes its display -- reaches
+    the picture only on the line after. Measured on Nuked-MD, which is **die-derived**
+    and judges here because nothing hardware-captured covers the question: its two
+    VSRAM-to-scroll latches (``l184`` for A, ``l185`` for B) change at those counts on
+    640 of 640 lines, no line of its picture changes plane row part way along, and 224
+    of 224 lines show the latch of the line before
+    (``scripts/run_vscroll_latch.py``). Neither emulator source settles it: BlastEm
+    latches at one H40 slot and says it is untested ("TODO: Develop some tests on
+    hardware to see when vscroll latch actually happens for full plane mode",
+    ``vdp.c`` 3611), and Nemesis "believe[d]" it is re-read at every mapping slot,
+    also untested (forum t=1291). The board read VSRAM as it stood whenever it drew,
+    so a write early in a line split that line in two; Overdrive 2's fractal zoom
+    (frames 7,066-7,598) writes VSRAM every line and was drawn chopped because of it.
+    Not measured: the 2-cell column mode (still read as it stands, per column),
+    interlace mode 2, and a line with the display off.
 
 ## The pads and the I/O chip
 

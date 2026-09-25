@@ -367,8 +367,11 @@ class Renderer:
                                         min(x + 16, last))  # fmt: skip
                     x += 16
             else:
-                self._plane_columns(line, base, screen_row + vsram[plane], size, scroll,
-                                    im2, window_bug, first, last)  # fmt: skip
+                # Full-screen: the value latched at the end of the line before, not
+                # VSRAM as it stands (:attr:`VDP.vscroll_latch`).
+                self._plane_columns(line, base, screen_row + vdp.vscroll_latch[plane],
+                                    size, scroll, im2, window_bug, first,
+                                    last)  # fmt: skip
         if window_last >= window_first:
             # "Plane A is not shown in any column where plane W is shown" (CMD).
             self._window_line(self._line_a, width, screen_row, window_first, window_last,

@@ -296,6 +296,13 @@ def _idle_slots(mode: HMode) -> list[int]:
     return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in refresh)
 
 
+#: Where in a line the full-screen vertical scroll is latched, by internal H counter,
+#: planes A and B: the last pixels before the V counter increments (Nuked-MD's
+#: ``l184``/``l185``, measured with a test cartridge on the referee; docs/worklog.md,
+#: "The vertical scroll latch"). Die-derived, the tier that judges where nothing
+#: hardware-captured covers the question.
+VSCROLL_LATCH_H = {"H40": (0x149, 0x143), "H32": (0x109, 0x103)}
+
 #: Internal H of display pixel 0 (``HMode.display_at``).
 _DISPLAY_START = {"H32": 0x000, "H40": 0x000}
 
@@ -405,6 +412,17 @@ class VDP:
         self.vsram_words = machine.vdp.vsram_bytes // 2
         self.hv_unit = HV_UNITS[machine.hv_reads]
         self.vsram = [0] * 64
+        #: Planes A and B's full-screen vertical scroll as the line being drawn took it.
+        #: The VDP latches each once a line, at the end of the line before (internal H
+        #: $149 for plane A and $143 for plane B in H40, $109 and $103 in H32: Nuked-MD,
+        #: whose VSRAM-to-scroll latches ``l184`` and ``l185`` change there and nowhere
+        #: else, and whose picture never changes plane row part way along a line --
+        #: docs/worklog.md, "The vertical scroll latch"). A VSRAM write made during a
+        #: line therefore reaches the picture on the next one, never on its own.
+        self.vscroll_latch = [0, 0]
+        #: What a plane's word held before a write landed after that plane's latch point
+        #: in the current line, which is what the latch took; None when no write has.
+        self._vscroll_before = [None, None]
         # Command state (Exodus _commandCode, _commandAddress, _originalCommandAddress).
         self.code = 0
         self.address = 0
@@ -591,6 +609,13 @@ class VDP:
         # ends with, before the next line can change anything.
         if self.renderer.pending:
             self.renderer.finish_line()
+        # The vertical scroll latches fell in the last few pixels of this line: they
+        # took each word as it stood then, which is its value now unless a write landed
+        # after the latch point (``_vsram_store``).
+        for plane in (0, 1):
+            before = self._vscroll_before[plane]
+            self.vscroll_latch[plane] = self.vsram[plane] if before is None else before
+            self._vscroll_before[plane] = None
         vmode = self.vmode
         new_v = vmode.next(self.v, self.interlace, self.odd)
         self.previous_v = self.v
@@ -864,7 +889,7 @@ class VDP:
         elif target == WRITE_VSRAM:
             index = (address & 0x7E) >> 1
             if index < self.vsram_words:
-                self.vsram[index] = data & 0x07FF
+                self._vsram_store(index, data & 0x07FF)
             entry[4] = False
         else:
             entry[4] = False
@@ -875,6 +900,15 @@ class VDP:
                 self.fill_running = True
             if self.code & 0x20 and dmd < 2 and self.transfer_cached:
                 self.transfer_next_read = self.mclk
+
+    def _vsram_store(self, index: int, value: int) -> None:
+        """Store one VSRAM word, keeping what the vertical scroll latch took if the write
+        lands after the latch point of its plane (see :attr:`vscroll_latch`)."""
+        if index < 2 and self._vscroll_before[index] is None:
+            latch_h = VSCROLL_LATCH_H[self.hmode.name][index]
+            if self.mclk - self.line_start > self.hmode.offset_of[latch_h]:
+                self._vscroll_before[index] = self.vsram[index]
+        self.vsram[index] = value
 
     def _read_cache(self) -> None:
         """Fill the read buffer (Exodus ``PerformReadCacheOperation``, General.cpp
@@ -938,7 +972,7 @@ class VDP:
         elif target == WRITE_VSRAM:
             index = (last[1] & 0x7E) >> 1
             if index < self.vsram_words:
-                self.vsram[index] = fifo[self.fifo_read][2] & 0x07FF
+                self._vsram_store(index, fifo[self.fifo_read][2] & 0x07FF)
         self.address = (self.address + self.registers[15]) & 0xFFFF
 
     def _copy(self) -> None:
