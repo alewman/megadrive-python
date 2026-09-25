@@ -314,10 +314,11 @@ static void finish(void)
 /* The vertical-scroll path, when asked for (NMD_VDPSIG=file, NMD_VDPSIG_FROM/TO in
    half-MCLK): one text line per change of the VDP's two vertical-scroll latches
    (l184, l185), of the flag that picks between them in full-screen mode (l178), and
-   of VSRAM words 0 and 1, plus every /HSYNC fall, each with the die's H and V counters
+   of VSRAM words 0 and 1 and CRAM entry 0, plus every /HSYNC fall, each with the die's H and V counters
    (l106, l105) -- so where in a line a scroll value is taken can be read from the
    die model itself, not inferred. */
-static int vs_l184 = -1, vs_l185 = -1, vs_l178 = -1, vs_w0 = -1, vs_w1 = -1, vs_hsync = 1;
+static int vs_l184 = -1, vs_l185 = -1, vs_l178 = -1, vs_w0 = -1, vs_w1 = -1, vs_c0 = -1,
+    vs_hsync = 1;
 
 static void vdpsig_sample(void)
 {
@@ -333,6 +334,8 @@ static void vdpsig_sample(void)
         fprintf(vdpsig_file, "%llu L185 %d %d %d\n", (unsigned long long)mcycles, vs_l185 = v->l185, v->l106[1], v->l105[1]);
     if (v->l178[1] != vs_l178)
         fprintf(vdpsig_file, "%llu L178 %d\n", (unsigned long long)mcycles, vs_l178 = v->l178[1]);
+    if (v->color_ram[0] != vs_c0)
+        fprintf(vdpsig_file, "%llu C0 %d %d %d\n", (unsigned long long)mcycles, vs_c0 = v->color_ram[0], v->l106[1], v->l105[1]);
     if (v->vsram[1] != vs_w1)
         fprintf(vdpsig_file, "%llu W1 %d %d %d\n", (unsigned long long)mcycles, vs_w1 = v->vsram[1], v->l106[1], v->l105[1]);
     if (v->vsram[0] != vs_w0)
