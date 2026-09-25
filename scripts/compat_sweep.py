@@ -98,10 +98,30 @@ def compare(rows: list[list[int]], snapshot: list[list[int]]) -> tuple[int, int]
 #: What ``run_one``'s ``disable`` argument turns off, for the triage's sensitivity
 #: pass. None of it needs a change in ``src/``: both refreshes are due at a master
 #: clock the board keeps in a field, so a clock they never reach turns them off.
+def _live_vscroll(board) -> None:
+    """Undo the full-screen vertical scroll latch (docs/undocumented-behavior.md, VDP
+    item 23): the renderer reads VSRAM as it stands whenever it draws, as the board did
+    before it, by handing it the live words for the length of each draw."""
+    vdp = board.vdp
+    renderer = vdp.renderer
+    plane_span = renderer._plane_span
+
+    def live(first: int, last: int) -> None:
+        latched = vdp.vscroll_latch
+        vdp.vscroll_latch = vdp.vsram
+        try:
+            plane_span(first, last)
+        finally:
+            vdp.vscroll_latch = latched
+
+    renderer._plane_span = live
+
+
 DISABLE = {
     "work_refresh": lambda board: setattr(board, "ram_refresh_due", 1 << 62),
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
     "arbiter": lambda board: setattr(board, "arbiter_enabled", False),
+    "vscroll_latch": _live_vscroll,
 }
 #: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
 #: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the

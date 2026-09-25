@@ -155,6 +155,7 @@ def sensitivity(name: str, seconds: int, window: int) -> dict:
         "arbiter": "arbiter",
         "the DMA's start-up": "dma_startup",
         "MAME's fallback SRAM": "mame_sram",
+        "the vertical scroll latch": "vscroll_latch",
     }
     try:
         results = {}
