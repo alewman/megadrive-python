@@ -55,6 +55,7 @@ sys.path[:0] = [str(ROOT / "src"), str(Path(__file__).resolve().parent)]
 
 from mame_media import cart_arguments, mame_board  # noqa: E402
 
+from megadrive_python import render as render_module  # noqa: E402
 from megadrive_python import vdp as vdp_module  # noqa: E402
 from megadrive_python.board import Lockup  # noqa: E402
 from megadrive_python.cartridge import Cartridge, load_image  # noqa: E402
@@ -129,6 +130,11 @@ DISABLE = {
 #: game's difference in the sweep points at it"). The constant is a module global the
 #: VDP reads as it starts a transfer, so it is patched and restored around the run.
 #:
+#: ``disable="output_delay"`` takes the colour output's delay behind the H counter
+#: (``render.OUTPUT_DELAY``, docs/undocumented-behavior.md VDP item 20) back out, so a
+#: CRAM or register 7 write shows at its slot's pixel again. A module global, patched
+#: and restored like the DMA start-up.
+#:
 #: ``disable="mame_sram"`` is not a board knob but a cartridge one: it puts the
 #: board on MAME's ``rom_sramsafe``, the 64 KB of battery RAM at $200000 its file
 #: loader gives every cartridge whose header declares none (docs/mame-oracle.md,
@@ -145,6 +151,9 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     startup = vdp_module.DMA_STARTUP_MCLK
     if disable == "dma_startup":
         vdp_module.DMA_STARTUP_MCLK = 0
+    delay = dict(render_module.OUTPUT_DELAY)
+    if disable == "output_delay":
+        render_module.OUTPUT_DELAY.update(dict.fromkeys(delay, 0))
     try:
         if not path.exists():
             # The romset is symlinks into a local mirror; some point at files the
@@ -256,6 +265,7 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
         traceback.print_exc(file=sys.stderr)
     finally:
         vdp_module.DMA_STARTUP_MCLK = startup
+        render_module.OUTPUT_DELAY.update(delay)
         row["seconds"] = f"{time.time() - started:.1f}"
     return row
 

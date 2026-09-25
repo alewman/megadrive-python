@@ -4025,3 +4025,87 @@ Checks after the latch: both suites **113 passed, 1 deselected** (PyPy 172 s, CP
 
 **2,075 of 2,673 present cartridges, 77.6%** (from 77.5%), and **2,075 of the 2,598 on
 boards the emulator models, 79.9%** (from 79.8%).
+
+## Session 10 (2026-09-25): where a mid-line write shows (item 20)
+
+### The question
+
+Item 20 had been open since milestone 3: the board lets a mid-line change take effect
+from the pixel the H counter names when it lands, and Kabuto places H40's second
+mid-tiles slot "at the pixel with X=-3 (display area coordinates)" for palette writes,
+where the board put it at 18 -- a colour output running about 21 pixels behind the
+counter. It was also the one residual of the vertical scroll latch measurement. The
+referee instruments of Session 9 made it measurable.
+
+### The measurement
+
+`scripts/run_output_delay.py`: two cartridges with both planes transparent, so the
+display is the backdrop; on each line the 68000 waits (V & 63) `dbra` loops, sweeping
+across the line, then changes the backdrop's colour by V's parity -- by writing CRAM
+entry 0 (`cram`), or register 7, the backdrop's index (`reg7`). The referee's picture
+(`NMD_PLOT`; display pixel 0 is sample 154 in H40 and 130 in H32, two samples a pixel,
+read off the latch test's plots) gives the pixel where each line's colour changes, and
+`NMD_VDPSIG` now also logs CRAM entry 0 (`C0`) with the die's H counter.
+
+- **A CRAM write committed at die H counter h shows from output pixel h - 24**, on 153
+  of 154 lines in H40 and 155 of 158 in H32.
+- The die numbers H40's slots three above the board (the board's $042 is its $045,
+  the same "-4" seen in the latch work, which was therefore mostly labelling: the two
+  commit within about a pixel of each other). So in the board's terms the output runs
+  **21 pixels** behind the counter in H40 and **24** in H32, which puts H40's slot $012
+  at X = -3 and $002 at -19, in the blank -- exactly Kabuto's two statements.
+- **Register 7 behaves the same way**, shown by timing the write on the board (whose
+  68000 milestone 6 matched to the referee's): the change sits 21-25 pixels left of the
+  write's pixel in H40, spread a few pixels by the 68000's polling phase. And the
+  board had a second gap here: it read the backdrop index once, at `begin_line`, so a
+  mid-line write never showed on its own line; the referee changes colour part way
+  along 166 of 224.
+
+### The change
+
+`render.OUTPUT_DELAY = {"H40": 21, "H32": 24}`. `Renderer.catch_up` takes `output=`:
+a change acting where the colour is looked up is drawn from that many pixels further
+left. `VDP._write_register` passes it for register 7, and `VDP._slot` when the slot
+commits to CRAM (a FIFO write or a fill). The renderer now reads register 7 as it
+stands when it draws. Changes that act where tiles are fetched -- VRAM, the plane and
+scroll registers -- are **not** delayed: the fetch runs ahead of the output by an
+amount not measured here, and they stay at the H counter's pixel. The rule is
+`docs/undocumented-behavior.md` VDP item 20, rewritten.
+
+After it, referee minus board per line (`scripts/run_output_delay.py`):
+
+| | CRAM | register 7 |
+| --- | --- | --- |
+| H40 | 0 on 102 of 151 lines, the rest whole slots (+-16, +-32) | centred on 0 (mode -2), spread -7..+7 by polling phase |
+| H32 | 0 on 114 of 152, the rest whole slots | spread -7..+16, centred near 0 |
+
+The whole-slot spread is the 68000 reaching the write a slot earlier or later on some
+lines in one run than in the other (the board's frame 12 against the referee's 11th);
+before the change the CRAM mode was -21 and -24.
+
+One test pinned the old rule: `test_a_cram_write_in_the_display_leaves_a_dot` expected
+the dot at its slot's pixel (118-135 for a write at pixel 120); it now expects it 21
+further left (97-114).
+
+### What it moved
+
+Checks: the sprite masking ROM (0 of 18 cells differ), r57shell's eight tests
+(identical output), both suites (below).
+
+Re-swept (`--seconds 10 --jobs 16 --window 12 --offsets --out
+tests/compat/megadrive-delay.csv`, 14,444 s) and diffed against the post-latch sweep:
+**2 of 3,514 rows moved, and no status changed** -- `George Foreman's KO Boxing
+(Europe)` differs 44 -> 48 pixels, `Satyr in Hell, A (World) (Digital) (Aftermarket)
+(Unl)` 302 -> 320. Both are the delay and nothing else: a new knob,
+`disable="output_delay"` (`compat_sweep.py`, and in `triage_diffs.py`'s pass 2), puts
+the delay back to 0, and both return to 44 and 302. Their extra pixels are CRAM changes
+now shown where the die shows them; MAME is a detector and nothing is changed to match
+it. The totals are the post-latch sweep's: 2,075 of 2,673, 77.6%; 79.9% on the boards
+modelled.
+
+Overdrive 2: frames 9,000 and 10,000 are unchanged pixel for pixel (so 10,000's one
+blue shape against BlastEm is something else, still open); frame 9,500, the sphere,
+changes in 180 pixels, all in its left quarter, where its mid-line CRAM dots now land.
+
+Both suites after it: **113 passed, 1 deselected** (PyPy 183 s, CPython 450 s); ruff
+check and format clean.

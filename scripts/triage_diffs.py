@@ -156,6 +156,7 @@ def sensitivity(name: str, seconds: int, window: int) -> dict:
         "the DMA's start-up": "dma_startup",
         "MAME's fallback SRAM": "mame_sram",
         "the vertical scroll latch": "vscroll_latch",
+        "the colour output's delay": "output_delay",
     }
     try:
         results = {}
