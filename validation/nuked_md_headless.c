@@ -86,6 +86,7 @@ static unsigned short plot_vcount[PLOT_LINES]; /* the die's V counter at each ro
 /* the vertical-scroll log's file and window (see vdpsig_sample) */
 static FILE *vdpsig_file = 0;
 static uint64_t vdpsig_from = 0, vdpsig_to = ~0ull;
+static int vs_watch = -1; /* NMD_VSRAM_WATCH: one more VSRAM word to log */
 
 static void plot_write(void)
 {
@@ -281,6 +282,7 @@ static void setup(void)
     if ((s = getenv("NMD_VDPSIG"))) vdpsig_file = fopen(s, "w");
     if ((s = getenv("NMD_VDPSIG_FROM"))) vdpsig_from = strtoull(s, 0, 0);
     if ((s = getenv("NMD_VDPSIG_TO"))) vdpsig_to = strtoull(s, 0, 0);
+    if ((s = getenv("NMD_VSRAM_WATCH"))) vs_watch = (int)strtol(s, 0, 0);
     if ((s = getenv("NMD_PLOT_FRAME"))) plot_frame = strtol(s, 0, 0);
     if ((s = getenv("NMD_TRACE"))) {
         trace_file = fopen(s, "wb");
@@ -314,11 +316,11 @@ static void finish(void)
 /* The vertical-scroll path, when asked for (NMD_VDPSIG=file, NMD_VDPSIG_FROM/TO in
    half-MCLK): one text line per change of the VDP's two vertical-scroll latches
    (l184, l185), of the flag that picks between them in full-screen mode (l178), and
-   of VSRAM words 0 and 1 and CRAM entry 0, plus every /HSYNC fall, each with the die's H and V counters
+   of VSRAM words 0 and 1, CRAM entry 0 and (NMD_VSRAM_WATCH) any one VSRAM word, plus every /HSYNC fall, each with the die's H and V counters
    (l106, l105) -- so where in a line a scroll value is taken can be read from the
    die model itself, not inferred. */
 static int vs_l184 = -1, vs_l185 = -1, vs_l178 = -1, vs_w0 = -1, vs_w1 = -1, vs_c0 = -1,
-    vs_hsync = 1;
+    vs_hsync = 1, vs_wx = -1;
 
 static void vdpsig_sample(void)
 {
@@ -334,6 +336,8 @@ static void vdpsig_sample(void)
         fprintf(vdpsig_file, "%llu L185 %d %d %d\n", (unsigned long long)mcycles, vs_l185 = v->l185, v->l106[1], v->l105[1]);
     if (v->l178[1] != vs_l178)
         fprintf(vdpsig_file, "%llu L178 %d\n", (unsigned long long)mcycles, vs_l178 = v->l178[1]);
+    if (vs_watch >= 0 && vs_watch < 40 && v->vsram[vs_watch] != vs_wx)
+        fprintf(vdpsig_file, "%llu WX %d %d %d\n", (unsigned long long)mcycles, vs_wx = v->vsram[vs_watch], v->l106[1], v->l105[1]);
     if (v->color_ram[0] != vs_c0)
         fprintf(vdpsig_file, "%llu C0 %d %d %d\n", (unsigned long long)mcycles, vs_c0 = v->color_ram[0], v->l106[1], v->l105[1]);
     if (v->vsram[1] != vs_w1)
