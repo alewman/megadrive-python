@@ -3887,3 +3887,141 @@ look:
    Overdrive 2 forcing planes through it in windows around all four frames.
 2. **Mid-frame timing**: raster writes landing on other lines than on BlastEm.
 3. **The renderer**, drawing the right data wrongly.
+
+### The debug register was not it: three of the four frames were never broken
+
+The debug register was the first suspect for the four frames, since BlastEm's log
+cannot carry it. Recording every write Overdrive 2 makes to it on the board (25 over
+11,200 frames) settled that quickly: **frame 7,200 is drawn with it at 0** -- cleared
+at frame 7,064 and not set again until 8,128 -- while 8,400, 9,000 and 10,800 are in
+the demo's "B-masked" windows (bits 8-7-6 = 110). Every write lands in the vertical
+blank or at the frame's edge, 56-84 MCLK behind the 68000, so the missing sync on
+`$C0001C` does not matter here.
+
+"Broken by eye" had no reference behind it, so one was made. BlastEm's framebuffer
+backend does not build and its debugger will not run headless, but the pinned tree
+builds unchanged as a **libretro core with its own `Makefile.libretro`**, and a
+libretro core hands every finished frame to its frontend. A frontend of our own
+(ctypes, about 100 lines: environment calls answered, SRAM kept in a scratch
+directory rather than `~/.local`) drew BlastEm's picture of the same 31 frames the
+board was asked for, aligned to within a frame or two (the Mega Drive console scene
+appears at 7,598-7,700 on both).
+
+- **8,400, 9,000 and 10,800 are not broken.** Their "plaid" is the B-masked effect the
+  demo means, and the board draws it as BlastEm does. Three of the four "wrong frames"
+  carried since milestone 5 were a judgement made without a reference.
+- **7,200 was broken, and it is not alone**: frames 7,066-7,598 are one scene, a
+  fractal zoom into nested squares that changes colour as it goes. BlastEm draws it
+  clean; the board drew the same squares chopped vertically, with bands of vertical
+  bars at a few lines.
+
+### The vertical scroll latch
+
+The zoom sets full-screen vertical scroll on every line (two VSRAM words a line from
+an H interrupt handler, values that nearly cancel the line number, so each plane row
+is repeated for several lines -- a vertical magnification), and on the board those
+writes commit 2-66 pixels into the visible line (448 commits in frame 7,200: 177 at
+pixel 2, 215 at 18, 47 at 34, 9 at 66). The board read VSRAM as it stood whenever it
+drew, so each such line was drawn half from one value and half from the next.
+
+When the chip takes the value is not in any hardware-captured source. BlastEm latches
+once a line at H40 slot 165 and says it is untested (`vdp.c` 3611); Nemesis
+"believe[d]" it is re-read at every mapping slot and had not tested it (forum
+t=1291); Eke was "pretty sure it is fetched close to HSCROLL". By the tier rule the
+die-derived referee judges, so it was measured on Nuked-MD:
+
+- `validation/nuked_md_headless.c` gained two instruments of our own: `NMD_PLOT`, the
+  VDP's RGB pins sampled on every clock edge and framed by its own `/HSYNC` and
+  `/VSYNC` (with the V counter of each row), and `NMD_VDPSIG`, a log of every change
+  of the two VSRAM-to-scroll latches `l184` (plane A) and `l185` (plane B), of VSRAM
+  words 0 and 1, and of `/HSYNC`, each with the die's H and V counters (`l106`,
+  `l105`).
+- A test cartridge (`scripts/run_vscroll_latch.py`, hand-assembled, each encoding in
+  its comment): plane red over its top 128 rows and green below, full-screen scroll;
+  on each line the 68000 waits (V & 63) `dbra` loops, sweeping its write across the
+  whole line over 64 lines, then writes `(V & 1) << 7`. The value is fixed by V: a
+  first version toggled once a line, and the board's H40 result came out almost
+  exactly inverted because its set-up ended a line from the referee's -- a phase
+  artefact of the instrument, caught and removed before anything was concluded.
+
+Result, planes A and B, H40 and H32:
+
+| | plane A latch | plane B latch | split lines | line v shows the latch of v - 1 |
+| --- | --- | --- | ---: | ---: |
+| H40 | $149 (640 of 640) | $143 (640 of 640) | 0 | 224 / 224 |
+| H32 | $109 (640 of 640) | $103 (640 of 640) | 0 | 224 / 224 |
+
+(against 37-39 of 224 for "the latch of line v"). So the scroll is latched **once a
+line, in the last pixels before the V counter increments**, and a VSRAM write made
+during a line -- including in the horizontal blank before its display, where an H
+interrupt handler writes -- reaches the picture only on the line after.
+
+The board now does that: `VDP.vscroll_latch` holds each plane's value, set at
+`_next_line` from VSRAM as it stood at the plane's latch point (`_vsram_store` keeps
+the old word when a write lands after it), and the renderer draws full-screen scroll
+from it. The 2-cell column mode, interlace mode 2 and display-off lines are **not**
+measured and not changed. The rule is `docs/undocumented-behavior.md` VDP item 23.
+
+Against the referee on the same cartridges, the board now splits no line and matches
+**222/224 (plane A, H40), 221/224 (A, H32), 206/224 (B, H40) and 201/224 (B, H32)**
+lines. The rest is item 20, already open: the board commits a slot's write about 4
+pixels (H40) or 1 pixel (H32) before the die does (measured here per line, board H
+minus referee H: -4 on 135 of 187 H40 lines, -1 on 125 of 188 H32), and plane B's
+latch at $143 sits just after the slots at $140/$142, so a write the die places after
+it the board places before.
+
+**Overdrive 2's fractal zoom now matches BlastEm's picture**: the chopped rows and the
+bands are gone, frames 7,150-7,500 show the same squares, and the other scenes did not
+move. Frame 10,000 still differs from BlastEm in one blue shape at the top: open.
+
+### What it moved, and why
+
+Checks at the latch commit: both suites (109 passed on each interpreter, before the
+four new tests), the sprite masking ROM (0 of 18 cells differ from the MD1600), and
+r57shell's eight VDP tests (identical output before and after).
+
+The whole romset was re-swept (`scripts/compat_sweep.py --seconds 10 --jobs 16
+--window 12 --offsets --out tests/compat/megadrive-latch.csv`, 13,478 s, PyPy 3.11.15)
+and diffed row by row against the sweep before it. **10 of 3,514 rows moved**:
+
+| cartridge | before | after |
+| --- | --- | --- |
+| Batman (Europe), (Japan) (En), - The Video Game (USA) | differs 7,041 | **phase** |
+| Mega Turrican (USA) | differs 5,487 | **phase** |
+| Panorama Cotton (Japan) | differs 64,351 | **phase** |
+| ZPF (World) (Demo) (Aftermarket) (Unl) | differs 6,903 | **phase** |
+| Vectorman (USA, Europe), (Beta 1), (Beta 2) | phase 2,159 | differs 2,836 |
+| McDonald's Treasure Land Adventure (USA) | differs 10,647 | differs 10,682 |
+
+**Every move is the latch and nothing else**: a new sensitivity knob,
+`disable="vscroll_latch"` (`scripts/compat_sweep.py`, also in `triage_diffs.py`'s
+pass 2), hands the renderer live VSRAM again, and with it all ten rows return to
+their old status and pixel count exactly.
+
+The four that moved away from MAME are the pattern the referee measured. Both games
+write plane B's full-screen word once a line during the display -- Vectorman at H $12
+(about pixel 18) on 209 of 224 lines, McDonald's at H $62/$82 (pixels 98-130, the
+middle of the line) -- so the board used to split those lines, and now draws each
+from the latch of the line before, as the die does. MAME draws a line at one moment of
+its own choosing and agrees with neither. MAME is a detector; nothing is changed to
+match it.
+
+**One of them was put to the judge directly.** Nuked-MD ran `Vectorman (USA,
+Europe)` for 600 frames (38 minutes; the picture taken with `NMD_PLOT`), and the
+board's frames 594-605 were compared with it line by line, at the best horizontal
+offset and colour mapping. With the latch, board frame 601 equals the referee's frame
+**on 224 of 224 lines**; with the live read (`disable="vscroll_latch"`), the best is
+75 of 224, on the same frame and offset. So the row the sweep counts as having moved
+away from MAME moved onto the die: Vectorman's `differs` is MAME's.
+
+Checks after the latch: both suites **113 passed, 1 deselected** (PyPy 172 s, CPython
+449 s); ruff check and format clean.
+
+| status | before | after |
+| --- | ---: | ---: |
+| `same` | 1,610 | 1,610 |
+| `phase` | 462 | **465** |
+| `differs` | 261 | **258** |
+
+**2,075 of 2,673 present cartridges, 77.6%** (from 77.5%), and **2,075 of the 2,598 on
+boards the emulator models, 79.9%** (from 79.8%).
