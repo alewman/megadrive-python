@@ -55,15 +55,23 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def download(url: str, attempts: int = 1) -> bytes:
-    for attempt in range(attempts):
+#: Seconds to wait before each retry of a mirror. The Wayback Machine refuses
+#: connections for a while after a burst -- three CI jobs fetching at once were enough
+#: (2026-09-26: two files failed in each of two jobs with retries of 5 and 10 s).
+MIRROR_BACKOFF = (10, 20, 40, 60, 60)
+#: Seconds between two mirror downloads, so that one fetch is not a burst of its own.
+MIRROR_PACE = 2
+
+
+def download(url: str, backoff: tuple[int, ...] = ()) -> bytes:
+    for wait in (*backoff, None):
         try:
             with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
                 return response.read()
         except OSError:
-            if attempt == attempts - 1:
+            if wait is None:
                 raise
-            time.sleep(5 * (attempt + 1))
+            time.sleep(wait)
     raise AssertionError("unreachable")
 
 
@@ -81,8 +89,8 @@ def fetch(entry: dict) -> bytes:
         if not mirror:
             raise
         print(f"note: {entry['url']}: {error}; trying its mirror")
-        # The archive refuses a burst of requests now and then: retry, briefly.
-        return download(mirror, attempts=3)
+        time.sleep(MIRROR_PACE)
+        return download(mirror, backoff=MIRROR_BACKOFF)
 
 
 def forum_text(raw: str) -> str:
