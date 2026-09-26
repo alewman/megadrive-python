@@ -11,7 +11,11 @@ backdrop. On each new line the 68000 waits (V & 63) ``dbra`` loops, sweeping acr
 line over 64 lines, then changes the backdrop's colour one of two ways, fixed by V:
 
 - ``cram``: writes CRAM entry 0 (the backdrop) -- $000E on even V, $008E on odd;
-- ``reg7``: writes register 7, the backdrop's CRAM index -- 1 (red) or 2 (green).
+- ``reg7``: writes register 7, the backdrop's CRAM index -- 1 (red) or 2 (green);
+
+and a third, ``vram``, where plane A shows one tile everywhere and each line rewrites
+the row of it the line shows: that change acts where tiles are fetched, not at the
+output.
 
 For each line it finds the output pixel where the colour changes, on the referee
 (``validation/nuked_md_headless.c``'s ``NMD_PLOT``; display pixel 0 is sample 154 in
@@ -152,6 +156,42 @@ def board(rom: bytes):
     return change, commits
 
 
+def vram_cartridge(h40: bool = True) -> bytes:
+    """Plane A shows tile 1 everywhere; each line rewrites the row of tile 1 the line
+    shows, (V & 7), at the sweeping delay, with colour 1 or 2 by (V >> 3) & 1 -- so
+    the new row always differs from the one written eight lines before."""
+    code = bytearray()
+    code += _w(0x46FC, 0x2700)
+    code += bytes.fromhex("23fc5345474100a14000")
+    code += _w(0x41F9, 0x00C0, 0x0000, 0x43F9, 0x00C0, 0x0004, 0x45F9, 0x00C0, 0x0008)
+    for reg, value in ((0x00, 0x04), (0x01, 0x04), (0x02, 0x30), (0x04, 0x07),
+                       (0x05, 0x78), (0x07, 0x00), (0x0A, 0xFF), (0x0B, 0x00),
+                       (0x0C, 0x81 if h40 else 0x00), (0x0D, 0x3F), (0x0F, 0x02),
+                       (0x10, 0x01), (0x11, 0x00), (0x12, 0x00)):  # fmt: skip
+        code += _w(0x32BC, 0x8000 | reg << 8 | value)
+    code += _w(0x22BC, 0xC000, 0x0000)
+    code += _w(0x30BC, 0x0000, 0x30BC, 0x000E, 0x30BC, 0x00E0)  # black, red, green
+    code += _w(0x22BC, 0x4000, 0x0000, 0x303C, 0x7FFF)  # clear VRAM
+    code += _w(0x30BC, 0x0000, 0x51C8, 0xFFFA)
+    code += _w(0x22BC, 0x4000, 0x0003)  # plane A: every cell names tile 1
+    code += _w(0x303C, 0x07FF, 0x30BC, 0x0001, 0x51C8, 0xFFFA)
+    code += _w(0x32BC, 0x8144)
+    code += _w(0x7800, 0x7200)
+    loop = bytearray()
+    loop += _w(0x1012, 0xB001, 0x67FA, 0x1200, 0x3400, 0x0242, 0x003F)
+    loop += _w(0x1A01, 0x0285, 0x0000, 0x0007, 0xE58D)  # d5 = (V & 7) << 2
+    loop += _w(0x0685, 0x0000, 0x0020, 0x4845)  # + $20 (tile 1), swap
+    loop += _w(0x0085, 0x4000, 0x0000)  # VRAM write command
+    loop += _w(0x1801, 0xE60C, 0x0244, 0x0001, 0x5244)  # d4 = ((V >> 3) & 1) + 1
+    loop += _w(0xC8FC, 0x1111)  # mulu #$1111,d4: $1111 or $2222
+    loop += _w(0x51CA, 0xFFFE)  # D: dbra d2,D -- the sweep
+    loop += _w(0x2285)  # move.l d5,(a1)
+    loop += _w(0x3084, 0x3084)  # the row's two words
+    n = len(loop)
+    loop += _w(0x6000, (-(n + 2)) & 0xFFFF)  # bra.w L0
+    return nuked_md_cartridge(bytes(code + loop))
+
+
 def main() -> int:
     for h40 in (True, False):
         width = 320 if h40 else 256
@@ -171,6 +211,14 @@ def main() -> int:
                 )  # fmt: skip
                 print(f"{name}: referee pixel minus die H of the commit: "
                       f"{sorted(shown.items())}")  # fmt: skip
+        rom = vram_cartridge(h40)
+        ref_change, _ = referee(rom, FIRST_SAMPLE[h40])
+        board_change, _ = board(rom)
+        lines = [y for y in range(224) if y in ref_change and y in board_change
+                 and ref_change[y] < width and board_change[y] < width]  # fmt: skip
+        diffs = collections.Counter(round(ref_change[y] - board_change[y]) for y in lines)
+        print(f"{'H40' if h40 else 'H32'} vram (a tile row): referee minus board, per line: "
+              f"{sorted(diffs.items())}")  # fmt: skip
     return 0
 
 

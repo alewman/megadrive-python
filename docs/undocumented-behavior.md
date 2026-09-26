@@ -151,9 +151,13 @@ source, the way sms-python does.
     -3, as Kabuto has it. A write to register 7 (the backdrop index) shows at the same
     place, and changes the rest of the line where the board used to keep the line's
     first value (``scripts/run_output_delay.py``). Both are modelled
-    (``render.OUTPUT_DELAY``). **Not measured**: changes that act where tiles are
-    fetched -- VRAM, the plane and scroll registers -- which the fetch runs ahead of the
-    output by some amount; they still take effect at the H counter's pixel.
+    (``render.OUTPUT_DELAY``). Changes that act where tiles are fetched still take
+    effect at the H counter's pixel. For a **tile pattern row** written mid-line that is
+    right in H40 -- the referee's change lands on the board's pixel on 60 of 79 lines,
+    the rest a slot either way, so there the fetch's lead and the output's delay cancel
+    -- and **8 pixels late in H32** (-8 on 53 of 77 lines): open, not modelled. Not
+    measured at all: name-table writes (fetched a few slots before the patterns) and
+    the plane and scroll registers.
 22. **Register $00 bit 0 turns off display generation altogether**, which is not the
     same as blanking: "Setting bit 0 actually turns off all display generation, as
     opposed to the screen blanking feature which simply shows the backdrop color"

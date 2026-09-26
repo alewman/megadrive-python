@@ -4172,3 +4172,28 @@ before it, in status or in pixel count. The romset's 2-cell games do not, at the
 the sweep compares, write a column's word in the window the two rules disagree on. The
 triage knob is there for when one does: `disable="column_latch"` reads each column's
 word as it stands again and never holds the drawing back.
+
+### Frame 10,000, and where a tile write shows
+
+Overdrive 2's frame 10,000 still differs from BlastEm in one place: the darker region
+at the top right of the upper shape. The VDP data is not it -- VRAM, CRAM, VSRAM and
+the registers at the end of board frames 9,998-10,004 equal BlastEm's two frames
+earlier (`vdp_streams.py` replay) -- and nor is frame phase: BlastEm's 10,000 is the
+board's 10,003-10,004 in geometry, and none of the board's frames 9,996-10,004 has the
+region. (Pixel counts against BlastEm are no guide here: its libretro frame is 320x240
+with borders, five lines above the board's, and its colour levels are not the board's.)
+
+Two leads, one ruled out:
+
+- The scene rewrites tile 0's first row about 870 times a frame **during the
+  display** (bytes $02-$05, every line), so which columns see which row depends on
+  where each column's tiles are fetched relative to the write -- the half of item 20
+  left open. `scripts/run_output_delay.py` now measures it (`vram`: plane A one tile
+  everywhere, each line rewriting the row it shows): in **H40 the board already lands
+  on the referee's pixel** (60 of 79 lines, the rest a slot either way) and in **H32
+  it is 8 pixels late** (53 of 77). The scene is H40, so this is not the cause. The
+  H32 offset is recorded in item 20, open; name-table writes are not measured.
+- The scene has **shadow/highlight on** (register 12 = $89). The missing region is
+  darker, as a shadow would be. That is the lead left: how the board decides shadow
+  there, not what it is given. BlastEm is a detector; the judge would be Nuked-MD
+  running the demo to frame 10,000, about eight hours at 0.33 frames a second. Open.
