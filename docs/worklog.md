@@ -4197,3 +4197,42 @@ Two leads, one ruled out:
   darker, as a shadow would be. That is the lead left: how the board decides shadow
   there, not what it is given. BlastEm is a detector; the judge would be Nuked-MD
   running the demo to frame 10,000, about eight hours at 0.33 frames a second. Open.
+
+## Session 11 (2026-09-26): where tiles are fetched -- measured as far as slots allow
+
+### The die run
+
+Overdrive 2 is running on Nuked-MD to frame 10,006 (PAL, about eight and a half hours),
+to judge the region frame 10,000 lacks against BlastEm. Nuked-MD handles the Sega
+mapper up to 8 MB (`cartridge.c` 8, 36-46), which the demo's 8,386,056 bytes fit.
+`NMD_PLOT_FRAMES` now plots that many consecutive frames from `NMD_PLOT_FRAME`, one
+file each (`<NMD_PLOT>.<frame>`), so a frame or two of phase between the board and
+the referee costs nothing; it is plotting 9,995-10,006. Checked first on the latch
+cartridge (frames 11 and 12, full line structure in both).
+
+### Name-table writes
+
+Session 10 left the H32 pattern-row offset (-8) open because names are fetched at a
+different point from patterns. The name test: plane A tile 1 everywhere; each line
+rewrites **one cell's name** (column c of the cell row the line shows) to tile 1 or 2
+by V's parity, at the sweeping delay; per line, did the cell show the name written on
+that line. Writes land only in access slots, so the result is a switch point between
+two slots, per column; columns 16-23 in H40 and 12-19 in H32 were run to move the
+column across fixed slots.
+
+**In every column, in both modes, the die stops taking the new name one slot earlier
+than the board does** -- names are fetched well before the board draws them, even in
+H40, where pattern writes land on the board's pixel. So no single offset per mode is
+right for all VRAM writes: names lead, patterns lead by nothing in H40 and trail by 8
+pixels in H32.
+
+What slots cannot give is the exact fetch point: the windows they leave (up to 32
+pixels wide across the refresh gap between $0A2 and $0C2) do not line up into one
+fetch time per 2-cell group, which means the inference is too coarse, not that the
+hardware is irregular. **Not modelled, and not fitted**: a lead read off these
+windows would be a fit. The way to an exact answer is to log the die's VRAM reads --
+address and H counter -- which `vram.c` does not expose; our driver would rebuild them
+from the VDP's VRAM pins (`o_vram_ras`, `_cas`, `_oe1`, `_ad`, and the serial port's
+`_sc`/`_se0`), and the fix it points to is a renderer that fetches a column's tiles at
+their fetch time and outputs them 21 (or 24) pixels behind the counter, instead of
+doing both at the one moment it draws.

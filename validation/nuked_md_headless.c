@@ -78,6 +78,7 @@ void Video_Blit(void) {}
 #define PLOT_SAMPLES 2048
 static const char *plot_file = 0;
 static long plot_frame = -1;
+static long plot_count_frames = 1; /* NMD_PLOT_FRAMES: this many from NMD_PLOT_FRAME on */
 static long plot_frames_seen = 0;
 static int plot_line = -1, plot_x = 0, plot_ohsync = 1, plot_ovsync = 1, plot_done = 0;
 static unsigned char plot_buf[PLOT_LINES][PLOT_SAMPLES][3];
@@ -90,10 +91,16 @@ static int vs_watch = -1; /* NMD_VSRAM_WATCH: one more VSRAM word to log */
 
 static void plot_write(void)
 {
-    FILE *f = fopen(plot_file, "wb");
+    char name[4096];
+    FILE *f;
+    if (plot_count_frames > 1)
+        snprintf(name, sizeof name, "%s.%ld", plot_file, plot_frames_seen);
+    else
+        snprintf(name, sizeof name, "%s", plot_file);
+    f = fopen(name, "wb");
     unsigned int header[3] = { 0x504D444Eu, PLOT_LINES, PLOT_SAMPLES }; /* "NDMP" */
     if (!f) {
-        fprintf(stderr, "cannot write %s\n", plot_file);
+        fprintf(stderr, "cannot write %s\n", name);
         return;
     }
     fwrite(header, sizeof header, 1, f);
@@ -109,9 +116,11 @@ void Video_PlotVDP(void)
     if (!plot_file || plot_done)
         return;
     if (plot_ovsync && !vsync) {
-        if (plot_frames_seen == plot_frame) {
+        if (plot_frames_seen >= plot_frame && plot_frames_seen < plot_frame + plot_count_frames) {
             plot_write();
-            plot_done = 1;
+            memset(plot_count, 0, sizeof plot_count);
+            if (plot_frames_seen == plot_frame + plot_count_frames - 1)
+                plot_done = 1;
         }
         plot_frames_seen++;
         plot_line = -1;
@@ -124,7 +133,8 @@ void Video_PlotVDP(void)
     }
     plot_ohsync = hsync;
     plot_ovsync = vsync;
-    if (plot_frames_seen != plot_frame || plot_line < 0 || plot_line >= PLOT_LINES
+    if (plot_frames_seen < plot_frame || plot_frames_seen >= plot_frame + plot_count_frames
+        || plot_line < 0 || plot_line >= PLOT_LINES
         || plot_x >= PLOT_SAMPLES)
         return;
     plot_buf[plot_line][plot_x][0] = (unsigned char)ym.vdp.rgb_out[0];
@@ -284,6 +294,7 @@ static void setup(void)
     if ((s = getenv("NMD_VDPSIG_TO"))) vdpsig_to = strtoull(s, 0, 0);
     if ((s = getenv("NMD_VSRAM_WATCH"))) vs_watch = (int)strtol(s, 0, 0);
     if ((s = getenv("NMD_PLOT_FRAME"))) plot_frame = strtol(s, 0, 0);
+    if ((s = getenv("NMD_PLOT_FRAMES"))) plot_count_frames = strtol(s, 0, 0);
     if ((s = getenv("NMD_TRACE"))) {
         trace_file = fopen(s, "wb");
         if (!trace_file)
