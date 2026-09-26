@@ -40,6 +40,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -54,9 +55,34 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def download(url: str) -> bytes:
-    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
-        return response.read()
+def download(url: str, attempts: int = 1) -> bytes:
+    for attempt in range(attempts):
+        try:
+            with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
+                return response.read()
+        except OSError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(5 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def fetch(entry: dict) -> bytes:
+    """An entry's bytes: from its URL, else from its ``mirror`` -- the Wayback
+    Machine's raw capture of the same URL (``/web/<timestamp>id_/<url>``), chosen
+    because its SHA-1 in the archive's index equals the pinned file's and checked
+    against the SHA-256 here like any other download. Nemesis's site went down on
+    2026-09-26 and took milestone 2 and 3's judges with it for every fresh clone
+    and CI run; a mirror of the identical bytes is not a change of source."""
+    try:
+        return download(entry["url"])
+    except OSError as error:
+        mirror = entry.get("mirror")
+        if not mirror:
+            raise
+        print(f"note: {entry['url']}: {error}; trying its mirror")
+        # The archive refuses a burst of requests now and then: retry, briefly.
+        return download(mirror, attempts=3)
 
 
 def forum_text(raw: str) -> str:
@@ -87,9 +113,9 @@ def fetch_files(verify_only: bool, large: bool, only: list[str] | None = None) -
             problems += 1
             continue
         try:
-            data = download(entry["url"])
+            data = fetch(entry)
         except OSError as error:
-            print(f"ERROR: {entry['url']}: {error}")
+            print(f"ERROR: {entry.get('mirror') or entry['url']}: {error}")
             problems += 1
             continue
         digest = hashlib.sha256(data).hexdigest()

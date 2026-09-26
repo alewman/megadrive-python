@@ -407,7 +407,8 @@
     "kind": "hardware-capture",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "Nemesis's MD1600 running his sprite masking ROM in H32 (forum t=541 start=30): milestone 3's judge"
+    "why": "Nemesis's MD1600 running his sprite masking ROM in H32 (forum t=541 start=30): milestone 3's judge",
+    "mirror": "https://web.archive.org/web/20231127170607id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/MD1600SpriteMaskH32.png"
   },
   {
     "path": "reference/images/MD1600SpriteMaskH40.png",
@@ -417,7 +418,8 @@
     "kind": "hardware-capture",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "Nemesis's MD1600 running his sprite masking ROM in H40 (forum t=541 start=30): milestone 3's judge"
+    "why": "Nemesis's MD1600 running his sprite masking ROM in H40 (forum t=541 start=30): milestone 3's judge",
+    "mirror": "https://web.archive.org/web/20231127170607id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/MD1600SpriteMaskH40.png"
   },
   {
     "path": "reference/manuals/FMDocs.7z",
@@ -428,7 +430,8 @@
     "tier": "specification",
     "date": "2026-09-22",
     "why": "Nemesis's FM bundle incl. the YM3438 application manual (large)",
-    "large": true
+    "large": true,
+    "mirror": "https://web.archive.org/web/20191208171438id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/FMDocs.7z"
   },
   {
     "path": "reference/manuals/GenesisSoftwareManual-150p.pdf",
@@ -448,7 +451,8 @@
     "kind": "manual",
     "tier": "specification",
     "date": "2026-09-22",
-    "why": "Sega's Genesis Software Manual, 183-page image scan"
+    "why": "Sega's Genesis Software Manual, 183-page image scan",
+    "mirror": "https://web.archive.org/web/20241225025549id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/GenesisSoftwareManual.pdf"
   },
   {
     "path": "reference/manuals/GenesisTechnicalBulletins.pdf",
@@ -488,7 +492,8 @@
     "kind": "manual",
     "tier": "specification",
     "date": "2026-09-22",
-    "why": "YM2608 (OPNA) application manual, Nemesis's English translation"
+    "why": "YM2608 (OPNA) application manual, Nemesis's English translation",
+    "mirror": "https://web.archive.org/web/20260917215608id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM2608J%20Translated.PDF"
   },
   {
     "path": "reference/manuals/YM2608J.pdf",
@@ -498,7 +503,8 @@
     "kind": "manual",
     "tier": "specification",
     "date": "2026-09-22",
-    "why": "the Japanese original"
+    "why": "the Japanese original",
+    "mirror": "https://web.archive.org/web/20251009141429id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM2608J.PDF"
   },
   {
     "path": "reference/manuals/YM3015.pdf",
@@ -508,7 +514,8 @@
     "kind": "manual",
     "tier": "specification",
     "date": "2026-09-22",
-    "why": "YM3015 DAC datasheet"
+    "why": "YM3015 DAC datasheet",
+    "mirror": "https://web.archive.org/web/20250507091132id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/YM3015.pdf"
   },
   {
     "path": "reference/web/nicole-express-truth-about-tmss.html",
@@ -769,7 +776,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected",
     "date": "2026-09-22",
-    "why": "Nemesis 2009: sprite limits and masking, results checked on an MD1600 (t=541 start=30)"
+    "why": "Nemesis 2009: sprite limits and masking, results checked on an MD1600 (t=541 start=30)",
+    "mirror": "https://web.archive.org/web/20250822162740id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/SpriteMaskingTestRom.bin"
   },
   {
     "path": "tests/test_roms/nemesis/SpriteMaskingTestRom.zip",
@@ -779,7 +787,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected",
     "date": "2026-09-22",
-    "why": "its source"
+    "why": "its source",
+    "mirror": "https://web.archive.org/web/20250822163837id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/SpriteMaskingTestRom.zip"
   },
   {
     "path": "tests/test_roms/nemesis/VDPFIFOTesting.zip",
@@ -789,7 +798,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected",
     "date": "2026-09-22",
-    "why": "Nemesis 2013: >100 self-checking VDP port/FIFO/DMA tests; 'all pass on the hardware, with a few exceptions' (t=1291 start=30)"
+    "why": "Nemesis 2013: >100 self-checking VDP port/FIFO/DMA tests; 'all pass on the hardware, with a few exceptions' (t=1291 start=30)",
+    "mirror": "https://web.archive.org/web/20250207014716id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/VDPFIFOTesting.zip"
   },
   {
     "path": "tests/test_roms/nemesis/sr logic analyser results.zip",
@@ -799,7 +809,8 @@
     "kind": "hardware-capture",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "Nemesis 2010: HV counter and status register sampled across whole frames with a logic analyser, PAL MD1 and NTSC-J MD1, H32/H40 x V28/V30 x interlace modes (thread t=768)"
+    "why": "Nemesis 2010: HV counter and status register sampled across whole frames with a logic analyser, PAL MD1 and NTSC-J MD1, H32/H40 x V28/V30 x interlace modes (thread t=768)",
+    "mirror": "https://web.archive.org/web/20211118111042id_/http://nemesis.hacking-cult.org/MegaDrive/Samples/sr%20logic%20analyser%20results.zip"
   },
   {
     "path": "tests/test_roms/nemesis/sr logic analyser roms.zip",
@@ -809,7 +820,8 @@
     "kind": "test-rom",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "the ROMs that produced the captures"
+    "why": "the ROMs that produced the captures",
+    "mirror": "https://web.archive.org/web/20191208173514id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/sr%20logic%20analyser%20roms.zip"
   },
   {
     "path": "tests/test_roms/nemesis/sr logic analyser source.zip",
@@ -819,7 +831,8 @@
     "kind": "test-rom",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "their source"
+    "why": "their source",
+    "mirror": "https://web.archive.org/web/20191208173515id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/VDP/sr%20logic%20analyser%20source.zip"
   },
   {
     "path": "tests/test_roms/nemesis/ssg-eg md1600 attack and release.rar",
@@ -830,7 +843,8 @@
     "tier": "hardware-captured",
     "date": "2026-09-22",
     "why": "Nemesis 2009: attack/release recorded from an MD1600 (large)",
-    "large": true
+    "large": true,
+    "mirror": "https://web.archive.org/web/20191208171021id_/http://nemesis.hacking-cult.org/MegaDrive/Samples/ssg-eg%20md1600%20attack%20and%20release.rar"
   },
   {
     "path": "tests/test_roms/nemesis/ssg-eg md1600.rar",
@@ -840,7 +854,8 @@
     "kind": "hardware-capture",
     "tier": "hardware-captured",
     "date": "2026-09-22",
-    "why": "Nemesis 2008: SSG-EG test ROM recorded from an MD1600"
+    "why": "Nemesis 2008: SSG-EG test ROM recorded from an MD1600",
+    "mirror": "https://web.archive.org/web/20191208150956id_/http://nemesis.hacking-cult.org/MegaDrive/Samples/ssg-eg%20md1600.rar"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612FrequencyWriteOrder.bin",
@@ -850,7 +865,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis YM2612 test ROM (t=386)"
+    "why": "Nemesis YM2612 test ROM (t=386)",
+    "mirror": "https://web.archive.org/web/20191208171047id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612FrequencyWriteOrder.bin"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612attackandrelease.bin",
@@ -860,7 +876,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis YM2612 test ROM (t=386)"
+    "why": "Nemesis YM2612 test ROM (t=386)",
+    "mirror": "https://web.archive.org/web/20191208171018id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612attackandrelease.bin"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612csmmode.bin",
@@ -870,7 +887,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis YM2612 test ROM (t=386)"
+    "why": "Nemesis YM2612 test ROM (t=386)",
+    "mirror": "https://web.archive.org/web/20220524120843id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612csmmode.bin"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612csmmode.wav",
@@ -880,7 +898,8 @@
     "kind": "hardware-capture",
     "tier": "hardware-captured (to confirm)",
     "date": "2026-09-22",
-    "why": "CSM-mode recording beside the ROM; provenance to confirm in t=386"
+    "why": "CSM-mode recording beside the ROM; provenance to confirm in t=386",
+    "mirror": "https://web.archive.org/web/20220524120857id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612csmmode.wav"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612detune.bin",
@@ -890,7 +909,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis YM2612 test ROM (t=386)"
+    "why": "Nemesis YM2612 test ROM (t=386)",
+    "mirror": "https://web.archive.org/web/20191208171655id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612detune.bin"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612multiplexing.bin",
@@ -900,7 +920,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis: DAC time-division multiplexing"
+    "why": "Nemesis: DAC time-division multiplexing",
+    "mirror": "https://web.archive.org/web/20191208210142id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/ym2612multiplexing.bin"
   },
   {
     "path": "tests/test_roms/nemesis/ym2612ssg-eg.bin",
@@ -910,7 +931,8 @@
     "kind": "test-rom",
     "tier": "hardware-corrected (by ear)",
     "date": "2026-09-22",
-    "why": "Nemesis YM2612 test ROM (t=386)"
+    "why": "Nemesis YM2612 test ROM (t=386)",
+    "mirror": "https://web.archive.org/web/20191208150953id_/http://nemesis.hacking-cult.org/MegaDrive/Roms/Test/Mine/YM2612/ym2612ssg-eg.bin"
   },
   {
     "path": "tests/test_roms/r57shell/joy_speed_v1.02.bin",

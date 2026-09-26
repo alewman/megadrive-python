@@ -35,6 +35,21 @@ jobs:
           fi
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
+      # What the two fetch steps below bring in, kept between runs: the pinned files
+      # come from other people's sites (Nemesis's was down on 2026-09-26, and every run
+      # failed until the pins gained Wayback mirrors), so a run that finds them here
+      # does not need any of those sites up. Keyed on both pin files, so a changed pin
+      # starts a fresh cache; fetch_references.py still checks every file's SHA-256.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tests/test_roms
+            reference/images
+            reference/src/Nuked-OPN2
+            reference/src/Nuked-PSG
+            reference/src/YM2608-LLE
+          key: fetched-${{ hashFiles('scripts/pinned_files.json', 'scripts/pinned_repos.json') }}
+          restore-keys: fetched-
       # The judges of milestones 2 and 3: Nemesis's captures, VDPFIFOTesting, his
       # sprite masking ROM and the two photographs of his MD1600 running it, and MoD's
       # gen_test_z80_bus, all fetched at their pinned SHA-256 (never committed).
