@@ -18,6 +18,11 @@
  *   NMD_PRESS=<t>:<mask>  set pad 1's buttons to <mask> at half-MCLK t.  Repeatable,
  *                         semicolon-separated: "100:128;200:0".  The mask is
  *                         Nuked-MD's controller.h bit set (START = 128).
+ *   NMD_RESET=<t0>:<t1>   hold the console's reset button from half-MCLK t0 to t1, as
+ *                         Nuked-MD's own frontend does (md.wres and the arbiter's
+ *                         ext_wres low; controller.c, F12).  Overdrive 2 needs it after
+ *                         its first run ("requires pressing Reset after the first run",
+ *                         Nuked-MD Notes.md).
  *   NMD_TRACE=<path>      write the binary trace there (see the record below).
  *   NMD_TRACE_FROM=<t>    first half-MCLK traced (default 0).
  *   NMD_TRACE_TO=<t>      one past the last (default NMD_STOP).
@@ -192,6 +197,7 @@ static int inited;
 static uint64_t press_at[MAX_PRESSES];
 static int press_mask[MAX_PRESSES];
 static int presses;
+static uint64_t reset_from = ~0ull, reset_to = ~0ull; /* NMD_RESET */
 
 static uint32_t zclk_edges;
 static int prev_zclk = -1;
@@ -286,6 +292,12 @@ static void setup(void)
     if ((s = getenv("NMD_TRACE_MASK"))) trace_mask = (unsigned)strtoul(s, 0, 0);
     if ((s = getenv("NMD_PROGRESS"))) progress_every = strtoull(s, 0, 0);
     if ((s = getenv("NMD_PRESS"))) parse_presses(s);
+    if ((s = getenv("NMD_RESET"))) {
+        char *end;
+        reset_from = strtoull(s, &end, 0);
+        if (*end == ':')
+            reset_to = strtoull(end + 1, 0, 0);
+    }
     dump_ram = getenv("NMD_DUMP_RAM");
     dump_zram = getenv("NMD_DUMP_ZRAM");
     dump_vram = getenv("NMD_DUMP_VRAM");
@@ -439,6 +451,10 @@ void Audio_Update(void)
     for (i = 0; i < presses; i++)
         if (mcycles == press_at[i])
             controller_buttons_state_1 = press_mask[i];
+    if (mcycles == reset_from || mcycles == reset_to) {
+        md.wres = mcycles == reset_to; /* active low: 0 while the button is held */
+        ym.arb.input.ext_wres = md.wres;
+    }
 
     /* ZCLK edges: the Z80's own time base, so that a type-2 cycle's length can be
        read in T-states and its wait states counted. */

@@ -4716,3 +4716,25 @@ difference rather than a phase: what takes the 68000's time here (refresh stalls
 contention) is modelled differently on the two, and BlastEm is not a judge of it. Open,
 with the same lack of a judge; a cycle profile of one image on each side would be the
 next step if it is taken up.
+
+### Overdrive 2 on Nuked-MD: a reset after the first run
+
+Session 11 found the demo stops on the referee after its first frame. Nuked-MD's own
+notes say why: "The Overdrive 2 demo has an issue loading Z80 microcode and requires
+pressing Reset after the first run (behavior is similar on real hardware)". The driver
+gained `NMD_RESET=<t0>:<t1>`, which holds the console's reset button as Nuked-MD's
+frontend does (`md.wres` and the arbiter's `ext_wres` low, `controller.c` F12).
+
+Traced (68000 bus cycles, PAL): with no reset the 68000 waits at $2F0240 until about
+frame 15, moves on, and by frame 15-19 makes no bus cycle at all (the last are reads
+of a table at $398A34 and the VDP status) -- the first run's freeze. A press at frames
+4-9, before it, changes nothing. A press at frames 25-30, after it, is a real reset
+(the reset vector is read at frame 25), and the demo then starts again and keeps
+running: the 68000 is still busy at frame 100, and the captured pictures from frame 60
+show the opening -- the ship fading in through its green, cyan, yellow and grey tints
+-- as BlastEm draws it at frames 30-67. So Overdrive 2 is now a referee run, at about
+25 frames of offset for the reboot. Measured speed on the shared machine: 100 frames
+in about 17 minutes.
+
+The board does not freeze on the first run, and the note says real hardware does;
+what the board does differently in the Z80 start-up is a question for later.
