@@ -4648,3 +4648,33 @@ at the machine's rate. `tests/test_frontend.py` checks the format.
 (the fifth, V28's border at line 224, holds on both). Both suites **140 passed, 1
 deselected** (PyPy 211 s, CPython 481 s), ruff clean; the HV captures equal their
 baseline in every dump.
+
+### The tools, for anyone chasing the rest
+
+The method of this session is now in the repository, each checked to reproduce the
+scratch work it came from (same pictures to the pixel, same scores):
+
+```text
+sh validation/build_blastem_libretro.sh                  # the pinned BlastEm, unchanged, as a libretro core
+python scripts/blastem_frames.py reference/build-blastem-libretro/blastem_libretro.so ROM OUT_B --range 7600:9200:25 [--states]
+python scripts/board_frames.py ROM OUT_M --range 7600:9200:25
+python scripts/compare_frames.py OUT_M OUT_B --pairs     # best of BlastEm's n-6..n+6, levels and border put right
+```
+
+`--pairs` says what kind of fault a frame has: k against 2k is a shade fault
+(shadow against normal), matched pairs both ways a picture partly a frame out of step.
+For BlastEm's frames around each board frame, ask for n-6..n+6 (`--frames`). BlastEm's
+own VDP state at a frame comes from `--states` (`vdp_serialize`: VRAM, CRAM, VSRAM,
+sprite cache, registers); its event log cannot carry bit 16 of a VRAM address or a copy
+DMA (`scripts/vdp_streams.py`).
+
+What is open in Overdrive 2 at the end of this session, every 25th frame to 13,500
+(477 of 540 identical):
+
+| frames | what | where it stands |
+| --- | --- | --- |
+| 550-1,150 (4) | the pong screen's static | uninitialised memory; nothing to match |
+| 5,675-6,525 (4) | 1-4 pixels each | not looked at |
+| 7,700-8,075 (7) | parts of the picture a frame out of step (grid scroll against objects) | not started; Session 9's one-frame register lag at 7,047 is the first suspect |
+| 8,150-9,125 (25) | 16-517 pixels, the B-masked debug-register scenes | not started |
+| 9,175-9,725 (23) | where a mid-line CRAM change starts | kept: die-measured (item 20) |
