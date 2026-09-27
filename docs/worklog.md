@@ -4326,3 +4326,33 @@ disagreements above is of that kind.
 tests/compat/megadrive-fetch.csv` (15 jobs, the die run holding the 16th process),
 13,357 s, 0 of 3,514 rows different from the sweep before it. The knob for when one
 does: `disable="fetch_schedule"` fetches every cell as the screen reaches it again.
+
+### The Overdrive 2 die run: the demo does not get past its first frame on Nuked-MD
+
+The run to frame 10,006 (PAL, 11 h 8 m) finished, and every sample of all twelve
+captured frames is black. The capture is not at fault: the latch cartridge under `-pal`
+draws its red and green through the same code. A boot check (frames 298-300) is black
+too, where the board shows the demo's opening Pong scene.
+
+Nuked-MD's own 68000 bus trace says why: from frame 2 to at least frame 10 the demo sits
+in
+
+    $2F021C  btst  #3,$C00005   ; the VDP status's VBlank flag
+    $2F0224  bne.s $2F021C      ; loop while it is set
+
+and the flag never clears there. The board reaches the same loop in frame 1, in the
+vertical blank (V 230) with the display on (register 1 = $54), and leaves it when the
+blank ends (V 511). The die's picture also has an odd V count (293 rows under 224), so
+its VDP is not in the state the demo set up: something earlier in the demo's start-up
+went another way on the die -- something it detects, a register write that did not take,
+or a gap in the model or in this build's configuration (`-DTMSS_ENABLE=0`, a pre-TMSS
+board the README says no retail console was). **Not chased**: that is debugging the
+referee's run of the demo, not the board, and it was stopped here to ask.
+
+Two unit traps met on the way, the second new: the driver's `frame N` progress line
+counts 1,789,772 half-master-clocks (`md.c` 70, 309-311) -- an NTSC-sized unit even
+under `-pal` -- so "frame 10,478" was PAL frame 8,759, and the run's real pace was 0.24
+PAL frames a second, not the 0.33 first estimated.
+
+So frame 10,000's missing region (the scene has shadow/highlight on) stays open, with
+the die unable to judge it until the demo runs on it.
