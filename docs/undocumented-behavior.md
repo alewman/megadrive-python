@@ -222,6 +222,32 @@ source, the way sms-python does.
     The board read the column's word as it stood whenever it drew and split such
     columns in two (7 to 20 of 224 lines on the test cartridge; none since).
     Not measured: interlace mode 2, and a line with the display off.
+24. **The command address is 17 bits, and the sprite cache compares all of them.**
+    In mode 5 the second control word's bits 2-0 are address bits 16-14 (the Manual
+    shows bit 2 as 0), and the auto-increment carries into bit 16 and wraps at 128 KB.
+    With the usual single 64 KB VRAM a write lands at the address modulo 64 KB, but the
+    sprite cache's check "is sensitive to the entire 128 KB address range even in
+    64 KB mode, so when setting bit 16 for the sprite table address but not for the
+    Write/DMA target address (or the other way round) the sprite table in memory will
+    get updated but the cache won't" (Kabuto, "Precise details of sprite rendering";
+    **hardware-measured research**, and the author of the program below). Nuked-MD
+    (die-derived) has the same register: ``reg_addr`` takes ``io_data & 7`` into bits
+    16-14 on the second word in mode 5 (``vdp.c`` 947-951) and increments
+    ``& 0x1ffff`` (926-927). BlastEm keeps the same three bits (``vdp.c`` 5943);
+    Exodus, which the board's port logic was written from, keeps 16, and so did the
+    board. **Overdrive 2's rain depends on it**: the scene (frames 4,117-5,100) draws
+    its rain as 70 sprites of 32x32 in palette 3, highlight and shadow operators over
+    the whole screen, and every frame it writes zeros over the Y and size/link words of
+    every fourth entry through **$10000**, so VRAM's table breaks the chain at sprite 0
+    while the cache keeps it. The board dropped bit 16, took the writes as $0000, broke
+    the cache's chain too, and drew no rain. Now 101 of 101 frames sampled over
+    4,100-6,600 draw exactly BlastEm's picture where the scene is the rain
+    ([worklog.md](worklog.md), "The rain").
+    Not settled, and Overdrive 2 does not decide it: which address a **128 KB-mode**
+    write is checked against. Kabuto's "if the formula above happens to spit out an
+    address that happens to be covered by the sprite cache it will get updated" reads
+    as the rearranged address, which the board uses; BlastEm checks the address as
+    written and stores both bytes. The demo's pictures are identical either way.
 
 ## The pads and the I/O chip
 

@@ -309,6 +309,16 @@ VSCROLL_LATCH_H = {"H40": (0x149, 0x143), "H32": (0x109, 0x103)}
 #: fetched, as a name-table write does (``Renderer.catch_up``).
 PLANE_REGISTERS = frozenset({2, 3, 4, 11, 12, 16, 17, 18})
 
+#: The command address is 17 bits, not 16: the second control word's bits 2-0 are
+#: address bits 16-14 in mode 5, and the auto-increment wraps at 128 KB (Nuked-MD,
+#: ``reg_addr`` and its ``& 0x1ffff`` increment). With one 64 KB VRAM chip fitted a
+#: write lands at the address modulo 64 KB, but the sprite cache compares all 17 bits
+#: "even in 64 KB mode, so when setting bit 16 ... for the Write/DMA target address
+#: ... the sprite table in memory will get updated but the cache won't" (Kabuto,
+#: "Precise details of sprite rendering"). Overdrive 2's rain is drawn that way
+#: (docs/worklog.md, "The rain").
+ADDRESS_MASK = 0x1FFFF
+
 #: Where in its line each 2-cell column's vertical scroll is latched, as (the board's
 #: internal H for column 0, the step per column), planes A and B: column k's word at
 #: first + 16k. Nuked-MD latches plane A's column k at its H counter 16k + 1 and plane
@@ -918,7 +928,7 @@ class VDP:
                 # (``NMD_VRAMSIG``, with each byte's bank and data) commit a name's tile
                 # index a slot before its attributes, as this does.
                 byte = (data >> 8) if ((address & 1) ^ half) else data & 0xFF
-                self._vram_write_byte((address & 0xFFFE) | half, byte)
+                self._vram_write_byte((address & (ADDRESS_MASK - 1)) | half, byte)
                 entry[3] = not half
                 entry[4] = entry[3]
         elif target == WRITE_CRAM:
@@ -1031,7 +1041,7 @@ class VDP:
             self.read_available = True
         else:
             return
-        self.address = (self.address + self.registers[15]) & 0xFFFF
+        self.address = (self.address + self.registers[15]) & ADDRESS_MASK
 
     def _vsram_last_render(self) -> int:
         """What a read of VSRAM past its end gives: the last word the renderer read from
@@ -1052,7 +1062,7 @@ class VDP:
         in the next FIFO entry."""
         fifo = self.fifo
         last = fifo[(self.fifo_read + 3) & 3]
-        last[1] = (last[1] + self.registers[15]) & 0xFFFF
+        last[1] = (last[1] + self.registers[15]) & ADDRESS_MASK
         target = self.code & 0x0F
         if target == WRITE_VRAM:
             self._vram_write_byte(last[1], last[2] >> 8)
@@ -1064,14 +1074,14 @@ class VDP:
             index = (last[1] & 0x7E) >> 1
             if index < self.vsram_words:
                 self._vsram_store(index, fifo[self.fifo_read][2] & 0x07FF)
-        self.address = (self.address + self.registers[15]) & 0xFFFF
+        self.address = (self.address + self.registers[15]) & ADDRESS_MASK
 
     def _copy(self) -> None:
         """One DMA copy byte, VRAM to VRAM (Exodus ``PerformDMACopyOperation``,
         General.cpp 2630-2677)."""
         source = self.registers[21] | (self.registers[22] << 8)
         self._vram_write_byte(self.address, self.vram[(source ^ 1) & 0xFFFF])
-        self.address = (self.address + self.registers[15]) & 0xFFFF
+        self.address = (self.address + self.registers[15]) & ADDRESS_MASK
 
     def _transfer_read(self) -> None:
         registers = self.registers
@@ -1094,7 +1104,7 @@ class VDP:
         else:
             previous = self.fifo[(self.fifo_write + 3) & 3]
             entry[0] = previous[0]
-            entry[1] = (previous[1] + self.registers[15]) & 0xFFFF
+            entry[1] = (previous[1] + self.registers[15]) & ADDRESS_MASK
         entry[2] = data & 0xFFFF
         entry[3] = False
         entry[4] = True
@@ -1200,7 +1210,7 @@ class VDP:
         if not self.pending:
             self.pending = True
             self.code = (self.code & 0x3C) | (value >> 14)
-            self.original_address = (self.original_address & 0xC000) | (value & 0x3FFF)
+            self.original_address = (self.original_address & 0x1C000) | (value & 0x3FFF)
             self.code |= 0x10  # the first half sets CD4 (Exodus Ports.cpp 1385-1394)
             if self.code & 0x03 == 0x02:
                 # A register write, taken from the address bits just written.
@@ -1218,7 +1228,10 @@ class VDP:
             self.pending = False
             bits = 0x3C if self.dma_enabled else 0x1C  # CD5 only with DMA enabled
             self.code = (self.code & ~bits & 0x3F) | ((value >> 2) & bits)
-            self.original_address = (self.original_address & 0x3FFF) | ((value & 3) << 14)
+            # Bits 2-0 are address bits 16-14 in mode 5 (Nuked-MD: ``reg_addr`` takes
+            # ``io_data & 7`` there), so a program can name the upper 64 KB.
+            upper = 7 if self.mode5 else 3
+            self.original_address = (self.original_address & 0x3FFF) | ((value & upper) << 14)
             transfer = bool(self.code & 0x20) and self.dmd < 2
         self.address = self.original_address
         self.modified = True

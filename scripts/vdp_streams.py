@@ -29,8 +29,8 @@ clock falls in (:meth:`blastem_events.Reader.frame_of`). Frame numbers are **not
 common clock between the two (docs/handoff-2026-09-24.md); they are there to find the
 spot in each run, and the streams are aligned by position alone.
 
-Two things BlastEm's log cannot carry, found by reading ``vdp.c`` at the pinned
-revision (542164d) before building on it:
+Three things BlastEm's log cannot carry, the first two found by reading ``vdp.c`` at
+the pinned revision (542164d) before building on it, the third later:
 
 - **A VRAM copy DMA writes VRAM without logging it** (``external_slot``, 1263-1266:
   ``write_vram_byte`` with no ``event_vram_byte``, where the FIFO path at 1186-1192
@@ -41,6 +41,14 @@ revision (542164d) before building on it:
   Kabuto ("writing to odd addresses does not seem to have an effect"), stores nothing.
   Both sides compute where it *would* land and flag it (:data:`ODD128`), so the streams
   stay aligned and the difference is counted rather than hidden.
+- **Address bit 16 of a 64 KB-mode write.** ``event_vram_byte`` takes a ``uint16_t``
+  (``event_log.c`` 424), so a write through $10000-$1FFFF is logged at its 64 KB
+  address. VRAM rebuilt from the log is still right (the chip is 64 KB), but the
+  sprite cache is not: it compares all 17 bits (docs/undocumented-behavior.md, VDP
+  item 24), so a cache rebuilt from the log is wrong wherever a program uses bit 16,
+  as Overdrive 2's rain does. Read BlastEm's cache from a save state of its libretro
+  core instead (``retro_serialize``; ``vdp_serialize`` writes ``sat_cache`` after
+  VRAM, CRAM and VSRAM) -- docs/worklog.md, "The rain".
 """
 
 from __future__ import annotations

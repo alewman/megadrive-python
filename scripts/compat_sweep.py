@@ -127,12 +127,29 @@ def _live_columns(board) -> None:
     vdp._column_limit = lambda code, address: None
 
 
+def _address_16(board) -> None:
+    """Undo the 17-bit command address (docs/undocumented-behavior.md, VDP item 24):
+    bit 16 is dropped as the command word is taken, as the board did before it. The
+    increments' wrap is the module's ``ADDRESS_MASK``, which ``run_one`` patches."""
+    vdp = board.vdp
+    control_write = vdp._control_write
+
+    def sixteen(value: int, mclk: int) -> int:
+        held = control_write(value, mclk)
+        vdp.original_address &= 0xFFFF
+        vdp.address &= 0xFFFF
+        return held
+
+    vdp._control_write = sixteen
+
+
 DISABLE = {
     "work_refresh": lambda board: setattr(board, "ram_refresh_due", 1 << 62),
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
     "arbiter": lambda board: setattr(board, "arbiter_enabled", False),
     "vscroll_latch": _live_vscroll,
     "column_latch": _live_columns,
+    "address_16": _address_16,
 }
 #: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
 #: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the
@@ -169,6 +186,9 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     if disable == "output_delay":
         render_module.OUTPUT_DELAY.update(dict.fromkeys(delay, 0))
     schedule = dict(render_module.FETCH_AT)
+    mask = vdp_module.ADDRESS_MASK
+    if disable == "address_16":
+        vdp_module.ADDRESS_MASK = 0xFFFF
     if disable == "fetch_schedule":
         # every cell fetched as the screen reaches it, both planes alike: the board's
         # draw-time fetch before the schedule
@@ -286,6 +306,7 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
         vdp_module.DMA_STARTUP_MCLK = startup
         render_module.OUTPUT_DELAY.update(delay)
         render_module.FETCH_AT.update(schedule)
+        vdp_module.ADDRESS_MASK = mask
         row["seconds"] = f"{time.time() - started:.1f}"
     return row
 

@@ -432,7 +432,9 @@ and VSRAM". What the mode does to the *picture* is not modelled: with one VRAM c
 fitted the hardware shows "garbled display contents", and no pinned test covers it.
 Overdrive 2 (milestone 5) is the judge. The board's address register is 16 bits, so
 bit 16 -- which 128 KB mode stops ignoring -- is carried only in the sprite cache's
-check.
+check. *(Corrected 2026-09-27, Session 13: that dropped bit 16 from every write, and
+the sprite cache compares all 17 bits in 64 KB mode too. The address register is now
+17 bits; Overdrive 2's rain needed it. See "The rain".)*
 
 ### Milestone 3 acceptance: the runs and their results (2026-09-22)
 
@@ -4452,3 +4454,105 @@ the pulse costs 128 + 42 clocks; a halted 68000 comes back. On Sonic, a press at
 400 goes back to the SEGA logo, and the game releases the Z80 itself.
 
 Both suites **131 passed, 1 deselected** (PyPy 186 s, CPython 456 s), ruff clean.
+
+## Session 13 (2026-09-27): the rain
+
+Aubrey, watching Overdrive 2 through the new frontend: the first rain scene draws its
+city and mountains correctly and **no rain at all**, and older emulators showed it
+the same way.
+
+### What the rain is
+
+BlastEm's libretro core (the Session 9 reference, unmodified) draws the scene at
+frames 4,150-5,100 with rain; the board does not. A colour census of frame 4,600
+says what kind of thing is missing: BlastEm's frame has 70 colours, the board's 26,
+and mapped level by level onto the board's picture BlastEm's extra pixels are the
+board's own colours **shadowed and highlighted** -- 1,223 and 1,359 of a sample of
+8,025, streaked diagonally over the whole screen. Highlight needs a sprite, so the
+rain is sprites.
+
+The table (base $0000, H40, shadow/highlight on) holds exactly that: a 10 x 7 grid of
+32x32 sprites in palette 3 (colours 14 and 15 of palette 3 are the highlight and
+shadow operators), 70 of them, 40 tiles a line -- H40's whole budget. The board's
+sprite cache ended its chain at sprite 0 (Y 0, link 0), so no sprite was ever
+examined.
+
+### The first guess was wrong, and was tested before anything was built on it
+
+The scene uses 128 KB mode in the vertical blank for byte-wide uploads of the rain's
+pattern columns, and Kabuto warns about 128 KB mode and the sprite cache ("even though
+the high byte is discarded it'll still get written to the cache"). The board's 128 KB
+path fed the cache only the low byte at the rearranged address, where BlastEm checks
+the address as written and stores both bytes. Patched in BlastEm's way, from a
+snapshot and then from power-on: **still no rain**. Kept as a question, not a fix.
+
+### What the demo does
+
+Logging every write to the table's first 2 KB from frame 4,000: at 4,117 the demo
+writes the chain properly (sprite 0 at Y 128 linking to 1, and so on); from 4,123,
+every frame, in the vertical blank and in **64 KB mode**, it writes zeros over the Y
+and size/link words of sprites 0, 4, 8, ... 76. On the board that broke the cache's
+chain at sprite 0.
+
+BlastEm's cache rebuilt from its event log broke the same way -- yet BlastEm draws the
+rain. The instrument was the suspect, so BlastEm's real cache was read instead: its
+libretro core's `retro_serialize` writes `sat_cache` right after VRAM, CRAM and VSRAM
+(`vdp_serialize`, `vdp.c` 6527-6534), and the 320 bytes were found by their contents
+and cross-checked against the registers that follow them. Frame by frame, 4,110-4,130:
+VRAM's sprite 0 goes to zeros at 4,124 and **the cache keeps Y 128, link 1 throughout**.
+
+A throwaway instrumented copy of the libretro core, in the scratch directory and never
+used as a reference, printed every cache check and every VRAM byte write to the first
+16 bytes: after 4,117 BlastEm never checks the cache for those writes, because they
+are addressed to **$10000-$10003**. The log had shown them at $0000 because
+`event_vram_byte` takes a `uint16_t` address (`event_log.c` 424) -- a third thing the
+log cannot carry, now in `scripts/vdp_streams.py`'s docstring.
+
+### The rule
+
+Kabuto, "Precise details of sprite rendering": the cache check "is sensitive to the
+entire 128 KB address range even in 64 KB mode, so when setting bit 16 for the sprite
+table address but not for the Write/DMA target address (or the other way round) the
+sprite table in memory will get updated but the cache won't". The demo is his; the
+rain is that sentence used on purpose. Nuked-MD has the register the sentence needs:
+`reg_addr` takes the second control word's `io_data & 7` into bits 16-14 in mode 5
+(`vdp.c` 947-951) and increments `& 0x1ffff` (926-927); the first word leaves bits
+16-14 alone. BlastEm keeps the same three bits. Exodus keeps 16, and the board's port
+logic came from Exodus, so the board kept 16: bit 2 of the second word was dropped
+and the increment wrapped at 64 KB.
+
+`vdp.py`: `ADDRESS_MASK = 0x1FFFF` for the command address, its increments, the FIFO
+entries and fills; the second control word takes bits 2-0 in mode 5 (still 1-0 in
+mode 4, which the die clears and the board does not model further); VRAM is still
+indexed modulo 64 KB, and `sprite_cache_write` already compared 17 bits. Nothing
+else changed. `tests/test_sprite_cache.py`: a write through $10000 changes VRAM and
+not the cache, and the increment carries into bit 16 and wraps at 128 KB -- both fail
+on the code before.
+
+### Result
+
+Against BlastEm, best of its frames n-4..n+4, its levels mapped onto the board's ramp
+(its 27/49/71/103/119/146/157/174/190 are the board's 29/52/70/101/116/144/158/172/187):
+
+| frames (every 25th) | before | after |
+| --- | --- | --- |
+| 4,150-5,075, the rain | 25,057-67,095 of 71,680 pixels | **71,680 of 71,680, every frame** (BlastEm frame n - 1) |
+| 4,100-4,125 and 5,100-6,500 | not scored | identical except 1-4 pixels in 5,675, 5,825, 5,950, 6,525 |
+| 6,550-6,600, the logo over rings | not scored | 53,033-53,226: the board has no blue rings |
+
+The last two rows are unchanged from the code before (same seven frames rendered from
+`HEAD`, identical pixel for pixel) and are not this fault. The 128 KB question makes
+no difference to the demo: the two cache rules give identical pictures in all 101
+sampled frames, 4,100-6,600, so the board keeps its rule and the question is written
+up as unsettled (docs/undocumented-behavior.md, VDP item 24).
+
+### Checks
+
+Triage knob `disable="address_16"` (`scripts/compat_sweep.py`, and in
+`triage_diffs.py`'s list): bit 16 dropped as the command word is taken and the
+increments wrapped at 64 KB. Checked faithful before use: under it both new tests fail
+as they did on the code before, and Overdrive 2's frame 4,600 is identical pixel for
+pixel to the old code's (no rain).
+
+Both suites **133 passed, 1 deselected** (PyPy 197 s, CPython 461 s), ruff clean. The
+romset re-sweep is running at this commit and is reported below when it finishes.
