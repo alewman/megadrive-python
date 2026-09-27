@@ -303,6 +303,12 @@ def _idle_slots(mode: HMode) -> list[int]:
 #: hardware-captured covers the question.
 VSCROLL_LATCH_H = {"H40": (0x149, 0x143), "H32": (0x109, 0x103)}
 
+#: Registers that say where or how the planes' tiles are fetched (the plane, window
+#: and table bases, the scroll modes, the plane size, the window's position, and
+#: register 12's cell width): a write to one freezes every tile whose name has been
+#: fetched, as a name-table write does (``Renderer.catch_up``).
+PLANE_REGISTERS = frozenset({2, 3, 4, 11, 12, 16, 17, 18})
+
 #: Where in its line each 2-cell column's vertical scroll is latched, as (the board's
 #: internal H for column 0, the step per column), planes A and B: column k's word at
 #: first + 16k. Nuked-MD latches plane A's column k at its H counter 16k + 1 and plane
@@ -515,9 +521,9 @@ class VDP:
         # A register write reaches the VDP at once, not through the FIFO, so it too
         # lands part way along the line being drawn.
         if self.renderer.pending:
-            # The backdrop index acts where the colour is looked up, at the output,
-            # which runs behind the H counter (``render.OUTPUT_DELAY``).
-            self.renderer.catch_up(self.mclk - self.line_start, output=number == 7)
+            # Tiles already fetched keep the old state; the output, behind the H counter
+            # (``render.OUTPUT_DELAY``), takes the new one from where it has got to.
+            self.renderer.catch_up(self.mclk - self.line_start, names=number in PLANE_REGISTERS)
         old = self.registers[number]
         self.registers[number] = value
         if number == 0 and (value ^ old) & 0x02 and value & 0x02:
@@ -818,14 +824,16 @@ class VDP:
         """
         fifo = self.fifo
         if self.renderer.pending:
-            # A CRAM write acts at the output, which runs behind the H counter
-            # (``render.OUTPUT_DELAY``); everything else here is drawn at the slot's pixel.
+            # Tiles whose fetch time has come are fetched with VRAM as it stands; the
+            # output is mixed up to where it has got to, behind the H counter
+            # (``render.FETCH_AT``, ``render.OUTPUT_DELAY``).
             entry = fifo[self.fifo_read]
             code = entry[0] if entry[4] else self.code
+            address = entry[1] if entry[4] else self.address
             self.renderer.catch_up(
                 self.mclk - self.line_start,
-                output=(code & 0x0F) == WRITE_CRAM,
-                limit=self._column_limit(code, entry[1] if entry[4] else self.address),
+                names=(code & 0x0F) == WRITE_VRAM and self._in_name_table(address),
+                limit=self._column_limit(code, address),
             )
         dmd = self.registers[23] >> 6
         while (
@@ -906,6 +914,9 @@ class VDP:
                 self._vram_write_128k(address, data)
                 entry[4] = False
             else:
+                # The low byte first, then the high: Nuked-MD's own VRAM writes
+                # (``NMD_VRAMSIG``, with each byte's bank and data) commit a name's tile
+                # index a slot before its attributes, as this does.
                 byte = (data >> 8) if ((address & 1) ^ half) else data & 0xFF
                 self._vram_write_byte((address & 0xFFFE) | half, byte)
                 entry[3] = not half
@@ -947,6 +958,22 @@ class VDP:
             if at is not None and offset > at:
                 self._column_before[index] = self.vsram[index]
         self.vsram[index] = value
+
+    def _in_name_table(self, address: int) -> bool:
+        """Whether a VRAM byte address lies in plane A's, plane B's or the window's
+        name table, whose entries are fetched ahead of the patterns they name."""
+        registers = self.registers
+        size = registers[16]
+        cells = (32, 64, 32, 128)[size & 3] * (32, 64, 32, 128)[(size >> 4) & 3]
+        address &= 0xFFFF
+        tables = [((registers[2] << 10) & 0xE000, cells * 2),
+                  ((registers[4] << 13) & 0xE000, cells * 2)]  # fmt: skip
+        # The window's table only where the line under way shows the window: with no
+        # window its base register is often left at 0, which would make the patterns
+        # at the bottom of VRAM look like names.
+        if self.renderer.shows_window():
+            tables.append(((registers[3] << 10) & 0xF800, 64 * 32 * 2))
+        return any(base <= address < base + length for base, length in tables)
 
     def _column_limit(self, code: int, address: int) -> int | None:
         """For a 2-cell VSRAM write that lands before its column's latch: that column's

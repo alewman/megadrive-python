@@ -138,26 +138,38 @@ source, the way sms-python does.
     refresh. The board follows the two hardware-tier sources, which puts its DMA
     rates on Kabuto's measured formulas and reproduces the Manual's whole table
     ([timing.md](timing.md); milestone 5).
-20. **Where a mid-line write lands.** The board draws a line in pieces, and a change
-    takes effect from the pixel the H counter names when it lands -- except a change
-    that acts where the colour is looked up, which shows **21 pixels further left in
-    H40 and 24 in H32**, because the colour output runs behind the H counter. Kabuto
-    measured one slot of it: H40's second mid-tiles slot "happens at the pixel with
-    X=-3 (display area coordinates)" ("Access timing"), where the board used to put
-    it at 18. Nuked-MD (die-derived) gives the rest: a CRAM write committed at its H
-    counter h shows from output pixel h - 24 on 153 of 154 lines in H40 and 155 of 158
-    in H32, and its H40 slots are numbered three above the board's (the board's $042
-    is its $045), which makes 21 and 24 in the board's terms and puts that slot at
-    -3, as Kabuto has it. A write to register 7 (the backdrop index) shows at the same
-    place, and changes the rest of the line where the board used to keep the line's
-    first value (``scripts/run_output_delay.py``). Both are modelled
-    (``render.OUTPUT_DELAY``). Changes that act where tiles are fetched still take
-    effect at the H counter's pixel. For a **tile pattern row** written mid-line that is
-    right in H40 -- the referee's change lands on the board's pixel on 60 of 79 lines,
-    the rest a slot either way, so there the fetch's lead and the output's delay cancel
-    -- and **8 pixels late in H32** (-8 on 53 of 77 lines): open, not modelled. Not
-    measured at all: name-table writes (fetched a few slots before the patterns) and
-    the plane and scroll registers.
+20. **Where a mid-line write lands: tiles are fetched ahead, colours come out behind.**
+    The VDP fetches each 2-cell group's tiles on a fixed schedule and outputs the
+    pixels later, and a change reaches the picture through whichever stage it acts on.
+    Nuked-MD (die-derived) gives both, and Kabuto measured one point of the second.
+
+    - **The fetch.** For group g, in the die's H counter: plane A's name at 16g + 3
+      and its two pattern rows at 16g + 7 and 9; plane B's name at 16g + 11 and
+      patterns at 16g + 15 and 17; group -1, the partial column fine scroll brings in,
+      in the blank before the display. The same in H40 and H32. Read off the die's own
+      VRAM accesses (``scripts/run_fetch_schedule.py``). So a write to a name table
+      reaches only the groups whose name is fetched after it -- about 21 pixels ahead
+      of their output -- and a pattern write only the cells whose pattern is.
+    - **The output.** The colour is looked up 24 of the die's H counts behind it: a
+      CRAM write committed at h shows from pixel h - 24 (153 of 154 lines in H40, 155
+      of 158 in H32; ``scripts/run_output_delay.py``). Register 7, the backdrop index,
+      shows at the same place, and changes the rest of its line.
+    - **The counters.** The die numbers H40's pixels three above the board's (the
+      board's slot $042 is its $045), so in the board's terms the output runs 21
+      pixels behind in H40 and 24 in H32, which puts H40's slot $012 at X = -3 --
+      Kabuto's "the next one happens at the pixel with X=-3 (display area
+      coordinates)" ("Access timing"), a hardware measurement the die agrees with.
+
+    The board renders in the same two stages (``render.FETCH_AT``,
+    ``render.OUTPUT_DELAY``): at any change it first fetches every tile whose time has
+    come, from the state before the change -- for a change to a name table or to the
+    plane registers, every tile whose name has -- and then mixes up to where the output
+    has got to. It used to do both at the one moment, at the pixel the H counter named:
+    right for patterns in H40 by coincidence, 8 pixels late for them in H32, a slot
+    late for names in both, and 21 or 24 pixels late for colours. Against the die on
+    its test cartridges it now differs only on lines where the 68000's write reached a
+    different access slot. The horizontal scroll table is read at die H $1E9, in the
+    blank, where the board reads it as the display begins: not yet modelled.
 22. **Register $00 bit 0 turns off display generation altogether**, which is not the
     same as blanking: "Setting bit 0 actually turns off all display generation, as
     opposed to the screen blanking feature which simply shows the backdrop color"

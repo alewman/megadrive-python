@@ -68,6 +68,17 @@ if TYPE_CHECKING:
 #: shows". Changes that act where tiles are fetched are not delayed: not measured.
 OUTPUT_DELAY = {"H40": 21, "H32": 24}
 
+#: When each plane's tiles are fetched, in the board's pixel time (its H counter, the
+#: display starting at 0), relative to the start 16g of the 2-cell group g being
+#: fetched: (the group's name, its first cell's pattern row, its second's), planes A
+#: and B. Read off Nuked-MD's own VRAM accesses (``validation/nuked_md_headless.c``,
+#: ``NMD_VRAMSIG``), which in die H are 16g + 3, 7, 9 for plane A and 11, 15, 17 for
+#: plane B in both modes; the die's H40 counter runs three above the board's
+#: (docs/undocumented-behavior.md VDP item 20). Group g shows the screen pixels from
+#: 16g plus the plane's fine scroll; group -1, fetched in the blank, is the partial
+#: column that fine scroll brings in. docs/worklog.md, "Where tiles are fetched".
+FETCH_AT = {"H40": ((0, 4, 6), (8, 12, 14)), "H32": ((3, 7, 9), (11, 15, 17))}
+
 #: The VDP's measured output levels, 0-255, for the 15 steps of its DAC ramp
 #: (Plutiedev ``vdp-color-ramp``: "In a scale from 0 to 255, the approximate values
 #: are: 0, 29, 52, 70, 87, 101, 116, 130, 144, 158, 172, 187, 206, 228, 255. The normal
@@ -349,8 +360,8 @@ class Renderer:
         return (scroll_a, scroll_b, window_first, window_last, window_bug,
                 screen_row, im2, width)  # fmt: skip
 
-    def _plane_span(self, first: int, last: int) -> None:
-        """Draw planes A (with the window over it) and B over the screen pixels
+    def _plane_span(self, first: int, last: int, planes: tuple[int, ...] = (0, 1)) -> None:
+        """Fetch planes A (with the window over it) and B over the screen pixels
         ``first``..``last`` - 1, reading VRAM, VSRAM and the registers as they stand."""
         (scroll_a, scroll_b, window_first, window_last, window_bug,
          screen_row, im2, width) = self._spans  # fmt: skip
@@ -365,6 +376,8 @@ class Renderer:
             (self._line_a, (registers[2] << 10) & 0xE000, scroll_a, 0),
             (self._line_b, (registers[4] << 13) & 0xE000, scroll_b, 1),
         ):
+            if plane not in planes:
+                continue
             if two_cell:
                 # Two-cell column vertical scroll: each 16-pixel column of the display
                 # has its own VSRAM entry (CMD ``genvdp.txt``, register $0B bit 2).
@@ -382,7 +395,7 @@ class Renderer:
                 self._plane_columns(line, base, screen_row + vdp.vscroll_latch[plane],
                                     size, scroll, im2, window_bug, first,
                                     last)  # fmt: skip
-        if window_last >= window_first:
+        if window_last >= window_first and 0 in planes:
             # "Plane A is not shown in any column where plane W is shown" (CMD).
             self._window_line(self._line_a, width, screen_row, window_first, window_last,
                               im2, first, last)  # fmt: skip
@@ -535,6 +548,10 @@ class Renderer:
         # change them: they are done once, here.
         self._sprites(self._line_s, width, row, im2)
         self._spans = self._plane_setup(width, v, row, im2)
+        #: How far each plane has been fetched, and each plane's fine scroll, which
+        #: places its 2-cell groups on the screen (``FETCH_AT``).
+        self._fetched = [0, 0]
+        self._fine = (self._spans[0] & 15, self._spans[1] & 15)
         self._out = out
         self._row = row
         self._width = width
@@ -543,24 +560,58 @@ class Renderer:
         self._line_start = vdp.line_start
         self.pending = True
 
-    def catch_up(self, offset: int, output: bool = False, limit: int | None = None) -> None:
-        """Draw the line under way up to the pixel ``offset`` master clocks into it.
+    def catch_up(self, offset: int, names: bool = False, limit: int | None = None) -> None:
+        """Bring the line under way up to ``offset`` master clocks into it, before
+        something it is drawn from changes (:mod:`megadrive_python.vdp`, ``_slot`` and
+        ``_write_register``).
 
-        Called by the VDP before anything the rest of the line is drawn from changes
-        (:mod:`megadrive_python.vdp`, ``_slot`` and ``_write_register``). ``output``:
-        the change acts where the colour is looked up, which runs ``OUTPUT_DELAY``
-        pixels behind the H counter, so it takes effect that much further left.
-        ``limit``: a pixel not to draw past yet (a 2-cell column still to be latched).
+        Two stages, as on the chip. Every tile whose fetch time (``FETCH_AT``) has come
+        is fetched first, from the state before the change -- with ``names``, for a
+        change to a name table or to where the planes are, every tile whose *name* has
+        been fetched, since its pattern is then read through the old name. Then the
+        output is mixed up to the pixel the H counter names less ``OUTPUT_DELAY``,
+        where the colour output has got to. ``limit``: a pixel not to fetch past yet
+        (a 2-cell column still to be latched).
         """
         if not self.pending or self.vdp.line_start != self._line_start:
             return
         mode = self.vdp.hmode
-        x = mode.position(offset) - mode.display_at
-        if output:
-            x -= OUTPUT_DELAY[mode.name]
-        if limit is not None:
-            x = min(x, limit)
-        self._draw_to(x)
+        t = mode.position(offset) - mode.display_at
+        self._fetch_until(t, names, limit)
+        self._draw_to(t - OUTPUT_DELAY[mode.name])
+
+    def shows_window(self) -> bool:
+        """Whether the line under way shows the window plane anywhere."""
+        return bool(self.pending and self._spans and self._spans[3] >= self._spans[2])
+
+    def fetch_to(self, plane: int, x: int) -> None:
+        """Fetch ``plane`` over the screen pixels up to ``x``, from the state as it
+        stands."""
+        x = min(x, self._width)
+        if x > self._fetched[plane]:
+            self._plane_span(self._fetched[plane], x, (plane,))
+            self._fetched[plane] = x
+
+    def _fetch_until(self, t: int, names: bool, limit: int | None) -> None:
+        """Fetch every cell of both planes whose fetch time is at or before ``t``."""
+        offsets = FETCH_AT[self.vdp.hmode.name]
+        for plane in (0, 1):
+            name_at, even_at, odd_at = offsets[plane]
+            fine = self._fine[plane]
+            # Cells in fetch order, from the partial column (group -1) on: cell c
+            # starts at screen pixel 8c + fine and belongs to group c >> 1.
+            cell = (self._fetched[plane] - fine) // 8
+            while True:
+                group = cell >> 1
+                at = 16 * group + (name_at if names else (odd_at if cell & 1 else even_at))
+                start = 8 * cell + fine
+                if at > t or start >= self._width:
+                    break
+                cell += 1
+            x = max(0, 8 * cell + fine)
+            if limit is not None:
+                x = min(x, limit)
+            self.fetch_to(plane, x)
 
     def finish_line(self) -> None:
         """Draw whatever is left of the line under way."""
@@ -605,7 +656,8 @@ class Renderer:
             self._palette = self._make_palette()
             self.cram_dirty = False
             self._palettes[self._row].append((first, self._palette))
-        self._plane_span(first, last)
+        self.fetch_to(0, last)
+        self.fetch_to(1, last)
         # The backdrop index is read as it stands: a mid-line write to register 7
         # changes the rest of the line (Nuked-MD; docs/worklog.md, "Where a mid-line
         # write shows"), where the board used to keep the line's first value.
