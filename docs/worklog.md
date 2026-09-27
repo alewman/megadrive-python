@@ -4675,6 +4675,33 @@ What is open in Overdrive 2 at the end of this session, every 25th frame to 13,5
 | --- | --- | --- |
 | 550-1,150 (4) | the pong screen's static | uninitialised memory; nothing to match |
 | 5,675-6,525 (4) | 1-4 pixels each | not looked at |
-| 7,700-8,075 (7) | parts of the picture a frame out of step (grid scroll against objects) | not started; Session 9's one-frame register lag at 7,047 is the first suspect |
+| 7,700-8,075 (7) | parts of the picture a frame out of step (grid scroll against objects) | pacing, not drawing (below) |
 | 8,150-9,125 (25) | 16-517 pixels, the B-masked debug-register scenes | not started |
 | 9,175-9,725 (23) | where a mid-line CRAM change starts | kept: die-measured (item 20) |
+
+### 7,650-7,760: the 3D console is paced differently, not drawn differently
+
+Every frame of 7,650-8,100 was scored on both (`compare_frames.py`): the frames that
+differ come about every fourth frame (7,666, 7,670, 7,674, ...), about 6,500 pixels
+each, with the frames between identical. In a differing frame the rows above and
+below the rotating 3D Mega Drive are BlastEm's frame n - 2, as everywhere in this
+stretch, and the object's rows match none of BlastEm's frames: the grid comes from
+one frame and the object from another.
+
+The object is rendered in software by the 68000 and swapped in when an image is done,
+a new image every 3-5 frames. Labelling each frame by the object's own pixels (the
+grey ones) on both:
+
+| images | 1-3 | 4-10 | 11-20 | 21-25 | 26-27 |
+| --- | --- | --- | --- | --- | --- |
+| board's first frame after BlastEm's | 2 | 3 | 4 | 3 | 2 |
+
+against a constant 2 for the grid, and both emulators take 106 frames for images 0 to
+26. So the board renders the object at BlastEm's average rate and only the phase of
+the image swaps drifts, by up to two frames and back: an image that finishes close
+to a frame's end lands on the other side of it. That is a sub-frame difference in how
+much 68000 time a frame gives (bus stalls: the work-RAM refresh rule is the open item
+most likely to move it), and there is no judge for it here -- BlastEm's 68000 timing
+is an approximation, and Nuked-MD cannot run Overdrive 2 to frame 7,650 (it does not
+get past its first frame, and at 0.24 fps would take nine hours). Left open; not
+worth changing the board to follow a detector.
