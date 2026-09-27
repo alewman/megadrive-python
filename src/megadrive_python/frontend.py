@@ -180,7 +180,12 @@ class Frontend:
         (SCALED, nearest-neighbour) and presents it at the display's refresh (vsync),
         so a frame is never shown half-drawn. pygame offers vsync only with SCALED."""
         pg = self.pg
-        flags = pg.SCALED | pg.RESIZABLE | (pg.FULLSCREEN if self.fullscreen else 0)
+        # Not RESIZABLE: the window is resized by us (a console mode change), never by
+        # the user dragging it, and SDL/pygame-ce 2.5.8 segfaults on a set_mode() resize
+        # of a RESIZABLE SCALED window (reproduced headless under SDL_VIDEODRIVER=dummy
+        # with no Window API involved at all: 3 plain set_mode() calls at changing sizes
+        # is enough; dropping RESIZABLE alone was the only flag change that survived it).
+        flags = pg.SCALED | (pg.FULLSCREEN if self.fullscreen else 0)
         try:
             surface = pg.display.set_mode(size, flags, vsync=1)
         except pg.error:  # no vsync on this display: tearing, but a picture

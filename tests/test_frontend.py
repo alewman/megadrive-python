@@ -86,3 +86,37 @@ def test_the_window_runs_headless(tmp_path) -> None:
         frontend.close()
     finally:
         pygame.quit()
+
+
+def test_the_window_survives_a_resolution_change(tmp_path) -> None:
+    """H32/H40, V28/V30 or interlace changing mid-game calls ``_open_window`` again
+    (``draw``, "H32/H40, V28/V30 or interlace changed"). SDL/pygame-ce 2.5.8 segfaults
+    on a second ``set_mode()`` resize of a window opened with the ``RESIZABLE`` flag
+    (reproduced with no Frontend and no Window API at all: three plain ``set_mode()``
+    calls at changing sizes is enough); this is why ``_open_window`` does not pass it."""
+    pytest.importorskip("pygame")
+    import pygame
+    import pygame._sdl2.controller
+
+    from megadrive_python.frontend import Frontend
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    rom = bytearray(0x10000)
+    rom[0:4] = (0x00FFFE00).to_bytes(4, "big")
+    rom[4:8] = (0x00000200).to_bytes(4, "big")
+    rom[0x100:0x110] = b"SEGA GENESIS    "
+    rom[0x200:0x202] = bytes.fromhex("60fe")  # bra.s *
+    path = tmp_path / "loop.bin"
+    path.write_bytes(bytes(rom))
+    pygame.display.init()
+    pygame._sdl2.controller.init()
+    try:
+        frontend = Frontend(pygame, path, "genesis", scale=1, audio=False, fullscreen=False)
+        for width, height in [(256, 224), (352, 240), (320, 224), (320, 448), (256, 224)]:
+            frontend.frame = [[0] * width for _ in range(height)]
+            frontend.draw()  # would segfault the whole process if it regressed
+            assert frontend.frame_size == (width, height)
+        frontend.close()
+    finally:
+        pygame.quit()
