@@ -4356,3 +4356,73 @@ PAL frames a second, not the 0.33 first estimated.
 
 So frame 10,000's missing region (the scene has shadow/highlight on) stays open, with
 the die unable to judge it until the demo runs on it.
+
+## Session 12 (2026-09-27): milestone 9, the desktop frontend
+
+### What the brief asks, and how it was read
+
+"A desktop frontend, after sms-python's (audio-paced, vsync, pads)", with pygame-ce as
+an optional extra and sms-python's design copied, not imported. There is no acceptance
+number; full speed on PyPy "is a goal to measure, not a promise".
+
+### What was built
+
+`src/megadrive_python/frontend.py`, from sms-python's `frontend.py` (same author, MIT):
+pure conversions tested without pygame; a SCALED window presented at the display's
+refresh; SDL's audio thread draining a queue that paces the console a frame at a time;
+keyboard and game controllers through SDL; Tab fast-forward, F3 pause, F5 power cycle,
+F11 fullscreen, F12 screenshot. What is the Mega Drive's own:
+
+- **Pads**: the 3- and 6-button pads' bit masks, the keyboard's Z X C / A S D rows
+  for A B C / X Y Z and Q for Mode, and a controller's face buttons laid out as the
+  Mega Drive's own row (A B C as X A B, X Y Z on the shoulders and Y).
+- **The machine** from the header's "Country in which the product can be released"
+  at $1F0, "Japan: J, USA: U, Europe: E" (the Manual, PDF page 130): the NTSC Genesis
+  if it names the USA, the PAL Mega Drive if Europe only, the Japanese one if Japan
+  only, the Genesis otherwise; `--machine` overrides it.
+- **Sound** is the board's own mix (`System.take_audio`, FM and PSG through the audio
+  path at 44,100 Hz), so the frontend only packs it for SDL.
+- **Battery RAM** (`--save`) read at power-on and written at exit and at F5, and
+  **TMSS** (`--tmss-rom`), as the command line has them.
+- The first frame after power-on can be empty -- the renderer hands out finished
+  frames only -- so a black one stands in until one has finished.
+
+Not built: the console's reset button. The Mega Drive's resets the 68000 without a
+power cycle, and the board has no path for it yet; F5 power-cycles.
+
+### Speed, measured
+
+PyPy 3.11.15, a shared machine (load average 4-8 of 32 cores during these), so lower
+bounds:
+
+| cartridge | FM on | FM off | FM off, one frame in 3 drawn |
+| --- | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 16.7-17.3 | 39.8-41.4 | 56.4 |
+| Streets of Rage 2 (USA) | 21.3 | 55.5 | -- |
+| Gunstar Heroes (USA) | 16.4-19.3 | 37.3-39.8 | 53.6 |
+
+The YM2612 is about two-thirds of a frame's time with it on; skipping frames does
+nothing for that (17-21 frames a second whatever is drawn). So the frontend degrades
+rather than pretends: paced by the audio queue while the board keeps up, flat out when
+it does not, with the console's speed as a percentage in the title bar; `--no-fm`
+turns the FM generator off (its registers, timers and BUSY still run, so a game
+behaves the same) and `--skip N` draws one frame in N + 1. Real time with sound needs
+the FM generator faster -- milestone 4 left flattening its seventeen stages for a
+session that can re-run all eighteen of its referee streams afterwards.
+
+The README had said the board runs "138 to 205 [frames a second] without" sound; that
+was milestone 4's "silent" column, a board with no sound chips at all, before the
+per-slot renderer and the timing work. It now gives today's measurement and its basis.
+
+### Checks
+
+`tests/test_frontend.py`: the conversions, the sound buffer, the header's country
+codes, a key for every pad button, and the real window loop run headless under SDL's
+dummy drivers on a cartridge that loops (skipped where pygame-ce is not installed, as
+in CI). A run on Sonic under the dummy drivers, three ways: 90 frames drawn in 4.5 s
+with the FM, 2.1 s without, and 180 console frames in 4.4 s drawing one in two;
+screenshots written. Both suites **126 passed, 1 deselected** (PyPy 189 s, CPython
+456 s), ruff clean. Two warnings in the headless test: SDL's dummy driver has "no fast
+renderer", and pygame-ce 2.5 deprecates `Window.from_display_module`, which sizes the
+window here as it does in sms-python; its replacement is the whole `Window` API, which
+asks for vsync differently, and that move is left for both frontends together.

@@ -19,7 +19,13 @@ dependencies = [
     "z80-python>=0.4.0",
 ]
 
+[project.scripts]
+megadrive-python-play = "megadrive_python.frontend:main"
+
 [project.optional-dependencies]
+# The desktop window (megadrive_python.frontend): SDL through pygame-ce, which ships PyPy
+# wheels. The board itself stays dependency-free.
+frontend = ["pygame-ce>=2.5"]
 dev = [
     "pytest>=8",
     # Pinned: `ruff format --check` in CI must see the formatter the tree was formatted with.

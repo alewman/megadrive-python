@@ -9,7 +9,7 @@ them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
-**Status: milestones 1 to 7 of ten** ([docs/validation.md](docs/validation.md),
+**Status: milestones 1 to 9 of ten** ([docs/validation.md](docs/validation.md),
 "Certification record"): both CPUs run in lockstep with MAME over six games
 (119.8 M 68000 and 73.0 M Z80 instructions, every difference named); the VDP's
 ports, FIFO, DMA, counters and interrupts pass VDPFIFOTesting (122/122; a Genesis 3
@@ -25,7 +25,10 @@ models cycle by cycle: 524 million values of the YM2612's two DAC pins and its s
 byte over eighteen register streams, and 80 million input clocks of the PSG's, none
 different. `--wav` writes what a console would have played; the FM costs about three
 seconds of wall time per emulated second on PyPy, which is most of why the board runs
-at 17 to 21 frames a second with sound and 138 to 205 without. Bus timing is in as
+at 16 to 21 frames a second with sound and 40 to 55 with the FM generator off
+(`--no-sound`; measured 2026-09-27 on a shared machine, so lower bounds; the 138 to 205
+this line used to give was milestone 4's board with no sound chips at all, before the
+per-slot renderer and the timing work). Bus timing is in as
 well: the arbiter charges a Z80 bank access the 2 to 5 cycles Kabuto's footnote 1
 gives and the 68000 about 11, which reproduces MoD's logic-analyser range exactly with
 the 68000 off the bus and lands on his mean, 2.91 against his 2.93, with it on the bus;
@@ -76,6 +79,26 @@ groundwork it was built from, in the shape that built
 - a handoff brief with ten milestones.
 
 See [docs/README.md](docs/README.md).
+
+## Playing a cartridge
+
+Milestone 9 is a window, after sms-python's: picture, stereo sound, the keyboard and
+game controllers, paced by the audio queue and presented at the display's refresh.
+
+```
+.venv-pypy/bin/pip install -e ".[frontend]"      # pygame-ce, which has PyPy wheels
+.venv-pypy/bin/megadrive-python-play "Sonic The Hedgehog (USA, Europe).zip"
+```
+
+Arrows, Z X C (or J K L) for A B C, A S D for X Y Z, Enter for Start, Q for Mode; Tab
+to fast-forward, F3 pause, F5 power cycle, F11 fullscreen, F12 screenshot. The machine
+comes from the header's country codes unless `--machine` names one; `--pad 6button`,
+`--save FILE` for battery RAM, `--tmss-rom` to boot through TMSS.
+
+**It does not reach full speed yet.** With the YM2612 running the board makes 16 to 21
+frames a second on PyPy, about a third of real time; `--no-fm` turns the FM generator
+off (the game runs the same, silent but for the PSG) and `--skip N` draws one frame in
+N + 1, which together come close to 60. The title bar shows the speed.
 
 ## The machine
 
