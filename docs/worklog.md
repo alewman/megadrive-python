@@ -4426,3 +4426,29 @@ screenshots written. Both suites **126 passed, 1 deselected** (PyPy 189 s, CPyth
 renderer", and pygame-ce 2.5 deprecates `Window.from_display_module`, which sizes the
 window here as it does in sms-python; its replacement is the whole `Window` API, which
 asks for vsync differently, and that move is left for both frontends together.
+
+### The reset button
+
+Asked after milestone 9: is the 68000 core missing a lifecycle event? No.
+m68000-python's `reset()` is the reset exception (UM 6.3.1), callable between any two
+steps, and since `1f43e0b` (after this board's pin, `51ee1a5`) a fault during it halts
+the processor as a double bus fault -- which is also the answer to `polish.md`'s last
+decision row, the odd initial PC, when the pin moves. The missing piece was the board's.
+
+What the button does, from hardware (forum t=1262, pinned): Charles MacDonald measured
+the reset signals -- VRES# "to 68000 and cartridge connector", SRES# (the VDP, the I/O
+chip, the 315-5364) "only asserted on a cold boot" -- and Eke, against the 68000's
+clock, that "when RESET button is pressed, !ZRES is held low at the same time as !VRES
+and !HALT on 68k side... but remains low after that until software enables it again.
+68k RESET pulse is asserted for 128 VCLK".
+
+`System.press_reset()`: ZRES asserted at once through the same path an $A11200 write
+takes (now `Board.set_z80_reset`), and at the 68000's next step 128 of its clocks held
+in reset with the rest of the machine running, then the reset exception; the VDP, the
+I/O chip and the cartridge are left alone. The frontend's Backspace presses it.
+`tests/test_reset_button.py`: the 68000 boots again and work RAM keeps its count; ZRES
+is held from the press until the game's own $A11200 write; the VDP keeps its registers;
+the pulse costs 128 + 42 clocks; a halted 68000 comes back. On Sonic, a press at frame
+400 goes back to the SEGA logo, and the game releases the Z80 itself.
+
+Both suites **131 passed, 1 deselected** (PyPy 186 s, CPython 456 s), ruff clean.

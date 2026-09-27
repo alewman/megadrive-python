@@ -45,7 +45,7 @@ BUFFER_FRAMES = 3
 
 HELP = """\
 Arrows       D-pad              Z X C / J K L   A B C          A S D   X Y Z
-Enter        Start              Q               Mode
+Enter        Start              Q               Mode           Backspace   reset button
 Tab (hold)   fast forward       F3              pause          F5      power cycle
 F11          fullscreen         F12             screenshot     Esc     quit"""
 
@@ -316,6 +316,10 @@ class Frontend:
             if event.key == pg.K_F3:
                 self.paused = not self.paused
                 self.sound.clear()
+            elif event.key == pg.K_BACKSPACE:
+                # The console's reset button: the 68000, the Z80 and the YM2612, not a
+                # power cycle (System.press_reset). One press per key down.
+                self.system.press_reset()
             elif event.key == pg.K_F5:
                 self._save_battery()
                 self.system = self._power_on()

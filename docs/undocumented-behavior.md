@@ -46,6 +46,15 @@ source, the way sms-python does.
    since the timing session (open item 16).
 8. **The bank register** is written a bit at a time; the result of a partial
    sequence is unknown (CMD could not find it).
+9. **The reset button is not a power cycle.** It pulses VRES#, which goes "to 68000
+   and cartridge connector": "the 68k RESET pulse is asserted for 128 VCLK", with
+   /HALT, and "!ZRES is held low at the same time ... but remains low after that until
+   software enables it again", so the Z80 and the YM2612 stay in reset until the game
+   writes $A11200. SRES#, which resets the VDP and the I/O chip, "is only asserted on
+   a cold boot". Hardware measurements by Charles MacDonald and Eke (forum t=1262). The
+   board does exactly that (``System.press_reset``). Not modelled: the switch-to-pulse
+   delay, "Minimum is 2.1ms" and variable; what a cartridge's own board does with
+   VRES# (none of these sources says).
 
 ## The VDP
 

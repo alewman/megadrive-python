@@ -188,6 +188,16 @@ class Board:
             return self.tmss_cartridge
         return self.cartridge
 
+    def set_z80_reset(self, held: bool, t: int) -> None:
+        """Drive ZRES, the Z80's and YM2612's shared reset line, at MCLK ``t``: from a
+        write to $A11200, or from the console's reset button (``System.press_reset``)."""
+        self.catch_up_z80(t, stopping=held and self.z80_running)
+        if held != self.z80_reset:
+            self.z80_reset = held
+            self.sound_sync(t)
+            self.fm.reset_line(held)
+            self.on_z80_reset(held)
+
     def _tmss_select(self, cartridge: bool) -> None:
         """Bit 0 of $A14101: 1 puts the cartridge on the bus, 0 the boot ROM."""
         if self.tmss_rom is None or cartridge == self.tmss_cart_selected:
@@ -613,13 +623,7 @@ class Board:
                 self.catch_up_z80(t)
             self.z80_bus_requested = request
         elif offset & 0xFF00 == 0x1200:
-            held = not high & 1
-            self.catch_up_z80(self.m68k_access_clock(), stopping=held and self.z80_running)
-            if held != self.z80_reset:
-                self.z80_reset = held
-                self.sound_sync(self.m68k_access_clock())
-                self.fm.reset_line(held)
-                self.on_z80_reset(held)
+            self.set_z80_reset(not high & 1, self.m68k_access_clock())
         elif offset & 0xFF00 == 0x3000:
             self.cartridge.write_time(address | 1, low)
         elif offset & 0xFF00 == 0x4100:

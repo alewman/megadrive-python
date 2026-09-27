@@ -90,8 +90,10 @@ game controllers, paced by the audio queue and presented at the display's refres
 .venv-pypy/bin/megadrive-python-play "Sonic The Hedgehog (USA, Europe).zip"
 ```
 
-Arrows, Z X C (or J K L) for A B C, A S D for X Y Z, Enter for Start, Q for Mode; Tab
-to fast-forward, F3 pause, F5 power cycle, F11 fullscreen, F12 screenshot. The machine
+Arrows, Z X C (or J K L) for A B C, A S D for X Y Z, Enter for Start, Q for Mode;
+Backspace for the console's reset button (the 68000 and the sound CPU, as on hardware,
+not a power cycle); Tab to fast-forward, F3 pause, F5 power cycle, F11 fullscreen, F12
+screenshot. The machine
 comes from the header's country codes unless `--machine` names one; `--pad 6button`,
 `--save FILE` for battery RAM, `--tmss-rom` to boot through TMSS.
 

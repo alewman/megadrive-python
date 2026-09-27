@@ -47,6 +47,11 @@ from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
 MAX_Z80_T = 23
 
 
+#: 68000 clocks the reset button holds the 68000 in reset: "68k RESET pulse is asserted
+#: for 128 VCLK" (Eke, forum t=1262; VCLK is the 68000's clock).
+RESET_PULSE_CLOCKS = 128
+
+
 class System:
     """Machine + cartridge, ready to run."""
 
@@ -79,6 +84,9 @@ class System:
         #: Instructions the Z80 left for later because the 68000 took its bus in the
         #: middle of them (catch_up_z80).
         self.z80_deferred = 0
+        #: The reset button has been pressed and the 68000 not yet reset
+        #: (:meth:`press_reset`).
+        self.reset_pressed = False
         # Power-on: the 68000 takes its reset vector; the Z80 is held in reset.
         self.mclk = self.m68k.reset() * M68K_DIVIDER
         self._z80_reset_line(True)
@@ -245,9 +253,39 @@ class System:
             z80.restore_state(state)
         return offsets, written, sorted({*(e for e in ends if e < total), total})
 
+    def press_reset(self) -> None:
+        """The console's reset button: not a power cycle.
+
+        Measured on hardware (forum t=1262): the button pulses VRES#, which goes "to
+        68000 and cartridge connector", and "the 68k RESET pulse is asserted for 128
+        VCLK" with /HALT (Charles MacDonald, and Eke against the 68000's clock); "when
+        RESET button is pressed, !ZRES is held low at the same time ... but remains low
+        after that until software enables it again" (Eke), so the Z80 and the YM2612
+        are held in reset until the game writes $A11200. SRES#, which resets the VDP
+        and the I/O chip, "is only asserted on a cold boot", so they are left alone,
+        as is the cartridge's board (what one does with VRES# is not in these sources).
+
+        ZRES is asserted now; the 68000 is held and reset at its next step. The
+        variable delay from the switch to the pulse -- "Minimum is 2.1ms" -- is not
+        modelled: the pulse starts at the next instruction.
+        """
+        self.board.set_z80_reset(True, self.mclk)
+        self.reset_pressed = True
+
     def step(self) -> int:
         """One 68000 instruction, then the Z80 up to the same time; returns MCLK."""
         board, cpu, vdp = self.board, self.m68k, self.vdp
+        if self.reset_pressed:
+            # The 68000 is held in reset for the pulse, the rest of the machine running
+            # on, then takes the reset exception (which brings a halted one back too).
+            self.reset_pressed = False
+            start = self.mclk
+            vdp.sync(start)
+            cpu.clock += RESET_PULSE_CLOCKS
+            elapsed = (RESET_PULSE_CLOCKS + cpu.reset()) * M68K_DIVIDER
+            self.mclk = start + elapsed
+            self.catch_up_z80(self.mclk)
+            return elapsed
         owed = board.m68k_pending_stall
         if owed:
             # What the arbiter charged the 68000 for Z80 bank accesses made in the wake
