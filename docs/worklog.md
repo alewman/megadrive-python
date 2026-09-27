@@ -4705,3 +4705,14 @@ most likely to move it), and there is no judge for it here -- BlastEm's 68000 ti
 is an approximation, and Nuked-MD cannot run Overdrive 2 to frame 7,650 (it does not
 get past its first frame, and at 0.24 fps would take nine hours). Left open; not
 worth changing the board to follow a detector.
+
+**7,930-8,090, the same, bigger.** Labelled the same way (the grey pixels of the
+console and the TITAN sign), 50 of the board's 51 object images are BlastEm's images
+exactly (the 51st is one transitional frame at 8,088), but the board falls behind
+BlastEm by 4, 3, 5, 8 and 4 frames at images 1, 10, 20, 30 and 40: images 19-30 take
+it 48 frames against BlastEm's 45, some 6% less 68000 work a frame in this stretch,
+and it catches up at the scene's end. Still pacing, not drawing, but a throughput
+difference rather than a phase: what takes the 68000's time here (refresh stalls, DMA
+contention) is modelled differently on the two, and BlastEm is not a judge of it. Open,
+with the same lack of a judge; a cycle profile of one image on each side would be the
+next step if it is taken up.
