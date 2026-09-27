@@ -88,6 +88,7 @@ static unsigned short plot_vcount[PLOT_LINES]; /* the die's V counter at each ro
 static FILE *vdpsig_file = 0;
 static uint64_t vdpsig_from = 0, vdpsig_to = ~0ull;
 static int vs_watch = -1; /* NMD_VSRAM_WATCH: one more VSRAM word to log */
+static FILE *vram_file = 0; /* NMD_VRAMSIG: the VRAM access log (vram_sample) */
 
 static void plot_write(void)
 {
@@ -293,6 +294,7 @@ static void setup(void)
     if ((s = getenv("NMD_VDPSIG_FROM"))) vdpsig_from = strtoull(s, 0, 0);
     if ((s = getenv("NMD_VDPSIG_TO"))) vdpsig_to = strtoull(s, 0, 0);
     if ((s = getenv("NMD_VSRAM_WATCH"))) vs_watch = (int)strtol(s, 0, 0);
+    if ((s = getenv("NMD_VRAMSIG"))) vram_file = fopen(s, "w");
     if ((s = getenv("NMD_PLOT_FRAME"))) plot_frame = strtol(s, 0, 0);
     if ((s = getenv("NMD_PLOT_FRAMES"))) plot_count_frames = strtol(s, 0, 0);
     if ((s = getenv("NMD_TRACE"))) {
@@ -305,6 +307,10 @@ static void setup(void)
 static void finish(void)
 {
     flush_events();
+    if (vram_file) {
+        fclose(vram_file);
+        vram_file = 0;
+    }
     if (vdpsig_file) {
         fclose(vdpsig_file);
         vdpsig_file = 0;
@@ -357,6 +363,68 @@ static void vdpsig_sample(void)
         fprintf(vdpsig_file, "%llu W0 %d %d %d\n", (unsigned long long)mcycles, vs_w0 = v->vsram[0], v->l106[1], v->l105[1]);
 }
 
+/* The VDP's VRAM accesses, when asked for (NMD_VRAMSIG=file, inside the NMD_VDPSIG
+   window): rebuilt from the VDP's DRAM pins by the ordinary DRAM protocol -- the row
+   address on /RAS falling, the column on /CAS falling -- and logged as the raw chip
+   address (row << 8 | column) with the die's H and V counters:
+
+     R addr H V   a random-port read (/RAS, /CAS and /OE low, not a transfer)
+     W addr H V bank data   a write (/WE0 low: bank 0, data on AD; /WE1: bank 1, RD)
+     T addr H V   a transfer cycle (/OE low as /RAS falls): a row to the serial port,
+                  starting at the column /CAS gives
+     S n H V      the serial port shifts out its next byte (SC rising), n-th since T
+
+   Which linear VRAM address a chip address is, is not assumed here; it is read off a
+   test cartridge's known layout (docs/worklog.md). */
+static int vr_ras = 1, vr_cas = 1, vr_oe = 1, vr_sc = 0, vr_row = 0, vr_dt = 0, vr_ser = 0;
+static int vr_read = 0, vr_write = 0;
+
+static void vram_sample(void)
+{
+    const vdp_t *v = &ym.vdp;
+    int ras = v->o_vram_ras, cas = v->o_vram_cas, oe = v->o_vram_oe1, sc = v->o_vram_sc;
+    int writing = !v->o_vram_we0 || !v->o_vram_we1;
+    int addr, reading;
+    if (!vram_file || mcycles < vdpsig_from || mcycles >= vdpsig_to)
+        return;
+    if (vr_ras && !ras) {
+        vr_row = v->o_vram_ad & 255;
+        vr_dt = !oe;
+    }
+    if (vr_dt && !ras && vr_cas && !cas) {
+        /* a transfer's column arrives with /CAS: it is where the serial port starts */
+        fprintf(vram_file, "T %d %d %d\n", vr_row << 8 | (v->o_vram_ad & 255), v->l106[1],
+                v->l105[1]);
+        vr_ser = 0;
+    }
+    addr = vr_row << 8;
+    if (!ras && vr_cas && !cas)
+        addr |= v->o_vram_ad & 255;
+    if (!ras && !cas) {
+        static int col = 0;
+        if (vr_cas)
+            col = v->o_vram_ad & 255;
+        addr = vr_row << 8 | col;
+        reading = !oe && !vr_dt;
+        if (reading && !vr_read)
+            fprintf(vram_file, "R %d %d %d\n", addr, v->l106[1], v->l105[1]);
+        if (writing && !vr_write)
+            /* the bank the byte goes to (/WE0 -> 0, /WE1 -> 1) and its data pins */
+            fprintf(vram_file, "W %d %d %d %d %d\n", addr, v->l106[1], v->l105[1],
+                    v->o_vram_we0 ? 1 : 0, (v->o_vram_we0 ? v->o_vram_rd : v->o_vram_ad) & 255);
+        vr_read = reading;
+        vr_write = writing;
+    } else {
+        vr_read = vr_write = 0;
+    }
+    if (!vr_sc && sc)
+        fprintf(vram_file, "S %d %d %d\n", vr_ser++, v->l106[1], v->l105[1]);
+    vr_ras = ras;
+    vr_cas = cas;
+    vr_oe = oe;
+    vr_sc = sc;
+}
+
 /* Called once per half-MCLK, after md.c has resolved every bus. */
 void Audio_Update(void)
 {
@@ -366,6 +434,7 @@ void Audio_Update(void)
         setup();
 
     vdpsig_sample();
+    vram_sample();
 
     for (i = 0; i < presses; i++)
         if (mcycles == press_at[i])
