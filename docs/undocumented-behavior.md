@@ -248,6 +248,27 @@ source, the way sms-python does.
     address that happens to be covered by the sprite cache it will get updated" reads
     as the rearranged address, which the board uses; BlastEm checks the address as
     written and stores both bytes. The demo's pictures are identical either way.
+25. **The sprite line buffer keeps a transparent pixel's palette, and a line's sprites
+    are read a line ahead.** Kabuto, "Precise details of sprite rendering"
+    (hardware-measured research): the buffer holds "7 bits per pixel: colour ...,
+    palette, priority", and "only transparent pixels (i.e. the 4 bits that come from
+    tile data are 0; palette and priority are ignored for this check) will get
+    overwritten with the 7 bits from the current sprite ... with certain debug flags
+    set, transparent pixels' palettes ... play an important role because these are
+    always overwritten so the sprite which contributes last wins". And phase 1 scans
+    the cache "2 H-borders before the raster line to be rendered", phase 2 reads X
+    and pattern "1 raster line before". The board kept opaque pixels only and ran all
+    three phases as the line began. **Overdrive 2's ring scene** (frames 6,540-7,060)
+    shows both: with the debug register's sprite plane forced on (bits 8-7 = 01), its
+    blue and magenta rings are palette entry 0 of transparent sprite pixels, and it
+    points register 5 at another table in the blank before its last line, after that
+    line's sprites were read. The board now scans (phases 1 and 2) when the line
+    before begins and draws (phase 3) when the line begins; a line nothing scanned
+    for is scanned as it begins, as before. Line granularity only: phase 2's reads
+    are taken at the start of the line before, not slot by slot. Not measured: a
+    transparent pixel's priority in shadow/highlight ("sometimes", Kabuto), and what
+    a line after a display-off line gets (Kabuto: "No sprites are checked while
+    display is disabled").
 
 ## The pads and the I/O chip
 

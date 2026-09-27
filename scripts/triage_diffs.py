@@ -160,6 +160,8 @@ def sensitivity(name: str, seconds: int, window: int) -> dict:
         "the 2-cell column latch": "column_latch",
         "the planes' fetch schedule": "fetch_schedule",
         "the 17-bit command address": "address_16",
+        "the sprite scan a line ahead": "sprite_scan",
+        "transparent sprite pixels' palette": "sprite_transparent",
     }
     try:
         results = {}

@@ -143,6 +143,29 @@ def _address_16(board) -> None:
     vdp._control_write = sixteen
 
 
+def _sprites_at_line(board) -> None:
+    """Undo the sprite scan a line ahead (docs/undocumented-behavior.md, VDP item 25):
+    nothing is ever scanned ahead, so each line reads its sprites when it begins."""
+    board.vdp.renderer._scan_ahead = lambda row, im2: None
+
+
+def _opaque_sprite_buffer(board) -> None:
+    """Undo transparent sprite pixels' palette in the line buffer (VDP item 25): the
+    buffer keeps opaque pixels only, as the board's did before. Clearing the
+    transparent entries after each draw gives exactly that buffer, since a transparent
+    entry never stops an opaque pixel landing."""
+    renderer = board.vdp.renderer
+    draw = renderer._sprite_draw
+
+    def opaque(line, width, latched, im2):
+        draw(line, width, latched, im2)
+        for x in range(width):
+            if not line[x] & 15:
+                line[x] = 0
+
+    renderer._sprite_draw = opaque
+
+
 DISABLE = {
     "work_refresh": lambda board: setattr(board, "ram_refresh_due", 1 << 62),
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
@@ -150,6 +173,8 @@ DISABLE = {
     "vscroll_latch": _live_vscroll,
     "column_latch": _live_columns,
     "address_16": _address_16,
+    "sprite_scan": _sprites_at_line,
+    "sprite_transparent": _opaque_sprite_buffer,
 }
 #: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
 #: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the
