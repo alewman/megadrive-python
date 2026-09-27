@@ -4734,7 +4734,7 @@ running: the 68000 is still busy at frame 100, and the captured pictures from fr
 show the opening -- the ship fading in through its green, cyan, yellow and grey tints
 -- as BlastEm draws it at frames 30-67. So Overdrive 2 is now a referee run, at about
 25 frames of offset for the reboot. Measured speed on the shared machine: 100 frames
-in about 17 minutes.
+in 13 minutes (0.13 frames a second, with the romset sweep running beside it).
 
 The board does not freeze on the first run, and the note says real hardware does;
 what the board does differently in the Z80 start-up is a question for later.
