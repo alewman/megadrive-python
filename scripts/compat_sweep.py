@@ -166,6 +166,23 @@ def _opaque_sprite_buffer(board) -> None:
     renderer._sprite_draw = opaque
 
 
+def _opaque_planes(board) -> None:
+    """Undo transparent plane pixels' palette and priority (docs/undocumented-behavior.md,
+    VDP item 26): after each fetch the planes keep opaque pixels only, as they did
+    before, so a transparent high-priority tile no longer stops the shadow."""
+    renderer = board.vdp.renderer
+    span = renderer._plane_span
+
+    def opaque(first, last, planes=(0, 1)):
+        span(first, last, planes)
+        for line in (renderer._line_a, renderer._line_b):
+            for x in range(first, min(last, len(line))):
+                if not line[x] & 15:
+                    line[x] = 0
+
+    renderer._plane_span = opaque
+
+
 DISABLE = {
     "work_refresh": lambda board: setattr(board, "ram_refresh_due", 1 << 62),
     "cart_refresh": lambda board: setattr(board, "cart_refresh_due", 1 << 62),
@@ -175,6 +192,7 @@ DISABLE = {
     "address_16": _address_16,
     "sprite_scan": _sprites_at_line,
     "sprite_transparent": _opaque_sprite_buffer,
+    "plane_transparent": _opaque_planes,
 }
 #: ``disable="dma_startup"`` is not a board knob either: it takes Kabuto's measured
 #: 5.6-cycle DMA start-up back out of the VDP (milestone 5's open item 15, which the
@@ -190,6 +208,10 @@ DISABLE = {
 #: ``disable="fetch_schedule"`` replaces the planes' measured fetch times
 #: (``render.FETCH_AT``) with each cell fetched as the screen reaches it, as the board
 #: did before them. Patched and restored the same way.
+#:
+#: ``disable="vertical_border"`` puts back the border started from the latched V28/V30
+#: mode's blanking line (``vdp.LIVE_BORDER``, docs/undocumented-behavior.md VDP item
+#: 27), a module global patched and restored like the DMA start-up.
 #:
 #: ``disable="mame_sram"`` is not a board knob but a cartridge one: it puts the
 #: board on MAME's ``rom_sramsafe``, the 64 KB of battery RAM at $200000 its file
@@ -214,6 +236,10 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     mask = vdp_module.ADDRESS_MASK
     if disable == "address_16":
         vdp_module.ADDRESS_MASK = 0xFFFF
+    live_border = vdp_module.LIVE_BORDER
+    if disable == "vertical_border":
+        # the border from the latched mode's blanking line (VDP item 27), as before
+        vdp_module.LIVE_BORDER = False
     if disable == "fetch_schedule":
         # every cell fetched as the screen reaches it, both planes alike: the board's
         # draw-time fetch before the schedule
@@ -332,6 +358,7 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
         render_module.OUTPUT_DELAY.update(delay)
         render_module.FETCH_AT.update(schedule)
         vdp_module.ADDRESS_MASK = mask
+        vdp_module.LIVE_BORDER = live_border
         row["seconds"] = f"{time.time() - started:.1f}"
     return row
 

@@ -4556,3 +4556,95 @@ pixel to the old code's (no rain).
 
 Both suites **133 passed, 1 deselected** (PyPy 197 s, CPython 461 s), ruff clean. The
 romset re-sweep is running at this commit and is reported below when it finishes.
+
+### The re-sweep for the address
+
+`scripts/compat_sweep.py --seconds 10 --jobs 16 --window 12 --offsets`, 17,115 s:
+**0 of 3,514 rows moved** against the sweep before it. The 17-bit address changes no
+other cartridge's picture at ten seconds.
+
+### The whole demo against BlastEm
+
+Every 25th frame of 12,000, each against the best of BlastEm's frames n-4..n+4
+(`score.py`, its levels mapped onto the board's ramp), then a frame at a time where a
+scene was off. What was found, in the order it was found; each fix is a rule of its
+own with a triage knob, checked to put the old pictures back exactly.
+
+**The rings (6,540-7,060).** The scene forces the sprite plane on through the debug
+register (bits 8-7 = 01), and the board drew black where BlastEm drew blue and magenta
+rings: palette entry 0 of palettes 1 and 2. Both emulators' CRAM and debug register
+were the same (BlastEm's read from a save state), so the difference was the sprite
+line buffer: Kabuto's holds colour, palette and priority and lets a transparent pixel
+leave its palette, the board's kept opaque pixels only. That took the scene from
+73-75% to 99.7%; the rest was one line, the last. The demo points register 5 at
+another table in the blank before line 223, after the hardware has read that line's
+sprites (phase 2, "1 raster line before"); the board read them as the line began,
+from the moved table (X 383, garbage names), and drew none. Phases 1 and 2 now run
+when the line before begins. VDP item 25; knobs `sprite_transparent`, `sprite_scan`.
+
+**The shadow scene (9,750-10,125; Aubrey's "gray box missing a kind of gray").**
+Wherever the two differed, the board had a colour at its shadow level and BlastEm at
+normal: plane B showing through transparent pixels of high-priority plane A tiles, and
+the board dropped a transparent pixel's priority, so both planes looked low. Kabuto:
+shadow "depends on plane tile priority, even when all plane tile pixels are
+transparent". `_tile_row` now keeps palette and priority on every pixel; all 16
+sampled frames went from 0-95% to identical. VDP item 26; knob `plane_transparent`.
+
+**Left alone: 9,225-9,725, 150-190 pixels a frame.** One CRAM write every fourth line
+(3, 7, 11, ...), exactly the rows that differ, about 3 pixels a row: where a mid-line
+colour change starts. The board's place for that was measured on Nuked-MD (item 20);
+by the tier rule the die outranks BlastEm, so the board keeps it.
+
+**The arcade (12,154-12,960; Aubrey saw it stop advancing).** Not a hang: the board
+fell behind from 12,200, by 330 frames at 13,300, and drew black bands and missing
+monitors. A profile of one frame put 87% of the 68000's time in `tst.w $FF079A / beq`
+at $39FBE4: the main loop waits for a flag the last of a chain of H interrupt handlers
+(vector $FF069A, each loading the next and the next register 10 value) sets. The
+board's own register log gave the reason: $7C (V30) at line 207 and $74 (V28) at 225,
+every frame, which is Kabuto's border trick. The board latched V28/V30 at the blanking
+line, so the border started anyway and the H interrupt counter was reloaded through
+it; the chain fell out of step and the loop ran every 1.4 frames. The border is now
+tested against the live mode (VDP item 27). The demo keeps pace (2-6 frames of
+BlastEm, as everywhere else) and all 32 sampled frames of the scene, 240 lines each,
+equal BlastEm's (rows 0-231 against its 8-239: its libretro frame keeps an 8-line top
+border even with the border open).
+
+Two wrong turns. Making V28/V30 live everywhere, the counter's jump included, and the
+HV captures test failed in 26 dumps -- but the cause was `run_hv_captures.py`, which
+places the VDP at a fitted line and did not set the new `border`; with that set, they
+are unchanged to the word. The counter's sequence was put back on the latched mode
+anyway, since only the border has a source, and a sentence claiming the captures ruled
+the live jump out was caught before it was committed: the live jump was never run
+with the harness fixed. And `pkill -f` / a `grep` over process command lines killed
+their own shell twice (the trap memory already names): kill by the process's own PID.
+
+### Aubrey's other questions
+
+- **"Crashed around 4:11"**: the board runs to 13,500 without an exception, FM off,
+  and FM on gives the same frames through the arcade intro (11,500-12,400). What was
+  seen was the arcade's lag.
+- **The very first second**: frames 3-14 flash grey and black, six times, on both
+  emulators -- the demo's own. The board's run is one frame behind BlastEm's there
+  (grey on 4, 6, ... 14 against 3, 5, ... 13), the same frame of offset as through the
+  whole demo; every frame from 15 on is identical after that offset.
+- **The pong screen's static**: seeded from memory nothing initialised. Filling work
+  RAM and Z80 RAM with $FF or random bytes changes exactly the static frames (550-575,
+  785-810, 1,135-1,160) and nothing else in the first 1,200. Both emulators zero RAM
+  and still differ, so something else nothing initialised feeds it too (the CPU
+  registers at reset are one candidate); on a console it differs at every power-on,
+  so there is no picture to match. Session 9's "CRAM values differ from frame 548"
+  (to 11,083) is probably the same source, but only the first 1,200 frames were
+  tested here; the pictures after them match, so those values do not show.
+
+### The frontend's frame counter
+
+The title bar now carries `frame N (m:ss)`: the VDP's count since power-on (a reset
+leaves it), which is the number every tool here calls a frame, and the emulated time
+at the machine's rate. `tests/test_frontend.py` checks the format.
+
+### Checks
+
+`tests/test_sprite_line_buffer.py`: five tests, four of which fail on the code before
+(the fifth, V28's border at line 224, holds on both). Both suites **140 passed, 1
+deselected** (PyPy 211 s, CPython 481 s), ruff clean; the HV captures equal their
+baseline in every dump.

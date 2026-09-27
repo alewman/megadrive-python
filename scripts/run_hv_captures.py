@@ -477,6 +477,10 @@ def run_placed(booted: System, loop: Loop, params: dict) -> tuple[list[int], lis
     vdp.odd = params["odd"]
     vdp.hmode = _timing(vdp.hmode, vdp.vmode, vdp.v, vdp.interlace, vdp.odd)
     vdp.line_start = t0 - params["pos"]
+    # The border as a VDP arriving at this line in an ordinary frame has it: on from the
+    # blanking line to the end of the frame (VDP.border).
+    vdp.border = vdp.vmode.vblank_set <= vdp.v
+    vdp._border_started = vdp.v == vdp.vmode.vblank_set
     vdp._vint_done = vdp._odd_done = False
     vdp._line_events()
     if not params["pending"]:

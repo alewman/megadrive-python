@@ -76,3 +76,69 @@ def test_a_line_takes_the_sprites_scanned_a_line_ahead() -> None:
     renderer._scanned = None
     renderer.begin_line(10)
     assert renderer._line_s[16:24] == [0] * 8
+
+
+def test_a_transparent_high_priority_tile_stops_the_shadow() -> None:
+    """ "If both A+B are low prio, the visible color becomes shadowed" (Kabuto, "S/H"):
+    the tile's priority, whether or not its pixel is transparent. Overdrive 2's scene
+    at frames 9,750-10,125 has plane B showing through high-priority transparent tiles
+    of plane A, drawn normal on the hardware and shadowed on the board before."""
+    from megadrive_python.render import SHADE_SHIFT
+
+    vdp = _vdp()
+    vdp.registers[2] = 0xC000 >> 10  # plane A names at $C000
+    vdp.registers[4] = 0xE000 >> 13  # plane B names at $E000
+    vdp.registers[12] = 0x89  # H40, shadow/highlight on
+    for row in range(8):  # tile 1 opaque, colour 5; tile 0 left transparent
+        vdp.vram[32 + row * 4 : 32 + row * 4 + 4] = b"\x55\x55\x55\x55"
+    for cell in range(64):
+        vdp.vram[0xC000 + cell * 2] = 0x80  # plane A: tile 0, high priority
+        vdp.vram[0xE000 + cell * 2 + 1] = 0x01  # plane B: tile 1, low priority
+    renderer = vdp.renderer
+    renderer.begin_line(0)
+    renderer.finish_line()
+    pixel = renderer.pixels[0][100]
+    assert pixel & 0x3F == 0x05  # plane B's colour shows through
+    assert pixel >> SHADE_SHIFT == 0  # normal, not shadowed
+
+
+def _run_lines(vdp, count: int, before=None) -> list[tuple[int, bool, int]]:
+    """Advance ``count`` lines; ``before(v)`` may write registers as each line starts.
+    Returns (V, status VBlank bit, H interrupt counter) per line."""
+    seen = []
+    for _ in range(count):
+        vdp.sync(vdp.line_end)
+        if before:
+            before(vdp.v)
+        seen.append((vdp.v, bool(vdp.status() & 0x08), vdp.hint_counter))
+    return seen
+
+
+def test_v30_before_line_224_and_v28_before_240_keeps_the_border_open() -> None:
+    """Kabuto, "V28/V30 tricks": the border is tested against the mode in force as the
+    V counter passes 224 and 240, so V30 at 224 and V28 at 240 never start it -- the
+    display stays active and the H interrupt counter is never reloaded. Overdrive 2's
+    arcade scene (frames 12,154-12,960) runs its raster chain on that."""
+    vdp = _vdp()
+    vdp.registers[10] = 0xFF
+
+    def trick(v: int) -> None:
+        if v == 0xD0:
+            vdp._write_register(1, 0x4C)  # V30, display on
+        elif v == 0xE8:
+            vdp._write_register(1, 0x44)  # V28
+
+    lines = _run_lines(vdp, 300, trick)  # the first frame, from the line before line 0
+    after = [(v, vb, hc) for v, vb, hc in lines if 0xE0 <= v <= 0x100]
+    assert after and not any(vb for _, vb, _ in after)  # no VBlank: no border
+    counts = [hc for _, _, hc in after]
+    # Counting down line by line, reloaded only when it reaches 0 and fires -- never
+    # reloaded as a border line would.
+    assert all(b == a - 1 or (a == 0 and b == 0xFF) for a, b in zip(counts, counts[1:]))
+
+
+def test_v28_starts_the_border_at_line_224() -> None:
+    vdp = _vdp()
+    lines = _run_lines(vdp, 400)
+    assert [vb for v, vb, _ in lines if v == 0xDF][-1] is False
+    assert [vb for v, vb, _ in lines if v == 0xE0][-1] is True

@@ -218,8 +218,14 @@ class Renderer:
     # -- tiles --------------------------------------------------------------------
 
     def _tile_row(self, address: int, attribute: int, flip: bool) -> tuple:
-        """One pattern row as eight pixels: the CRAM index of each with the tile's
-        priority in bit 6, or 0 where the pattern is transparent."""
+        """One pattern row as eight pixels: the colour in bits 3-0, the tile's palette
+        in bits 5-4 and its priority in bit 6 -- a transparent pixel (colour 0) keeps
+        the palette and priority too. Opacity is the colour bits alone everywhere these
+        are used. The priority of a transparent plane pixel still decides shadow ("If
+        both A+B are low prio, the visible color becomes shadowed", Kabuto, "S/H";
+        "sprite darkness depends on plane tile priority, even when all plane tile
+        pixels are transparent"), and its palette shows where the debug register
+        forces the plane on. BlastEm's ``render_map`` keeps both the same way."""
         vram = self.vdp.vram
         data = (
             (vram[address] << 24)
@@ -236,7 +242,7 @@ class Renderer:
             ]  # fmt: skip
             if flip:
                 pixels.reverse()
-            row = tuple(attribute | pixel if pixel else 0 for pixel in pixels)
+            row = tuple(attribute | pixel for pixel in pixels)
             if len(self._tiles) >= TILE_CACHE_LIMIT:
                 self._tiles.clear()
             self._tiles[key] = row
@@ -513,7 +519,7 @@ class Renderer:
                     # will get overwritten with the 7 bits from the current sprite"
                     # (Kabuto, phase 3). It shows only where the debug register forces
                     # the sprite plane on: palette entry 0 instead of the backdrop.
-                    pixel = row_pixels[i] or attribute
+                    pixel = row_pixels[i]
                     at = left + i
                     if 0 <= at < width:
                         if not line[at] & 15:
