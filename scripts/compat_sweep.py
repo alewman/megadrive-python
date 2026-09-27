@@ -145,6 +145,10 @@ DISABLE = {
 #: CRAM or register 7 write shows at its slot's pixel again. A module global, patched
 #: and restored like the DMA start-up.
 #:
+#: ``disable="fetch_schedule"`` replaces the planes' measured fetch times
+#: (``render.FETCH_AT``) with each cell fetched as the screen reaches it, as the board
+#: did before them. Patched and restored the same way.
+#:
 #: ``disable="mame_sram"`` is not a board knob but a cartridge one: it puts the
 #: board on MAME's ``rom_sramsafe``, the 64 KB of battery RAM at $200000 its file
 #: loader gives every cartridge whose header declares none (docs/mame-oracle.md,
@@ -164,6 +168,11 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     delay = dict(render_module.OUTPUT_DELAY)
     if disable == "output_delay":
         render_module.OUTPUT_DELAY.update(dict.fromkeys(delay, 0))
+    schedule = dict(render_module.FETCH_AT)
+    if disable == "fetch_schedule":
+        # every cell fetched as the screen reaches it, both planes alike: the board's
+        # draw-time fetch before the schedule
+        render_module.FETCH_AT.update(dict.fromkeys(schedule, ((0, 0, 8), (0, 0, 8))))
     try:
         if not path.exists():
             # The romset is symlinks into a local mirror; some point at files the
@@ -276,6 +285,7 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     finally:
         vdp_module.DMA_STARTUP_MCLK = startup
         render_module.OUTPUT_DELAY.update(delay)
+        render_module.FETCH_AT.update(schedule)
         row["seconds"] = f"{time.time() - started:.1f}"
     return row
 

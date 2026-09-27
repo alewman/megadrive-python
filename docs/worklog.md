@@ -4236,3 +4236,93 @@ from the VDP's VRAM pins (`o_vram_ras`, `_cas`, `_oe1`, `_ad`, and the serial po
 `_sc`/`_se0`), and the fix it points to is a renderer that fetches a column's tiles at
 their fetch time and outputs them 21 (or 24) pixels behind the counter, instead of
 doing both at the one moment it draws.
+
+### Where tiles are fetched (the user chose to do both steps)
+
+**Step 1: the die's own VRAM accesses.** `NMD_VRAMSIG` (our driver) rebuilds every
+VRAM access from the VDP's DRAM pins by the ordinary protocol -- the row on /RAS
+falling, the column on /CAS falling, a random read where /OE is low outside a transfer,
+a transfer cycle where /OE is low as /RAS falls (its start column arrives with /CAS),
+serial shifts on SC rising, and each write's bank (/WE0 or /WE1) and data -- and logs
+the raw chip address with the die's H and V. The plane fetches go through the **serial
+port**: one transfer cycle, then four shifts, per pattern row and per name pair.
+
+The chip address maps to VRAM as `(a & 3) | ((a >> 6) & 0x3FC) | ((a & 0xFC) << 8)`,
+and that was checked, not assumed: on the name cartridge every access of line 100 lands
+where its layout says -- plane A's name row 12 at $C600 and on, plane B's at $E600,
+tile 1's row 4 at $0030, tile 0's at $0010, the sprite table at $F000, the scroll table
+at $FC00, and plane A's and B's column -1 at $C67C and $E67C.
+
+The schedule, identical in H40 and H32 in the die's counter (group g, 16 pixels):
+
+| fetch | die H |
+| --- | --- |
+| plane A name pair | 16g + 3 |
+| plane A pattern rows | 16g + 7, 16g + 9 |
+| plane B name pair | 16g + 11 |
+| plane B pattern rows | 16g + 15, 16g + 17 |
+| group -1 (fine scroll) | in the blank: $1F3, $1F7/$1F9, $1FB, $1FF/$001 |
+| horizontal scroll entry | $1E9 |
+
+**Two wrong turns on the way, both caught by the instrument:**
+
+- **Byte order.** The name test had left a slot's disagreement in some columns, and
+  a word's two bytes going in over two slots looked like the cause; the die's writes
+  (`$CDA0` then `$CDA1`) seemed to say the board wrote them in the wrong order, and
+  the board was changed. That made the other columns wrong. Logging each write's bank
+  and data showed the die writes the tile index (1 or 2) **first**: its chip index is
+  the board's store index with bit 0 flipped, and the board's order was right. The
+  change was reverted.
+- **Pattern writes read as name writes.** After the renderer change, the tile-row
+  test got worse (-16 in both modes). A trace of one line showed pattern writes
+  flagged `names=True`: the name-table check counted the window's table, and the
+  cartridge never sets register 3, so a window base of $0000 made the patterns at the
+  bottom of VRAM look like names. The window's table now counts only on a line that
+  shows the window.
+
+**Step 2: a renderer in two stages.** `render.FETCH_AT` holds the schedule in the
+board's pixel time (the die's less three in H40): plane A (0, 4, 6) and plane B
+(8, 12, 14) from each group's start in H40, three later in H32. Each line keeps a fetch
+pointer per plane; `catch_up(names=)` first fetches every cell whose fetch time has
+come (with `names`, every cell whose name has), then mixes to the H counter's pixel
+less `OUTPUT_DELAY`, for *every* change -- so the special `output` flag is gone, and
+with it a latent gap: an earlier catch-up could mix past where a CRAM change should
+still have shown. Group g sits at screen pixel 16g plus the plane's fine scroll.
+`VDP._in_name_table` decides `names` for a VRAM write; register writes pass it for
+the plane registers (2, 3, 4, 11, 12, 16, 17, 18).
+
+**What it measures now**, against the die:
+
+- Name writes, eight columns across both modes: the board's picture differs from the
+  die's on 3-8 lines a column, and **every such line is one where the 68000's write
+  reached a different access slot** on the two (the same slot on 116-145 lines a
+  column, with no disagreement among them). What is left is the 68000 and FIFO's
+  timing, not the fetch.
+- A tile-pattern row written mid-line: the board lands on the die's pixel on 60 of 79
+  lines in H40 and **53 of 77 in H32, which was 8 pixels late**; the rest whole slots,
+  as above.
+- CRAM, register 7, both latch measurements and the column latches: unchanged.
+
+A first attempt to check the die against itself -- predicting its picture from its
+own log -- agreed on only 150-158 of 198 lines, because the log and the picture are
+framed by different counters and cannot be matched line for line; it is not a result
+either way, and the board-against-die comparison does not depend on it.
+
+Checks: sprite masking 0 of 18, r57shell identical, both suites **120 passed, 1
+deselected** (the four new fetch-schedule tests; PyPy 165 s, CPython 461 s), ruff
+clean. `scripts/run_fetch_schedule.py` passes: no access of line 100 off the layout in
+either mode, the schedule above, and in all eight columns every board-die difference a
+commit-slot difference. Its first run failed its own layout check on three accesses,
+which were transfers of tile 2's row for the one cell the cartridge renames -- the
+check, not the log, was wrong, and was widened to tile 2.
+
+Also seen and not explained: once a group the die reads a plane A name through the
+**random** port, three counts after that name's serial transfer (16g + 6). It is not
+the fetch the picture is drawn from: were it, writes committed at the board's slot
+16g + 2 would show the new name on the die and the old on the board, and none of the
+disagreements above is of that kind.
+
+**The re-sweep moved nothing**: `--seconds 10 --jobs 15 --window 12 --offsets --out
+tests/compat/megadrive-fetch.csv` (15 jobs, the die run holding the 16th process),
+13,357 s, 0 of 3,514 rows different from the sweep before it. The knob for when one
+does: `disable="fetch_schedule"` fetches every cell as the screen reaches it again.

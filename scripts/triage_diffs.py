@@ -158,6 +158,7 @@ def sensitivity(name: str, seconds: int, window: int) -> dict:
         "the vertical scroll latch": "vscroll_latch",
         "the colour output's delay": "output_delay",
         "the 2-cell column latch": "column_latch",
+        "the planes' fetch schedule": "fetch_schedule",
     }
     try:
         results = {}
