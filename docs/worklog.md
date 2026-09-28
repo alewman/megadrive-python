@@ -4762,3 +4762,12 @@ The run (`reference/nuked-od2/launch.sh`): to die frame 20,400, reset held at fr
 250 frames, and a 68000 bus trace over die frames 12,230-12,260 (the arcade's V
 interrupt). Die frames are the board's frames plus about 25 for the reboot; the board
 can press its own reset at frame 25 to line the two up.
+
+**The board lined up with the referee.** `scripts/board_frames.py --reset-mclk
+26761500` presses the board's reset button at the master clock the referee's was
+pressed at (PAL frame 25). After it, board frame n is the referee's frame n - 1, pixel
+for pixel: 62/61, 70/69, 78/77, 86/85 all 71,680 of 71,680 through the opening fade,
+where each frame differs from its neighbours (the one frame is where the two count
+their first). The aligned board run (`reference/od2-board-aligned`, every frame to
+20,400, FM on, the chips' own samples in `fm.bin` and `psg.bin`, a snapshot every
+1,000 frames) is the board half of the whole-demo comparison.
