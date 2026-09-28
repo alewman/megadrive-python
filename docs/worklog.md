@@ -4738,3 +4738,27 @@ in 13 minutes (0.13 frames a second, with the romset sweep running beside it).
 
 The board does not freeze on the first run, and the note says real hardware does;
 what the board does differently in the Z80 start-up is a question for later.
+
+### One referee run for everything
+
+Runs of the die model are expensive (0.27 frames a second with the machine free), so
+the whole demo is being run once, recording what any later question could need. The
+driver gained, each checked on a 60-frame run:
+
+- `NMD_PICS=<dir>`: every frame's raw capture, zlib-compressed and indexed (frame,
+  offset, bytes, half-MCLK); about 11 KB a frame.
+- `NMD_AUDIO=<file>`: FM left, FM right and PSG summed over each FM sample period.
+- `NMD_SAVE_EVERY=<n>`: a save state every n frames, taken where md.c takes its own,
+  with the driver's counters and part-drawn frame beside it; `NMD_LOAD=<file>` starts
+  from one. Nuked-MD's save holds six pointers FC1004_Init aims into the chip, stale in
+  another process, so the build renames savestate.c's `load_state` and the driver's
+  wrapper re-aims them. A run loaded from frame 40 draws frames 40-59 bit for bit as
+  the run that saved it did, at the same half-MCLK. (Its sound could not be checked
+  there: the demo is silent until later.)
+- `NMD_PLOT_LIST=<spec>`: plot a list of frames.
+
+The run (`reference/nuked-od2/launch.sh`): to die frame 20,400, reset held at frames
+25-30 (after the first run's freeze), every frame's picture, the sound, a save every
+250 frames, and a 68000 bus trace over die frames 12,230-12,260 (the arcade's V
+interrupt). Die frames are the board's frames plus about 25 for the reboot; the board
+can press its own reset at frame 25 to line the two up.
