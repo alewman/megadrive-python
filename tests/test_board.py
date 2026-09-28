@@ -121,6 +121,30 @@ def test_a_68000_access_to_the_z80s_space_costs_one_extra_clock():
     assert board.z80_space_stall == 0
 
 
+def test_a_refresh_on_the_z80s_space_costs_one_clock_unless_it_is_late():
+    """The cartridge refresh falling on a 68000 access to $A00000-$A0FFFF holds it one
+    68000 clock, not the cartridge's two -- and none if it fell due within the last
+    clock before /AS, though it is used up either way: Nuked-MD's Overdrive 2 start-up,
+    392 and 127 of its 519 refreshes on Z80-RAM writes (docs/worklog.md, "The one-frame
+    slip")."""
+    from megadrive_python.board import Z80_REFRESH_STALL, Z80_SPACE_STALL
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    board = system.board
+    board.z80_reset = False
+    board.z80_bus_requested = True
+    board.arbiter_enabled = False
+    for late, stretch in ((14, Z80_REFRESH_STALL), (7, Z80_REFRESH_STALL), (3, 0)):
+        board.stall = 0
+        t = board.m68k_access_clock()
+        board.cart_refresh_due = t - late
+        board.write_byte(0xA00000, 0)
+        assert board.stall == Z80_SPACE_STALL + stretch, late
+        assert board.cart_refresh_due > t, late  # used up either way
+
+
 def test_capture_loop_rate():
     """The refresh rules give the capture loop its hardware rate, 143.588 MCLK per
     MOVE.L (A0),(A1)+ (docs/timing.md, "Bus sharing")."""

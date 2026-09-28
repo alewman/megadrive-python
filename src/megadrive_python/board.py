@@ -50,6 +50,16 @@ if TYPE_CHECKING:
 #: (die-derived) in four probe loops, 670 of 670 ticks each (docs/worklog.md).
 CART_REFRESH_MCLK = 896
 CART_REFRESH_STALL = 14
+#: The same refresh falling on a 68000 access to the Z80's space ($A00000-$A0FFFF)
+#: stretches it by one 68000 clock, not two -- and by none if it fell due only in the
+#: last 68000 clock before /AS, when it is used up all the same. Nothing hardware
+#: covers the question, so the die-derived model answers it: Nuked-MD's Overdrive 2
+#: start-up copies its sound driver into Z80 RAM a byte at a time, and of the 519
+#: refreshes that fell on those writes, 392 due a clock or more before /AS held the
+#: write 7 MCLK longer and 127 due within the last clock held it not at all, every
+#: one (docs/worklog.md, "The one-frame slip").
+Z80_REFRESH_STALL = 7
+Z80_REFRESH_LATE = 7
 #: The work-RAM refresh the VDP performs: once due, the next work-RAM access waits 3
 #: 68000 clocks; it falls due again 791-819 MCLK after that access started (Nuked-MD
 #: probes; Kabuto: "RAM accesses get their own further slowdowns"). The midpoint is
@@ -113,6 +123,12 @@ class Board:
         self.m68k: M68000CPU | None = None  # set by the system; read for open bus
         #: The master clock at which the current CPU step started, set by the system.
         self.step_start = 0
+        #: The Z80 instruction under way: its memory accesses' offsets from
+        #: :attr:`step_start` in master clocks (z80-python's access-timing table; None
+        #: when it does not apply, such as an interrupt acknowledge), and how many of
+        #: them it has made so far.
+        self.z80_offsets: tuple[int, ...] | None = None
+        self.z80_access = 0
         #: Master clocks the 68000 has been held during the current step (stalls).
         self.stall = 0
         #: How much of ``stall`` is the Z80-space hold (:data:`Z80_SPACE_STALL`), for
@@ -274,14 +290,20 @@ class Board:
         if grid is not None:
             grid.append([t, AS_LOW_MCLK])
         if t >= self.cart_refresh_due:
+            late = t - self.cart_refresh_due
             self.cart_refresh_due += (
                 (t - self.cart_refresh_due) // CART_REFRESH_MCLK + 1
             ) * CART_REFRESH_MCLK
+            stretch = 0
             if address < 0x800000:
-                self.stall += CART_REFRESH_STALL
-                t += CART_REFRESH_STALL
+                stretch = CART_REFRESH_STALL
+            elif address >> 16 == 0xA0 and late >= Z80_REFRESH_LATE:
+                stretch = Z80_REFRESH_STALL
+            if stretch:
+                self.stall += stretch
+                t += stretch
                 if grid is not None:
-                    grid[-1][1] += CART_REFRESH_STALL
+                    grid[-1][1] += stretch
         if address >= 0xE00000 and t >= self.ram_refresh_due:
             self.stall += RAM_REFRESH_STALL
             self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
@@ -314,14 +336,39 @@ class Board:
                 release = left
         return min(release, MAX_RELEASE)
 
+    def _z80_access_time(self) -> int:
+        """The master clock of the Z80 access under way: its instruction's start, its
+        offset in the instruction (:attr:`z80_offsets`), and what the arbiter has held
+        the Z80 for so far in the instruction. Where the offset is not known, the
+        instruction's start, as before the table."""
+        offsets, k = self.z80_offsets, self.z80_access - 1
+        if offsets is not None and 0 <= k < len(offsets):
+            return self.step_start + offsets[k] + self.z80_stall
+        return self.step_start + self.z80_stall
+
+    def z80_peek(self, address: int) -> int:
+        """A byte of the Z80's space without side effects, for looking at code: RAM
+        and cartridge ROM; anything else reads $FF."""
+        if address < 0x4000:
+            return self.z80_ram[address & 0x1FFF]
+        if address >= 0x8000:
+            full = self.bank | (address & 0x7FFF)
+            if full < 0x400000:
+                return self.cartridge.read_byte(full)
+        return 0xFF
+
     def _bank_delay(self) -> None:
         """What one Z80 access through the bank window costs both CPUs (Kabuto's
         footnote 1, :func:`~megadrive_python.arbiter.bank_access_delay`).
 
-        z80-python reports only an instruction's total, so the access is placed at the
-        Z80 step's start plus whatever it has already been held: where inside the
-        instruction it really falls is not known (docs/polish.md). The 68000's share is
-        owed rather than charged, because the Z80 runs in its wake (``m68k_pending_stall``).
+        The access is placed at the Z80 step's start plus whatever it has already been
+        held, not where z80-python's access-timing table puts it inside the instruction
+        (:meth:`_z80_access_time`): the arbiter reads the 68000's bus cycles only as
+        far as the Z80 has been caught up to, and an access later in the instruction
+        falls past them onto a bus that looks idle -- MoD's spinning 68000 then costs
+        the Z80 no more than a stopped one (``tests/test_milestone5.py``). The 68000's
+        share is owed rather than charged, because the Z80 runs in its wake
+        (``m68k_pending_stall``).
         """
         t = self.step_start + self.z80_stall
         # "b (2 if the z80->ROM access is prolonged by a refresh delay, 0 if not)": the
@@ -645,6 +692,7 @@ class Board:
     # -- the Z80's bus ----------------------------------------------------------
 
     def z80_read(self, address: int) -> int:
+        self.z80_access += 1
         if address < 0x4000:
             return self.z80_ram[address & 0x1FFF]
         if address >= 0x8000:
@@ -652,14 +700,15 @@ class Board:
                 self._bank_delay()  # the arbiter holds both CPUs for this access
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
-            return self._fm_read(address & 3, self.step_start)
+            return self._fm_read(address & 3, self._z80_access_time())
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
-            return self.vdp.z80_read(address & 0x1F, self.step_start)
+            return self.vdp.z80_read(address & 0x1F, self._z80_access_time())
         return 0xFF  # the bank register and $6100-$7EFF (CMD 2.1)
 
     def z80_write(self, address: int, value: int) -> None:
+        self.z80_access += 1
         if address < 0x4000:
             self.z80_ram[address & 0x1FFF] = value
         elif address >= 0x8000:
@@ -667,14 +716,14 @@ class Board:
                 self._bank_delay()
             self._z80_bank_write(self.bank | (address & 0x7FFF), value)
         elif address < 0x6000:
-            self.sound_sync(self.step_start)
+            self.sound_sync(self._z80_access_time())
             self.fm.write(address & 3, value)
         elif address < 0x6100:
             self.write_bank(value)
         elif address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
-            self.vdp.z80_write(address & 0x1F, value, self.step_start)
+            self.vdp.z80_write(address & 0x1F, value, self._z80_access_time())
 
     def _z80_bank_read(self, address: int) -> int:
         """A byte of the 68000's space through the Z80's window.
@@ -693,11 +742,11 @@ class Board:
         if top >= 0xC0:
             if address & 0xE700E0 != 0xC00000:
                 raise Lockup(f"Z80 bank access to ${address:06X}: outside the VDP's pattern")
-            return self.vdp.z80_bank_read(address & 0x1F, self.step_start)
+            return self.vdp.z80_bank_read(address & 0x1F, self._z80_access_time())
         if top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         if top == 0xA1 and address & 0xFFFF < 0x20:
-            return self.io.read(address, self.step_start)
+            return self.io.read(address, self._z80_access_time())
         if 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")
         return 0xFF
@@ -711,10 +760,10 @@ class Board:
         elif top >= 0xC0:
             if address & 0xE700E0 != 0xC00000:
                 raise Lockup(f"Z80 bank access to ${address:06X}: outside the VDP's pattern")
-            self.vdp.write_byte(address & 0x1F, value, self.step_start)
+            self.vdp.write_byte(address & 0x1F, value, self._z80_access_time())
         elif top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         elif top == 0xA1:
-            self._system_write(address, value, value, word=False, mclk=self.step_start)
+            self._system_write(address, value, value, word=False, mclk=self._z80_access_time())
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")

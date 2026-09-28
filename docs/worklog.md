@@ -4800,13 +4800,92 @@ frame 7,000:
    resets nothing. Timer A's first flag after the reset is now 113 MCLK from the die's
    (was 617), and the Z80s run identically for 398 reads (was 187).
 
-What is left there: the board's timer-A flag rises jitter by up to 3 cycles where the
-die's keep a 4,032-MCLK period, because the Z80's register-$27 writes that clear and
-re-arm it are placed at the start of their instruction (z80-python 0.4.0 reports only
-instruction totals; docs/polish.md). z80-python's access-timing table (`b62891b`,
-PR #19, unreleased) says where in an instruction each access falls, which is what the
-board needs to adopt next.
+What looked left there -- the board's timer-A flag "jittering" by up to 3 cycles -- was
+the probe's own artifact, not the board's: `YM2612.run` advances its clock to the
+catch-up target before running the cycles, so a probe reading `mclk` inside `cycle`
+stamps every cycle of a catch-up with the same time. Timed cycle by cycle the board's
+flag keeps the die's 4,032-MCLK period. The next section is what the difference was.
 
 Tools: the driver's `NMD_FMSIG` logs the FM's BUSY latch, timer flags, slot-23 marker,
 timer clock and /IC; `tests/test_sprite_line_buffer.py` holds the counter rule. Both
 suites pass (140 before this test).
+
+### The access-timing table, and what the slip turned into
+
+Aubrey's decision: adopt z80-python's access-timing table. What that and the chase
+behind it found, in order.
+
+1. **The table.** z80-python `b62891b` (PR #19, merged, not yet released; pinned by
+   revision in `pyproject.toml`) gives, for an instruction's bytes, each memory access
+   with its T-state (`z80_python.timing.instruction_timing`). The system looks the Z80's
+   next instruction up before stepping it (`System._z80_offsets`, cached by its first
+   four bytes, read with `Board.z80_peek`, which has no side effects), and the board
+   places each FM, VDP and bank-window device access at the step's start plus that
+   offset plus what the Z80 has already been held (`Board._z80_access_time`). Where the
+   Z80 takes an interrupt that step the table does not apply and the access stays at
+   the step's start; an interrupt merely requested, with IFF1 clear or in EI's shadow,
+   does not count (z80-python's own acceptance test, `iff1` and `_ei_delay`). Identical
+   Z80 reads against the die from the reset: 398 to 1,150.
+2. **Not the arbiter.** The bank-access delay (`Board._bank_delay`) still places the
+   access at the step's start. The arbiter reads the 68000's bus cycles only as far as
+   the Z80 has been caught up to; an access later in the instruction lands past them on
+   a bus that looks idle, and MoD's spinning-68000 experiment then costs the Z80
+   exactly what a stopped 68000 does (682 wait states in 300 tries both ways;
+   `tests/test_milestone5.py` caught it). Placing the arbiter's accesses too needs the
+   Z80's catch-up to stop short of an instruction whose accesses would cross the
+   68000's clock; that, and with it undocumented-behavior open item 14, is next.
+3. **The 1,150 rested on two errors cancelling.** Before the Z80 starts, the 68000
+   copies its sound driver into Z80 RAM a byte at a time (7,357 writes over 1.2M
+   MCLK), and on the board it released the bus 252 MCLK before the die did. The die's
+   write-to-write spacings are 161, 168 or 175 MCLK where the board's are 161 or 175:
+   the cartridge refresh falling on a write to Z80 space holds it one 68000 clock, not
+   the cartridge's two and not the board's none. Of the 519 refreshes that fell on
+   those writes, 392 due a clock or more before /AS held it 7 MCLK and 127 due within
+   the last clock held it not at all, though they were used up (the next refresh came
+   1,785 MCLK later) -- every one. `board.Z80_REFRESH_STALL`, `Z80_REFRESH_LATE`;
+   undocumented-behavior "The bus" item 7. The bus is now released 7 MCLK from the
+   die's.
+4. **The FM's /IC: a reset or a pause, by where in its slot it lands.** With the Z80
+   now on time, the timer flag was early by 239 MCLK. Nuked-MD's fm.c, clocked the way
+   `fc1004.c` clocks it (scratch harness, not kept: the die's own code driven through
+   every position), resets the slot counter only if the assertion is sampled 1-3 FM
+   clocks into a slot; at 0, 4 or 5 clocks the counter keeps its count and resumes,
+   after the 12-clock stop, at the slot under way two clocks after the assertion. The
+   Overdrive 2 run's three assertions agree: the console reset (2.6 clocks in) reset
+   it, the first run's release-and-reassert (5.1 clocks in) paused it 11 clocks, the
+   final one (0.1 clocks in, sampled at the next) paused it 12. `ym2612.
+   IC_PAUSE_POSITIONS`; the rule the board had, always a reset, is item 4 of the
+   section above.
+5. **Why the reads still part.** The FM's phase at the Z80's final /IC depends on the
+   last resetting assertion, the console reset, and on everything the 68000 does
+   between them. The die's reset button reaches VRES and ZRES 80,496 MCLK after the
+   driver presses it (the board's `press_reset` is immediate), and before the reset the
+   two runs differ outright (the die freezes on its first run), so the board cannot be
+   lined up with the die to 7 MCLK from outside. Forcing the board's slot counter at
+   the final /IC through all 24 slots and seven grid offsets finds the die's phase
+   between two of the board's cycles: slot 18 with the grid 12-17 MCLK late gives
+   3,507 identical reads, where the best whole-cycle phase gives 1,150.
+6. **And what stops those at 3,507**: the 68000's boot runs out of step with the VDP.
+   From its precise vblank polls after the Z80 starts (every 210 MCLK), the die's VDP
+   runs 240,277 MCLK after the board's; the Z80 release, 235,880. The difference comes
+   from a start-up loop that reads CRAM back 64 words at a time in H40 with the
+   display on, re-checking vblank every ~20,500 MCLK: the board runs each pass 300-900
+   MCLK fast, so it leaves on a different pass. Per line the die stalls two reads, one
+   served at the hblank slot near $1CE and one near $002; the board stalls the same
+   pair in most lines, but after a read at 3,316 MCLK into a line it still catches an
+   end-of-line slot ($140/$142), where the die, from any read at 3,300-3,334, never
+   does (about 50 lines, three exceptions). That is a read-prefetch slot rule in H40
+   active lines, not yet settled: whether the die's end-of-line slots sit earlier, or
+   its prefetch needs more lead time, the data here does not say. The next thing to
+   settle.
+
+Also seen: after a reset release with a bus request already pending, the die's Z80
+fetches its first opcode before granting the bus; the board's grants first.
+
+Checks: both suites pass with z80-python `b62891b` installed (142 each, CPython 3.14 and
+PyPy 3.11). The milestone-1 replay, re-recorded (`scripts/mame_trace.py genesis GAME.zip
+--seconds 30`, MAME 0.285) and re-run on PyPy: all six games 0 unexplained, with the same
+instruction counts as before (Sonic 12,728,465 Z80 instructions, Streets of Rage 2
+11,269,553, Gunstar Heroes 15,425,681, Castlevania 8,460,818, Sonic 3 11,837,738 with
+1,688 interrupts, Phantasy Star IV 13,280,703). New tests: the Z80-space refresh stretch
+(`tests/test_board.py`), the /IC reset and pause (`tests/test_sprite_line_buffer.py`).

@@ -43,7 +43,13 @@ source, the way sms-python does.
    Separately, **every 68000 access to $A00000-$A0FFFF is one 68000 clock longer**:
    nothing hardware says so, but Nuked-MD holds every such bus cycle 7 MCLK and MAME
    charges the same clock (`before_delay(1)`, "TODO: unverified"). The board charges it
-   since the timing session (open item 16).
+   since the timing session (open item 16). **A refresh landing on such an access costs
+   one clock more, not the cartridge's two, and none if it fell due within the last
+   68000 clock before /AS** -- used up all the same. Nuked-MD, Overdrive 2's start-up
+   copying its sound driver into Z80 RAM: of 519 refreshes on those writes, 392 held
+   the write 7 MCLK and 127 held it not at all, every one as the rule says
+   ([worklog.md](worklog.md), "The access-timing table, and what the slip turned
+   into"). Die-derived; nothing hardware covers it.
 8. **The bank register** is written a bit at a time; the result of a partial
    sequence is unknown (CMD could not find it).
 9. **The reset button is not a power cycle.** It pulses VRES#, which goes "to 68000
@@ -397,6 +403,16 @@ source, the way sms-python does.
    (HardWareMan's oscilloscope traces; Aly James's `MD1_LADDER.wav`). The board
    carries it as `FMVariant.ladder` and it is what `ym2612ladder` differences in the
    referee comparison come from.
+9. **Asserting /IC stops the chip for 12 FM clocks and then lets it run on, and
+   whether its slot counter restarts depends on where in the slot the assertion
+   falls.** Nuked-MD's FM (`fm.c` `FM_Prescaler`'s `ic_check`, and `fc1004.c`'s
+   `i_fsm_reset`, three clocks late) restarts the counter at slot 0 only if a phase-1
+   clock comes while the reset holds: sampled 1-3 FM clocks into a slot it restarts;
+   sampled 0, 4 or 5 clocks in it keeps its count and resumes at the slot under way two
+   clocks later. Found by clocking the die's own `fm.c` through every position, and
+   matching all three assertions in its Overdrive 2 run; releasing /IC resets nothing.
+   So the chip's sample phase after a reset follows when the reset began, and, for a
+   short pulse, what came before it. Die-derived.
 
 ## The PSG and the analogue path
 
@@ -626,7 +642,12 @@ source, the way sms-python does.
     corrected the `pop`'s first read costs the board 2.97 wait states against the
     referee's 2.95, its second 2.04 against 3.60, and the pair 2.50 against 3.27. This
     is now the board's largest remaining arbiter difference and it is entirely the
-    missing accessor.
+    missing accessor. **The accessor exists now** (z80-python `b62891b`'s access-timing
+    table, adopted for the Z80's device accesses), but the arbiter still places bank
+    accesses at the step's start: it reads the 68000's bus cycles only as far as the
+    Z80 has been caught up to, and an access later in the instruction would land past
+    them on a bus that looks idle ([worklog.md](worklog.md), "The access-timing table,
+    and what the slip turned into", item 2).
 15. **The DMA's start-up cost**, adopted in the timing session and **not fully
     resolved**. Kabuto's fast-transfer formula has a +5.6-cycle intercept, so a
     one-word transfer costs 8 68000 cycles on his hardware; milestone 6 measured

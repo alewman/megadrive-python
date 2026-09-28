@@ -23,17 +23,20 @@ access that matters to the VDP:
 Why this shape: the 68000 is the CPU whose accesses have to land on the right clock
 (the FIFO and slot timing of milestones 2 and 5), and m68000-python reports the
 clock of each access as it makes it; the Z80's accesses matter mostly by order, and
-z80-python reports only instruction totals, so it runs in the 68000's wake, at most
-one 68000 instruction behind, with the catch-up points above keeping every shared
-state change in order. The VDP is lazy (it runs only when read, written, or at the
-start of a 68000 step) because it has nothing to do between those points that the
-CPUs could see. When the sound chips are modelled they catch up the same way.
+z80-python steps a whole instruction at a time (its access-timing table says where
+in it each access falls, and the board places its device accesses there), so it runs
+in the 68000's wake, at most one 68000 instruction behind, with the catch-up points
+above keeping every shared state change in order. The VDP is lazy (it runs only when
+read, written, or at the start of a 68000 step) because it has nothing to do between
+those points that the CPUs could see. When the sound chips are modelled they catch
+up the same way.
 """
 
 from __future__ import annotations
 
 from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
+from z80_python.timing import instruction_timing
 
 from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant
 from .audio import AudioPath
@@ -80,6 +83,8 @@ class System:
         self.z80_mclk = 0
         self._in_z80 = False
         self.m68k_instructions = 0
+        #: Access offsets by instruction bytes (:meth:`_z80_offsets`).
+        self._z80_timings: dict[tuple[int, ...], tuple[int, ...]] = {}
         self.z80_instructions = 0
         #: Instructions the Z80 left for later because the 68000 took its bus in the
         #: middle of them (catch_up_z80).
@@ -144,8 +149,15 @@ class System:
                         break
                 if vdp.z80_irq_at(self.z80_mclk):
                     z80.request_maskable_interrupt(0xFF)
+                    if z80.iff1 and not z80._ei_delay:  # z80-python's acceptance test
+                        # The acknowledge takes this step; the table times instructions.
+                        board.z80_offsets = None
+                    else:
+                        board.z80_offsets = self._z80_offsets()
                 else:
                     z80.clear_maskable_interrupt()
+                    board.z80_offsets = self._z80_offsets()
+                board.z80_access = 0
                 board.step_start = self.z80_mclk
                 board.z80_stall = 0
                 self.z80_mclk += z80.step() * Z80_DIVIDER + board.z80_stall
@@ -153,6 +165,22 @@ class System:
         finally:
             self._in_z80 = False
             board.step_start = self.mclk
+
+    def _z80_offsets(self) -> tuple[int, ...]:
+        """Where each memory access of the Z80's next instruction falls, in master
+        clocks from its start: z80-python's access-timing table (``timing``,
+        ``instruction_timing``; derived from the SingleStepTests corpus, so
+        emulator-derived), read at PC with no side effects and kept by the
+        instruction's first four bytes."""
+        board, pc = self.board, self.z80.pc
+        key = tuple(board.z80_peek((pc + i) & 0xFFFF) for i in range(4))
+        offsets = self._z80_timings.get(key)
+        if offsets is None:
+            timing = instruction_timing(key)
+            offsets = tuple(a.t * Z80_DIVIDER for a in timing.accesses
+                            if a.kind in ("read", "write"))  # fmt: skip
+            self._z80_timings[key] = offsets
+        return offsets
 
     def z80_access_offsets(self) -> list[int]:
         """The T-state offsets of :meth:`z80_probe`."""
@@ -193,8 +221,9 @@ class System:
         """When the Z80's next step would start each of its data accesses, in T-states
         from the step's start: an estimate, with no effect on the machine.
 
-        z80-python reports only an instruction's total, so the step is run once on a
-        probe bus that records its accesses, and the CPU's state is then restored.
+        The step is run once on a probe bus that records its accesses, and the CPU's
+        state is then restored. (z80-python's access-timing table, which
+        :meth:`_z80_offsets` reads, now gives the same exactly; the probe predates it.)
         The leading reads at PC, PC+1, ... are the fetches: 4 T-states for the first
         opcode byte and for an opcode after a DD/ED/FD/CB prefix, 3 for other bytes
         (UM0080's M1 and memory-read cycles); each data access takes 3. Internal
