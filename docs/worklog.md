@@ -4771,3 +4771,42 @@ where each frame differs from its neighbours (the one frame is where the two cou
 their first). The aligned board run (`reference/od2-board-aligned`, every frame to
 20,400, FM on, the chips' own samples in `fm.bin` and `psg.bin`, a snapshot every
 1,000 frames) is the board half of the whole-demo comparison.
+
+### The one-frame slip at 7,047, and the Z80 from the reset
+
+Against the referee (frames 1-9,897 compared, `scripts/compare_referee.py`), 7,155
+frames are identical at the aligned offset and 8,686 within two frames. From frame
+7,051 the board is one frame late. Traced cycle by cycle from the referee's save at
+frame 7,000:
+
+1. Both write the same VDP stream until a pass at frame 7,051 where the demo waits for
+   the V counter to read $DF. The board enters the wait at line $DD; the die after
+   $DF has passed, so it waits through the blank for line $1DF, 57 lines late.
+2. The die's 68000 is late because over ~33 lines before it the board ran the same
+   decryption loop (move/eor/move, ROM to RAM) ~17% faster: the die's Z80 made 332 bank
+   reads in the stretch (each costing the 68000 ~11 cycles, which the board's arbiter
+   charges too: 10.57), the board's Z80 only 54, from another place in the ROM. The
+   two Z80 sound drivers were at different points of their playback; the FM recordings
+   of the whole demo correlate at only 0.4.
+3. From the reset, the two Z80s load the same 7,440-byte program at the same times and
+   then run identically for 187 reads, until a loop that polls the YM2612 for timer
+   A's overflow. The board's flag rose 617 MCLK before the die's.
+4. The cause: the FM's sample phase after a reset. Nuked-MD's FM resets its prescaler
+   and slot counter only for 12 FM clocks after /IC is asserted (`FM_Prescaler`'s
+   `ic_check`) and then runs on under /IC; its slot-23 marker keeps its 1,008-MCLK
+   period through a reset and moves by 2 cycles when /IC is pulsed. The board froze
+   its counter under /IC and restarted it at release. It now restarts it at the
+   assertion, holds it 2 cycles, and lets it run (`ym2612.IC_FSM_HOLD`); release
+   resets nothing. Timer A's first flag after the reset is now 113 MCLK from the die's
+   (was 617), and the Z80s run identically for 398 reads (was 187).
+
+What is left there: the board's timer-A flag rises jitter by up to 3 cycles where the
+die's keep a 4,032-MCLK period, because the Z80's register-$27 writes that clear and
+re-arm it are placed at the start of their instruction (z80-python 0.4.0 reports only
+instruction totals; docs/polish.md). z80-python's access-timing table (`b62891b`,
+PR #19, unreleased) says where in an instruction each access falls, which is what the
+board needs to adopt next.
+
+Tools: the driver's `NMD_FMSIG` logs the FM's BUSY latch, timer flags, slot-23 marker,
+timer clock and /IC; `tests/test_sprite_line_buffer.py` holds the counter rule. Both
+suites pass (140 before this test).

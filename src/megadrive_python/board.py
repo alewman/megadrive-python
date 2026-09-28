@@ -195,7 +195,7 @@ class Board:
         if held != self.z80_reset:
             self.z80_reset = held
             self.sound_sync(t)
-            self.fm.reset_line(held)
+            self.fm.reset_line(held, t)
             self.on_z80_reset(held)
 
     def _tmss_select(self, cartridge: bool) -> None:

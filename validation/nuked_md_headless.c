@@ -34,6 +34,10 @@
  *   NMD_SAVE_EVERY=<n>    a save state every n frames, taken where md.c takes its own
  *   NMD_SAVE_DIR=<dir>    (pending_save_state), kept as <dir>/sNNNNNN.sav with the
  *                         driver's counters and the partial frame in sNNNNNN.drv.
+ *   NMD_FMSIG=<file>      every change of the FM's BUSY latch (fm.c busy_latch[1]), its
+ *                         timer flags, its slot-23 marker (fsm_sel23), its timer clock
+ *                         (fsm_clock_timers) and /IC, as "half-MCLK busy timerA timerB
+ *                         sel23 timerclock ic" lines.
  *   NMD_LOAD=<file.sav>   start from such a save (and its .drv): nothing is plotted,
  *                         traced into pictures or sounded until it has been loaded.
  *   NMD_TRACE=<path>      write the binary trace there (see the record below).
@@ -117,6 +121,8 @@ static int audio_n = 0;
 static long save_every = 0;                  /* NMD_SAVE_EVERY */
 static const char *save_dir = 0;
 static int save_requested = 0;
+static FILE *fmsig_file = 0;                 /* NMD_FMSIG */
+static int fmsig_last = -1;
 static const char *load_path = 0;            /* NMD_LOAD */
 static int load_pending = 0;
 static void audio_flush(void);
@@ -395,6 +401,7 @@ static void setup(void)
         pics_offset = (uint64_t)ftell(pics_file);
     }
     if ((s = getenv("NMD_AUDIO"))) audio_file = fopen(s, "ab");
+    if ((s = getenv("NMD_FMSIG"))) fmsig_file = fopen(s, "w");
     if ((s = getenv("NMD_SAVE_EVERY"))) save_every = strtol(s, 0, 0);
     save_dir = getenv("NMD_SAVE_DIR");
     if (save_every && !save_dir) save_dir = ".";
@@ -440,6 +447,7 @@ static void finish(void)
     flush_events();
     audio_flush();
     if (audio_file) fclose(audio_file);
+    if (fmsig_file) fclose(fmsig_file);
     if (pics_file) fclose(pics_file);
     if (pics_index) fclose(pics_index);
     audio_file = pics_file = pics_index = 0;
@@ -638,6 +646,17 @@ void Audio_Update(void)
             fprintf(stderr, "save at frame %ld was not written\n", plot_frames_seen);
         }
         save_requested = 0;
+    }
+    if (fmsig_file) {
+        int now = (ym.fm.busy_latch[1] & 1) | (ym.fm.status_timer_a_dlatch & 1) << 1
+                  | (ym.fm.status_timer_b_dlatch & 1) << 2 | (ym.fm.fsm_sel23 & 1) << 3
+                  | (ym.fm.fsm_clock_timers & 1) << 4 | (ym.fm.input.ic & 1) << 5;
+        if (now != fmsig_last) {
+            fprintf(fmsig_file, "%llu %d %d %d %d %d %d\n", (unsigned long long)mcycles,
+                    now & 1, (now >> 1) & 1, (now >> 2) & 1, (now >> 3) & 1, (now >> 4) & 1,
+                    (now >> 5) & 1);
+            fmsig_last = now;
+        }
     }
     if (audio_file) {
         audio_sum[0] += ym.fm.out_l;

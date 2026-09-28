@@ -181,6 +181,15 @@ EG_ATTACK, EG_DECAY, EG_SUSTAIN, EG_RELEASE = 0, 1, 2, 3
 
 #: Master clocks per internal cycle, and internal cycles per output sample.
 MCLK_PER_CYCLE = 42
+
+#: Internal cycles the slot counter is held at 0 after /IC is asserted. Nuked-MD's FM
+#: (``fm.c`` ``FM_Prescaler``) resets its prescaler and, through ``i_fsm_reset``, its
+#: slot counter only while ``ic_check`` holds -- /IC high now but low 12 FM clocks ago,
+#: i.e. for 12 clocks (2 internal cycles) after the assertion -- and then both run on,
+#: /IC still low: its slot-23 marker keeps its 1,008-MCLK period through a reset and
+#: moves by exactly 2 cycles when /IC is pulsed (docs/worklog.md, "The Z80 from the
+#: reset"). Die-derived; the board used to freeze the counter until /IC was released.
+IC_FSM_HOLD = 2
 CYCLES_PER_SAMPLE = 24
 
 #: How long a status read holds its value before the chip stops driving the bus:
@@ -212,6 +221,9 @@ class YM2612:
         #: /RESET is shared with the Z80 and is driven by the board; a chip made on
         #: its own (a referee comparison, a test) starts running.
         self.in_reset = False
+        #: Internal cycles the slot counter is still held at 0 after /IC was asserted
+        #: (:data:`IC_FSM_HOLD`).
+        self._ic_hold = 0
         #: Finished samples, one per 24 cycles: the summed left and right DAC.  Kept
         #: out of :meth:`reset` because they are the output queue, not chip state: a
         #: game that pulses /RESET must not lose the samples already made.
@@ -374,13 +386,21 @@ class YM2612:
 
     # -- the board's side ---------------------------------------------------------
 
-    def reset_line(self, held: bool) -> None:
+    def reset_line(self, held: bool, mclk: int | None = None) -> None:
         """The YM2612 shares /RESET with the Z80: "For as long as the Z80 is reset,
-        the YM2612 cannot be used" (CMD ``gen-hw.txt`` 2.2)."""
+        the YM2612 cannot be used" (CMD ``gen-hw.txt`` 2.2).
+
+        Asserting /IC resets the chip, and restarts its clock divider and slot counter
+        from the moment of assertion (``mclk``, where the caller has brought the chip
+        to); releasing it resets nothing. The slot counter is held at 0 only briefly
+        and then runs on while /IC stays low (:data:`IC_FSM_HOLD`), so the chip's
+        sample timing after a reset follows when the reset began, not when it ended."""
         if held and not self.in_reset:
-            mclk, cycles_run, writes = self.mclk, self.cycles_run, self.writes
+            cycles_run, writes = self.cycles_run, self.writes
+            start = self.mclk if mclk is None else max(mclk, self.mclk)
             self.reset()
-            self.mclk, self.cycles_run, self.writes = mclk, cycles_run, writes
+            self.mclk, self.cycles_run, self.writes = start, cycles_run, writes
+            self._ic_hold = IC_FSM_HOLD
         self.in_reset = held
 
     def write(self, port: int, value: int) -> None:
@@ -453,7 +473,11 @@ class YM2612:
         self.mclk += cycles * MCLK_PER_CYCLE
         self.cycles_run += cycles
         if self.in_reset:
-            # /IC holds the whole chip; nothing advances, and the output is silent.
+            # /IC holds the chip's state, and the output is silent, but the slot
+            # counter runs on once its brief hold after the assertion is over.
+            hold = min(self._ic_hold, cycles)
+            self._ic_hold -= hold
+            self.cycles = (self.cycles + cycles - hold) % CYCLES_PER_SAMPLE
             self._acc_n += cycles
             while self._acc_n >= CYCLES_PER_SAMPLE:
                 self._acc_n -= CYCLES_PER_SAMPLE

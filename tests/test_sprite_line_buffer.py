@@ -13,6 +13,8 @@ table before its last line (docs/worklog.md, "The rings").
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 TABLE_A, TABLE_B = 0x1C00, 0x4000
 
 
@@ -134,7 +136,7 @@ def test_v30_before_line_224_and_v28_before_240_keeps_the_border_open() -> None:
     counts = [hc for _, _, hc in after]
     # Counting down line by line, reloaded only when it reaches 0 and fires -- never
     # reloaded as a border line would.
-    assert all(b == a - 1 or (a == 0 and b == 0xFF) for a, b in zip(counts, counts[1:]))
+    assert all(b == a - 1 or (a == 0 and b == 0xFF) for a, b in pairwise(counts))
 
 
 def test_v28_starts_the_border_at_line_224() -> None:
@@ -142,3 +144,24 @@ def test_v28_starts_the_border_at_line_224() -> None:
     lines = _run_lines(vdp, 400)
     assert [vb for v, vb, _ in lines if v == 0xDF][-1] is False
     assert [vb for v, vb, _ in lines if v == 0xE0][-1] is True
+
+
+def test_the_fm_slot_counter_runs_on_under_reset() -> None:
+    """Nuked-MD's FM resets its prescaler and slot counter only for 12 FM clocks after
+    /IC is asserted, then runs on while /IC stays low, so the chip's sample phase after
+    a reset follows when the reset began (docs/worklog.md, "The Z80 from the reset").
+    Overdrive 2's Z80 driver waits on timer A straight after its reset, and the board's
+    frozen counter put that wait out of step with the referee's."""
+    from megadrive_python.machine import YM2612 as VARIANT
+    from megadrive_python.ym2612 import IC_FSM_HOLD, MCLK_PER_CYCLE, YM2612
+
+    fm = YM2612(VARIANT)
+    fm.run(1000 * MCLK_PER_CYCLE)
+    start = fm.mclk + 5  # asserted between two cycles: the grid restarts from here
+    fm.reset_line(True, start)
+    assert fm.mclk == start
+    fm.run(start + 30 * MCLK_PER_CYCLE)
+    assert fm.cycles == (30 - IC_FSM_HOLD) % 24  # counting on, after the brief hold
+    fm.reset_line(False, fm.mclk)
+    fm.run(fm.mclk + 3 * MCLK_PER_CYCLE)
+    assert fm.cycles == (30 - IC_FSM_HOLD + 3) % 24  # release resets nothing
