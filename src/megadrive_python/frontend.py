@@ -170,7 +170,8 @@ class Frontend:
                 break
         self.frame_size = (len(self.frame[0]), len(self.frame))
         self.scale, self.fullscreen = scale, fullscreen
-        self.window = self._open_window(self.frame_size)
+        self._window_size = self._window_size_for(self.frame_size)
+        self.window = self._open_window(self._window_size)
         pygame.display.set_caption(f"{rom.stem} — megadrive-python")
         self.sound = SoundBuffer()
         self.device = self._open_audio() if audio else None
@@ -184,6 +185,24 @@ class Frontend:
         self._frames = 0
         self._console_frames = 0
         self._fps_since = time.perf_counter()
+
+    def _window_size_for(self, size: tuple[int, int]) -> tuple[int, int]:
+        """The OS window's own logical size for a frame of ``size``: pinned at 240
+        lines for any non-interlace frame, so a V28/V30 mode change (224 against 240
+        lines, both under interlace's roughly-doubled heights) never asks for a resize.
+
+        Repeatedly calling :meth:`_open_window` -- as the arcade scene's own V28/V30
+        latching did before it was fixed, and could again on a revision with different
+        timing -- has been seen to leave the real window stuck on a stale picture while
+        the console keeps running underneath (screenshots, which read the console's own
+        frame buffer and never touch SDL, keep advancing; the window does not, and
+        neither an SDL_VIDEODRIVER=dummy repro nor toggling fullscreen recovers it, only
+        a fresh process). Interlace mode's own heights are left alone: nothing here
+        suggests they change as often as this, and halving them for the OS window is
+        :meth:`_open_window`'s job already.
+        """
+        width, height = size
+        return (width, 240) if height < 400 else size
 
     def _open_window(self, size: tuple[int, int]):
         """A window whose surface is one frame: SDL scales it to the window on the GPU
@@ -364,9 +383,15 @@ class Frontend:
         pg = self.pg
         frame = self.frame
         size = (len(frame[0]), len(frame))
-        if size != self.frame_size:  # H32/H40, V28/V30 or interlace changed
-            self.frame_size = size
-            self.window = self._open_window(size)
+        self.frame_size = size
+        window_size = self._window_size_for(size)
+        if window_size != self._window_size:  # a real change: width, or interlace
+            self._window_size = window_size
+            self.window = self._open_window(window_size)
+        if size != window_size:
+            # A shorter frame than the window's own (pinned) size: clear it first, or
+            # the rows below the frame would keep whatever the last, taller frame left.
+            self.window.fill((0, 0, 0))
         self.window.blit(pg.image.frombuffer(frame_bytes(frame), size, "BGRA"), (0, 0))
         pg.display.flip()  # waits for the display's refresh
         self._frames += 1
