@@ -34,6 +34,21 @@ with the statuses
 
     .venv-pypy/bin/python scripts/compat_sweep.py --seconds 10 --jobs 16
     .venv-pypy/bin/python scripts/compat_sweep.py --match Sonic --window 4 --offsets
+
+**The mini sweep.** ``--list tests/mini_sweep.txt`` runs only the cartridges named
+there (classics, and the ones the full sweeps and their triage single out), into
+``tests/compat/mini.csv`` unless ``--out`` says otherwise; ``--baseline CSV`` then
+prints every row whose status or differing-pixel count moved against that file.
+MAME's snapshot of an image is kept in ``tests/compat/mame-cache`` by the image's
+SHA-1 and the run's length (MAME is deterministic for a cartridge without input:
+milestone 1 checked it), so a repeat costs only the board's run:
+
+    .venv-pypy/bin/python scripts/compat_sweep.py --list tests/mini_sweep.txt --window 12 \
+        --baseline tests/compat/megadrive-branch.csv --jobs 16
+
+Use the baseline's own ``--window`` (12 for the full sweeps since milestone 8): a
+wider window turns ``differs`` rows into ``phase`` ones. The 115 cartridges take ten
+minutes on 16 jobs, most of it the board's own runs.
 """
 
 from __future__ import annotations
@@ -41,6 +56,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -69,6 +85,7 @@ ROMPATH = "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)"
 DRIVER = "genesis"
 MACHINE = "genesis"
 RESULTS = ROOT / "tests" / "compat"
+MAME_CACHE = RESULTS / "mame-cache"
 
 #: Frames to advance past the first one the board completes at or after the target
 #: time before comparing. MAME's ``-seconds_to_run`` finishes the frame in progress
@@ -270,79 +287,85 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
         if cartridge.unsupported:
             row["status"] = "unsupported"
             return row
-        with tempfile.TemporaryDirectory(dir=RESULTS / "work") as work:
-            work_path = Path(work)
-            media = cart_arguments(image, work_path, work_path / "cart.md", ROMPATH)
-            # No autoboot script: MAME runs one after a soft reset of its own, and
-            # every frame comparison this repository has made (milestone 3 on) was
-            # made against a run without one. The lockstep's traces have one, so
-            # the triage compares against the snapshot of *that* run instead.
-            subprocess.run(
-                [MAME, DRIVER, *media, "-homepath", work,
-                 "-snapshot_directory", str(work_path / "snap"), "-video", "none",
-                 "-sound", "none", "-nothrottle", "-noreadconfig", "-skip_gameinfo",
-                 "-seconds_to_run", str(seconds)],
-                cwd=work, check=True, capture_output=True, timeout=900,
-            )  # fmt: skip
-            snapshots = sorted((work_path / "snap").glob("*/*.png"))
-            if not snapshots:
-                row["status"] = "error: no MAME snapshot"
-                return row
-            snapshot = read_png(snapshots[-1])
-            machine = MACHINES[MACHINE]
-            system = System(machine, cartridge)
-            # The generator is the only thing turned off: the bus, the register
-            # file, the timers and BUSY still run, so nothing a game can observe
-            # changes (docs/worklog.md, milestone 4). It is what makes the sweep
-            # affordable -- 2.9 s of wall time per emulated second, against 0.3.
-            system.board.fm.enabled = False
-            if disable in DISABLE:
-                DISABLE[disable](system.board)
-            target = seconds * machine.mclk
-            frame_mclk = MCLK_PER_LINE * machine.lines_per_frame
-            while system.mclk < target - window * frame_mclk:
-                system.run_frame()
-            equal: list[int] = []
-            exact = -1
-            ours = None
-            # ``window`` frames each side of the frame actually compared, which
-            # FRAME_OFFSET puts that many frames after the target's own.
-            for index in range(2 * window + 1 + FRAME_OFFSET):
-                system.run_frame()
-                picture = system.vdp.renderer.frame_rgb()
-                if exact < 0 and system.mclk >= target:
-                    exact = index
-                if (
-                    len(picture) == len(snapshot)
-                    and len(picture[0]) == len(snapshot[0])
-                    and picture == snapshot
-                ):
-                    equal.append(index)
-                if index == exact + FRAME_OFFSET:
-                    ours = picture
-            if ours is None:  # the target frame fell outside the window
-                row["status"] = "error: target frame outside the window"
-                return row
-            at = exact + FRAME_OFFSET
-            wrong, total = compare(ours, snapshot)
-            row["differ"] = f"{wrong}/{total}"
-            row["offset"] = " ".join(str(i - at) for i in equal)
-            if wrong == 0:
-                row["status"] = "same"
-            elif len(ours) != len(snapshot) or len(ours[0]) != len(snapshot[0]):
-                row["status"] = "size"
-                row["differ"] = f"{len(ours[0])}x{len(ours)} vs {len(snapshot[0])}x{len(snapshot)}"
-            elif equal:
-                row["status"] = "phase"
-            else:
-                row["status"] = "differs"
-            if wrong and row["mame-board"]:
-                row["status"] = "mame-board"
-            if keep_png and wrong:
-                where = RESULTS / "frames"
-                where.mkdir(parents=True, exist_ok=True)
-                write_png(where / f"{path.stem}.png", ours)
-                shutil.copyfile(snapshots[-1], where / f"{path.stem}-mame.png")
+        cached = MAME_CACHE / f"{hashlib.sha1(image).hexdigest()}-{seconds}s.png"
+        if not cached.exists():
+            with tempfile.TemporaryDirectory(dir=RESULTS / "work") as work:
+                work_path = Path(work)
+                media = cart_arguments(image, work_path, work_path / "cart.md", ROMPATH)
+                # No autoboot script: MAME runs one after a soft reset of its own, and
+                # every frame comparison this repository has made (milestone 3 on) was
+                # made against a run without one. The lockstep's traces have one, so
+                # the triage compares against the snapshot of *that* run instead.
+                subprocess.run(
+                    [MAME, DRIVER, *media, "-homepath", work,
+                     "-snapshot_directory", str(work_path / "snap"), "-video", "none",
+                     "-sound", "none", "-nothrottle", "-noreadconfig", "-skip_gameinfo",
+                     "-seconds_to_run", str(seconds)],
+                    cwd=work, check=True, capture_output=True, timeout=900,
+                )  # fmt: skip
+                snapshots = sorted((work_path / "snap").glob("*/*.png"))
+                if not snapshots:
+                    row["status"] = "error: no MAME snapshot"
+                    return row
+                MAME_CACHE.mkdir(parents=True, exist_ok=True)
+                partial = cached.with_suffix(".part")
+                shutil.copyfile(snapshots[-1], partial)
+                partial.replace(cached)
+        snapshot = read_png(cached)
+        machine = MACHINES[MACHINE]
+        system = System(machine, cartridge)
+        # The generator is the only thing turned off: the bus, the register
+        # file, the timers and BUSY still run, so nothing a game can observe
+        # changes (docs/worklog.md, milestone 4). It is what makes the sweep
+        # affordable -- 2.9 s of wall time per emulated second, against 0.3.
+        system.board.fm.enabled = False
+        if disable in DISABLE:
+            DISABLE[disable](system.board)
+        target = seconds * machine.mclk
+        frame_mclk = MCLK_PER_LINE * machine.lines_per_frame
+        while system.mclk < target - window * frame_mclk:
+            system.run_frame()
+        equal: list[int] = []
+        exact = -1
+        ours = None
+        # ``window`` frames each side of the frame actually compared, which
+        # FRAME_OFFSET puts that many frames after the target's own.
+        for index in range(2 * window + 1 + FRAME_OFFSET):
+            system.run_frame()
+            picture = system.vdp.renderer.frame_rgb()
+            if exact < 0 and system.mclk >= target:
+                exact = index
+            if (
+                len(picture) == len(snapshot)
+                and len(picture[0]) == len(snapshot[0])
+                and picture == snapshot
+            ):
+                equal.append(index)
+            if index == exact + FRAME_OFFSET:
+                ours = picture
+        if ours is None:  # the target frame fell outside the window
+            row["status"] = "error: target frame outside the window"
+            return row
+        at = exact + FRAME_OFFSET
+        wrong, total = compare(ours, snapshot)
+        row["differ"] = f"{wrong}/{total}"
+        row["offset"] = " ".join(str(i - at) for i in equal)
+        if wrong == 0:
+            row["status"] = "same"
+        elif len(ours) != len(snapshot) or len(ours[0]) != len(snapshot[0]):
+            row["status"] = "size"
+            row["differ"] = f"{len(ours[0])}x{len(ours)} vs {len(snapshot[0])}x{len(snapshot)}"
+        elif equal:
+            row["status"] = "phase"
+        else:
+            row["status"] = "differs"
+        if wrong and row["mame-board"]:
+            row["status"] = "mame-board"
+        if keep_png and wrong:
+            where = RESULTS / "frames"
+            where.mkdir(parents=True, exist_ok=True)
+            write_png(where / f"{path.stem}.png", ours)
+            shutil.copyfile(cached, where / f"{path.stem}-mame.png")
     except Lockup as error:
         row["status"], row["differ"] = "lockup", str(error)[:120]
     except subprocess.CalledProcessError as error:
@@ -363,6 +386,35 @@ def run_one(path: Path, seconds: int, window: int, keep_png: bool, disable: str 
     return row
 
 
+RANK = {"same": 0, "phase": 1, "mame-board": 2, "differs": 3, "size": 4, "lockup": 5}
+
+
+def report_moves(rows: list[dict], baseline: Path) -> None:
+    """Every row whose status or differing-pixel count is not the baseline's, better
+    first: a status nearer ``same``, or the same status with fewer pixels differing."""
+    before = {r["name"]: r for r in csv.DictReader(baseline.open(encoding="utf-8"))}
+
+    def key(row: dict) -> tuple[int, int]:
+        pixels = row["differ"].split("/")[0]
+        return (RANK.get(row["status"].split(":")[0], 9),
+                int(pixels) if pixels.isdigit() else 0)  # fmt: skip
+
+    better, worse, new = [], [], []
+    for row in rows:
+        old = before.get(row["name"])
+        if old is None:
+            new.append(row)
+        elif (old["status"], old["differ"]) != (row["status"], row["differ"]):
+            (better if key(row) < key(old) else worse).append((old, row))
+    same = len(rows) - len(better) - len(worse) - len(new)
+    print(f"against {baseline.name}: {len(better)} better, {len(worse)} worse, "
+          f"{same} unchanged, {len(new)} new")  # fmt: skip
+    for label, pairs in (("better", better), ("WORSE", worse)):
+        for old, row in pairs:
+            print(f"  {label:<6} {old['status']:<10} {old['differ']:>12} -> "
+                  f"{row['status']:<10} {row['differ']:>12}  {row['name']}")  # fmt: skip
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--seconds", type=int, default=10, help="emulated seconds")
@@ -375,6 +427,8 @@ def main() -> int:
     parser.add_argument("--frames", action="store_true", help="keep the differing frames")
     parser.add_argument("--offsets", action="store_true",
                         help="print how many cartridges are identical at each offset")  # fmt: skip
+    parser.add_argument("--list", type=Path, help="only the cartridges named in this file")
+    parser.add_argument("--baseline", type=Path, help="report the rows that moved against it")
     parser.add_argument("--rerun", nargs="?", const="error", metavar="STATUS",
                         help="re-run only the last CSV's rows with this status")  # fmt: skip
     args = parser.parse_args()
@@ -383,11 +437,17 @@ def main() -> int:
         if p.suffix == ".zip" and not p.name.startswith("[BIOS]")
         and (args.match is None or args.match.lower() in p.name.lower())
     )  # fmt: skip
+    if args.list:
+        names = [line.strip() for line in args.list.read_text(encoding="utf-8").splitlines()]
+        wanted = {name for name in names if name and not name.startswith("#")}
+        carts = [c for c in carts if c.stem in wanted]
+        for name in sorted(wanted - {c.stem for c in carts}):
+            print(f"not in the romset: {name}")
     if args.every:
         carts = carts[:: args.every]
     if args.limit:
         carts = carts[: args.limit]
-    record = args.out or RESULTS / "megadrive.csv"
+    record = args.out or RESULTS / ("mini.csv" if args.list else "megadrive.csv")
     record.parent.mkdir(parents=True, exist_ok=True)
     (RESULTS / "work").mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
@@ -428,6 +488,8 @@ def main() -> int:
         print("cartridges identical at each offset from the exact frame:")
         for offset, count in sorted(at.items(), key=lambda kv: kv[0].rjust(4)):
             print(f"  {offset:>5}  {count}")
+    if args.baseline:
+        report_moves(rows, args.baseline)
     print(f"written to {record}; {time.time() - started:.0f} s, "
           f"{sys.implementation.name} {sys.version.split()[0]}")  # fmt: skip
     return 0
