@@ -4941,3 +4941,25 @@ lockstep still 0 unexplained. The mini sweep against `megadrive-branch.csv`: 3 b
 (Arkagis Revolution - Input Diagnostics from a lock-up to `same`, Dynamite Headdy and
 Ristar from `phase` to `same`), 3 worse (After Burner II 2,531 to 2,841 differing
 pixels, Ultraman 4,673 to 4,801, Windjammers 2,243 to 2,244), all still to triage.
+
+### Triage of the three worse carts
+
+Each of this round's three rules taken out in turn (scratch copies of `src/`, the
+sweep run against each):
+
+| cart | all rules | no VDP arbitration | no arbiter horizon | no resume | none of them | branch sweep |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| After Burner II (USA, Europe) | 2,841 | 2,527 | 2,841 | 2,841 | 2,527 | 2,531 |
+| Ultraman (Japan) | 4,801 | 4,801 | 4,733 | 4,770 | 4,814 | 4,673 |
+| Windjammers (Proto) | 2,244 | 2,243 | 2,243 | 2,243 | 2,243 | 2,243 |
+
+After Burner II moves with the Z80's VDP arbitration alone. Its title screen scatters
+star balls at random positions over a fixed logo, and blinks "PUSH START BUTTON": the
+logo and text match MAME's in every variant, the balls and the blink phase do not.
+Ultraman's title draws its logo with a random pixel dissolve; every differing pixel is
+inside the logo, and the count moves under every variant, the old rules included. Both
+are random effects whose seed follows timing, so a count moving is not a fault in the
+picture; Windjammers moves by one pixel. None is a regression. MAME can't judge them
+and a die run of 600 frames from power-on (about 40 minutes) would not start in step
+with the board either (the first-run freeze, Session 13). `tests/mini_sweep.txt`
+notes them so a later move is read the same way.

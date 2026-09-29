@@ -67,6 +67,9 @@ Boogerman - A Pick and Flick Adventure (USA)
 Overdrive 2 (World) (Revision 2017) (Aftermarket) (Unl)
 
 # -- Moved between the last two full sweeps (megadrive.csv -> megadrive-branch.csv) --
+# After Burner II, Ultraman and Windjammers draw random effects (star balls, a pixel
+# dissolve) seeded by timing: their differing-pixel counts move with any timing change
+# and say nothing on their own (docs/worklog.md, "Triage of the three worse carts").
 After Burner II (USA, Europe)
 Budokan - The Martial Spirit (Europe)
 Duli Zhanzheng (China) (Pirate)
