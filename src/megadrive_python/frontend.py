@@ -15,7 +15,8 @@ is short, so the console's own 59.92 Hz (49.70 Hz PAL) sets the pace. That holds
 while the board keeps up, and on PyPy it does not yet: measured on this machine, 16-21
 frames a second with the YM2612 running and 40-55 without it (docs/worklog.md,
 milestone 9). When the board is behind, the loop runs flat out, the sound comes in
-bursts, and the title bar says how fast the console is going. ``--no-fm`` turns the FM
+bursts, and the title bar says how fast the console is going and which frame it is on
+(the count the board's tools use, with its emulated time). ``--no-fm`` turns the FM
 generator off (its registers, timers and BUSY still work, so games run the same) and
 ``--skip N`` draws one frame in N + 1; together they come close to full speed.
 """
@@ -131,6 +132,15 @@ def machine_for(image: bytes) -> str:
     if "J" in field:
         return "megadrive-japan"
     return "genesis"
+
+
+def where(frame: int, rate: float) -> str:
+    """The console's frame count since power-on and the emulated time it makes, for
+    the title bar: the VDP's own count, which a reset leaves alone, and the number the
+    board's tools (``scripts/vdp_streams.py``, the Overdrive 2 comparisons in
+    docs/worklog.md) call a frame."""
+    seconds = int(frame / rate)
+    return f"frame {frame:,} ({seconds // 60}:{seconds % 60:02d})"
 
 
 # -- the window ------------------------------------------------------------------------
@@ -366,8 +376,8 @@ class Frontend:
             speed = self._console_frames / elapsed / self.rate * 100
             state = " (paused)" if self.paused else " (fast)" if self.fast else ""
             pg.display.set_caption(
-                f"{self.rom.stem} — {speed:.0f}% speed, {self._frames / elapsed:.0f} fps"
-                f"{state} — megadrive-python"
+                f"{self.rom.stem} — {where(self.system.vdp.frame, self.rate)} — "
+                f"{speed:.0f}% speed, {self._frames / elapsed:.0f} fps{state} — megadrive-python"
             )
             self._frames = self._console_frames = 0
             self._fps_since = now

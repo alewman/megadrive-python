@@ -4556,3 +4556,486 @@ pixel to the old code's (no rain).
 
 Both suites **133 passed, 1 deselected** (PyPy 197 s, CPython 461 s), ruff clean. The
 romset re-sweep is running at this commit and is reported below when it finishes.
+
+### The re-sweep for the address
+
+`scripts/compat_sweep.py --seconds 10 --jobs 16 --window 12 --offsets`, 17,115 s:
+**0 of 3,514 rows moved** against the sweep before it. The 17-bit address changes no
+other cartridge's picture at ten seconds.
+
+### The whole demo against BlastEm
+
+Every 25th frame of 12,000, each against the best of BlastEm's frames n-4..n+4
+(`score.py`, its levels mapped onto the board's ramp), then a frame at a time where a
+scene was off. What was found, in the order it was found; each fix is a rule of its
+own with a triage knob, checked to put the old pictures back exactly.
+
+**The rings (6,540-7,060).** The scene forces the sprite plane on through the debug
+register (bits 8-7 = 01), and the board drew black where BlastEm drew blue and magenta
+rings: palette entry 0 of palettes 1 and 2. Both emulators' CRAM and debug register
+were the same (BlastEm's read from a save state), so the difference was the sprite
+line buffer: Kabuto's holds colour, palette and priority and lets a transparent pixel
+leave its palette, the board's kept opaque pixels only. That took the scene from
+73-75% to 99.7%; the rest was one line, the last. The demo points register 5 at
+another table in the blank before line 223, after the hardware has read that line's
+sprites (phase 2, "1 raster line before"); the board read them as the line began,
+from the moved table (X 383, garbage names), and drew none. Phases 1 and 2 now run
+when the line before begins. VDP item 25; knobs `sprite_transparent`, `sprite_scan`.
+
+**The shadow scene (9,750-10,125; Aubrey's "gray box missing a kind of gray").**
+Wherever the two differed, the board had a colour at its shadow level and BlastEm at
+normal: plane B showing through transparent pixels of high-priority plane A tiles, and
+the board dropped a transparent pixel's priority, so both planes looked low. Kabuto:
+shadow "depends on plane tile priority, even when all plane tile pixels are
+transparent". `_tile_row` now keeps palette and priority on every pixel; all 16
+sampled frames went from 0-95% to identical. VDP item 26; knob `plane_transparent`.
+
+**Left alone: 9,225-9,725, 150-190 pixels a frame.** One CRAM write every fourth line
+(3, 7, 11, ...), exactly the rows that differ, about 3 pixels a row: where a mid-line
+colour change starts. The board's place for that was measured on Nuked-MD (item 20);
+by the tier rule the die outranks BlastEm, so the board keeps it.
+
+**The arcade (12,154-12,960; Aubrey saw it stop advancing).** Not a hang: the board
+fell behind from 12,200, by 330 frames at 13,300, and drew black bands and missing
+monitors. A profile of one frame put 87% of the 68000's time in `tst.w $FF079A / beq`
+at $39FBE4: the main loop waits for a flag the last of a chain of H interrupt handlers
+(vector $FF069A, each loading the next and the next register 10 value) sets. The
+board's own register log gave the reason: $7C (V30) at line 207 and $74 (V28) at 225,
+every frame, which is Kabuto's border trick. The board latched V28/V30 at the blanking
+line, so the border started anyway and the H interrupt counter was reloaded through
+it; the chain fell out of step and the loop ran every 1.4 frames. The border is now
+tested against the live mode (VDP item 27). The demo keeps pace (2-6 frames of
+BlastEm, as everywhere else) and all 32 sampled frames of the scene, 240 lines each,
+equal BlastEm's (rows 0-231 against its 8-239: its libretro frame keeps an 8-line top
+border even with the border open).
+
+Two wrong turns. Making V28/V30 live everywhere, the counter's jump included, and the
+HV captures test failed in 26 dumps -- but the cause was `run_hv_captures.py`, which
+places the VDP at a fitted line and did not set the new `border`; with that set, they
+are unchanged to the word. The counter's sequence was put back on the latched mode
+anyway, since only the border has a source, and a sentence claiming the captures ruled
+the live jump out was caught before it was committed: the live jump was never run
+with the harness fixed. And `pkill -f` / a `grep` over process command lines killed
+their own shell twice (the trap memory already names): kill by the process's own PID.
+
+### Aubrey's other questions
+
+- **"Crashed around 4:11"**: the board runs to 13,500 without an exception, FM off,
+  and FM on gives the same frames through the arcade intro (11,500-12,400). What was
+  seen was the arcade's lag.
+- **The very first second**: frames 3-14 flash grey and black, six times, on both
+  emulators -- the demo's own. The board's run is one frame behind BlastEm's there
+  (grey on 4, 6, ... 14 against 3, 5, ... 13), the same frame of offset as through the
+  whole demo; every frame from 15 on is identical after that offset.
+- **The pong screen's static**: seeded from memory nothing initialised. Filling work
+  RAM and Z80 RAM with $FF or random bytes changes exactly the static frames (550-575,
+  785-810, 1,135-1,160) and nothing else in the first 1,200. Both emulators zero RAM
+  and still differ, so something else nothing initialised feeds it too (the CPU
+  registers at reset are one candidate); on a console it differs at every power-on,
+  so there is no picture to match. Session 9's "CRAM values differ from frame 548"
+  (to 11,083) is probably the same source, but only the first 1,200 frames were
+  tested here; the pictures after them match, so those values do not show.
+
+### The frontend's frame counter
+
+The title bar now carries `frame N (m:ss)`: the VDP's count since power-on (a reset
+leaves it), which is the number every tool here calls a frame, and the emulated time
+at the machine's rate. `tests/test_frontend.py` checks the format.
+
+### Checks
+
+`tests/test_sprite_line_buffer.py`: five tests, four of which fail on the code before
+(the fifth, V28's border at line 224, holds on both). Both suites **140 passed, 1
+deselected** (PyPy 211 s, CPython 481 s), ruff clean; the HV captures equal their
+baseline in every dump.
+
+### The tools, for anyone chasing the rest
+
+The method of this session is now in the repository, each checked to reproduce the
+scratch work it came from (same pictures to the pixel, same scores):
+
+```text
+sh validation/build_blastem_libretro.sh                  # the pinned BlastEm, unchanged, as a libretro core
+python scripts/blastem_frames.py reference/build-blastem-libretro/blastem_libretro.so ROM OUT_B --range 7600:9200:25 [--states]
+python scripts/board_frames.py ROM OUT_M --range 7600:9200:25
+python scripts/compare_frames.py OUT_M OUT_B --pairs     # best of BlastEm's n-6..n+6, levels and border put right
+```
+
+`--pairs` says what kind of fault a frame has: k against 2k is a shade fault
+(shadow against normal), matched pairs both ways a picture partly a frame out of step.
+For BlastEm's frames around each board frame, ask for n-6..n+6 (`--frames`). BlastEm's
+own VDP state at a frame comes from `--states` (`vdp_serialize`: VRAM, CRAM, VSRAM,
+sprite cache, registers); its event log cannot carry bit 16 of a VRAM address or a copy
+DMA (`scripts/vdp_streams.py`).
+
+What is open in Overdrive 2 at the end of this session, every 25th frame to 13,500
+(477 of 540 identical):
+
+| frames | what | where it stands |
+| --- | --- | --- |
+| 550-1,150 (4) | the pong screen's static | uninitialised memory; nothing to match |
+| 5,675-6,525 (4) | 1-4 pixels each | not looked at |
+| 7,700-8,075 (7) | parts of the picture a frame out of step (grid scroll against objects) | pacing, not drawing (below) |
+| 8,150-9,125 (25) | 16-517 pixels, the B-masked debug-register scenes | not started |
+| 9,175-9,725 (23) | where a mid-line CRAM change starts | kept: die-measured (item 20) |
+
+### 7,650-7,760: the 3D console is paced differently, not drawn differently
+
+Every frame of 7,650-8,100 was scored on both (`compare_frames.py`): the frames that
+differ come about every fourth frame (7,666, 7,670, 7,674, ...), about 6,500 pixels
+each, with the frames between identical. In a differing frame the rows above and
+below the rotating 3D Mega Drive are BlastEm's frame n - 2, as everywhere in this
+stretch, and the object's rows match none of BlastEm's frames: the grid comes from
+one frame and the object from another.
+
+The object is rendered in software by the 68000 and swapped in when an image is done,
+a new image every 3-5 frames. Labelling each frame by the object's own pixels (the
+grey ones) on both:
+
+| images | 1-3 | 4-10 | 11-20 | 21-25 | 26-27 |
+| --- | --- | --- | --- | --- | --- |
+| board's first frame after BlastEm's | 2 | 3 | 4 | 3 | 2 |
+
+against a constant 2 for the grid, and both emulators take 106 frames for images 0 to
+26. So the board renders the object at BlastEm's average rate and only the phase of
+the image swaps drifts, by up to two frames and back: an image that finishes close
+to a frame's end lands on the other side of it. That is a sub-frame difference in how
+much 68000 time a frame gives (bus stalls: the work-RAM refresh rule is the open item
+most likely to move it), and there is no judge for it here -- BlastEm's 68000 timing
+is an approximation, and Nuked-MD cannot run Overdrive 2 to frame 7,650 (it does not
+get past its first frame, and at 0.24 fps would take nine hours). Left open; not
+worth changing the board to follow a detector.
+
+**7,930-8,090, the same, bigger.** Labelled the same way (the grey pixels of the
+console and the TITAN sign), 50 of the board's 51 object images are BlastEm's images
+exactly (the 51st is one transitional frame at 8,088), but the board falls behind
+BlastEm by 4, 3, 5, 8 and 4 frames at images 1, 10, 20, 30 and 40: images 19-30 take
+it 48 frames against BlastEm's 45, some 6% less 68000 work a frame in this stretch,
+and it catches up at the scene's end. Still pacing, not drawing, but a throughput
+difference rather than a phase: what takes the 68000's time here (refresh stalls, DMA
+contention) is modelled differently on the two, and BlastEm is not a judge of it. Open,
+with the same lack of a judge; a cycle profile of one image on each side would be the
+next step if it is taken up.
+
+### Overdrive 2 on Nuked-MD: a reset after the first run
+
+Session 11 found the demo stops on the referee after its first frame. Nuked-MD's own
+notes say why: "The Overdrive 2 demo has an issue loading Z80 microcode and requires
+pressing Reset after the first run (behavior is similar on real hardware)". The driver
+gained `NMD_RESET=<t0>:<t1>`, which holds the console's reset button as Nuked-MD's
+frontend does (`md.wres` and the arbiter's `ext_wres` low, `controller.c` F12).
+
+Traced (68000 bus cycles, PAL): with no reset the 68000 waits at $2F0240 until about
+frame 15, moves on, and by frame 15-19 makes no bus cycle at all (the last are reads
+of a table at $398A34 and the VDP status) -- the first run's freeze. A press at frames
+4-9, before it, changes nothing. A press at frames 25-30, after it, is a real reset
+(the reset vector is read at frame 25), and the demo then starts again and keeps
+running: the 68000 is still busy at frame 100, and the captured pictures from frame 60
+show the opening -- the ship fading in through its green, cyan, yellow and grey tints
+-- as BlastEm draws it at frames 30-67. So Overdrive 2 is now a referee run, at about
+25 frames of offset for the reboot. Measured speed on the shared machine: 100 frames
+in 13 minutes (0.13 frames a second, with the romset sweep running beside it).
+
+The board does not freeze on the first run, and the note says real hardware does;
+what the board does differently in the Z80 start-up is a question for later.
+
+### One referee run for everything
+
+Runs of the die model are expensive (0.27 frames a second with the machine free), so
+the whole demo is being run once, recording what any later question could need. The
+driver gained, each checked on a 60-frame run:
+
+- `NMD_PICS=<dir>`: every frame's raw capture, zlib-compressed and indexed (frame,
+  offset, bytes, half-MCLK); about 11 KB a frame.
+- `NMD_AUDIO=<file>`: FM left, FM right and PSG summed over each FM sample period.
+- `NMD_SAVE_EVERY=<n>`: a save state every n frames, taken where md.c takes its own,
+  with the driver's counters and part-drawn frame beside it; `NMD_LOAD=<file>` starts
+  from one. Nuked-MD's save holds six pointers FC1004_Init aims into the chip, stale in
+  another process, so the build renames savestate.c's `load_state` and the driver's
+  wrapper re-aims them. A run loaded from frame 40 draws frames 40-59 bit for bit as
+  the run that saved it did, at the same half-MCLK. (Its sound could not be checked
+  there: the demo is silent until later.)
+- `NMD_PLOT_LIST=<spec>`: plot a list of frames.
+
+The run (`reference/nuked-od2/launch.sh`): to die frame 20,400, reset held at frames
+25-30 (after the first run's freeze), every frame's picture, the sound, a save every
+250 frames, and a 68000 bus trace over die frames 12,230-12,260 (the arcade's V
+interrupt). Die frames are the board's frames plus about 25 for the reboot; the board
+can press its own reset at frame 25 to line the two up.
+
+**The board lined up with the referee.** `scripts/board_frames.py --reset-mclk
+26761500` presses the board's reset button at the master clock the referee's was
+pressed at (PAL frame 25). After it, board frame n is the referee's frame n - 1, pixel
+for pixel: 62/61, 70/69, 78/77, 86/85 all 71,680 of 71,680 through the opening fade,
+where each frame differs from its neighbours (the one frame is where the two count
+their first). The aligned board run (`reference/od2-board-aligned`, every frame to
+20,400, FM on, the chips' own samples in `fm.bin` and `psg.bin`, a snapshot every
+1,000 frames) is the board half of the whole-demo comparison.
+
+### The one-frame slip at 7,047, and the Z80 from the reset
+
+Against the referee (frames 1-9,897 compared, `scripts/compare_referee.py`), 7,155
+frames are identical at the aligned offset and 8,686 within two frames. From frame
+7,051 the board is one frame late. Traced cycle by cycle from the referee's save at
+frame 7,000:
+
+1. Both write the same VDP stream until a pass at frame 7,051 where the demo waits for
+   the V counter to read $DF. The board enters the wait at line $DD; the die after
+   $DF has passed, so it waits through the blank for line $1DF, 57 lines late.
+2. The die's 68000 is late because over ~33 lines before it the board ran the same
+   decryption loop (move/eor/move, ROM to RAM) ~17% faster: the die's Z80 made 332 bank
+   reads in the stretch (each costing the 68000 ~11 cycles, which the board's arbiter
+   charges too: 10.57), the board's Z80 only 54, from another place in the ROM. The
+   two Z80 sound drivers were at different points of their playback; the FM recordings
+   of the whole demo correlate at only 0.4.
+3. From the reset, the two Z80s load the same 7,440-byte program at the same times and
+   then run identically for 187 reads, until a loop that polls the YM2612 for timer
+   A's overflow. The board's flag rose 617 MCLK before the die's.
+4. The cause: the FM's sample phase after a reset. Nuked-MD's FM resets its prescaler
+   and slot counter only for 12 FM clocks after /IC is asserted (`FM_Prescaler`'s
+   `ic_check`) and then runs on under /IC; its slot-23 marker keeps its 1,008-MCLK
+   period through a reset and moves by 2 cycles when /IC is pulsed. The board froze
+   its counter under /IC and restarted it at release. It now restarts it at the
+   assertion, holds it 2 cycles, and lets it run (`ym2612.IC_FSM_HOLD`); release
+   resets nothing. Timer A's first flag after the reset is now 113 MCLK from the die's
+   (was 617), and the Z80s run identically for 398 reads (was 187).
+
+What looked left there -- the board's timer-A flag "jittering" by up to 3 cycles -- was
+the probe's own artifact, not the board's: `YM2612.run` advances its clock to the
+catch-up target before running the cycles, so a probe reading `mclk` inside `cycle`
+stamps every cycle of a catch-up with the same time. Timed cycle by cycle the board's
+flag keeps the die's 4,032-MCLK period. The next section is what the difference was.
+
+Tools: the driver's `NMD_FMSIG` logs the FM's BUSY latch, timer flags, slot-23 marker,
+timer clock and /IC; `tests/test_sprite_line_buffer.py` holds the counter rule. Both
+suites pass (140 before this test).
+
+### The access-timing table, and what the slip turned into
+
+Aubrey's decision: adopt z80-python's access-timing table. What that and the chase
+behind it found, in order.
+
+1. **The table.** z80-python `b62891b` (PR #19, merged, not yet released; pinned by
+   revision in `pyproject.toml`) gives, for an instruction's bytes, each memory access
+   with its T-state (`z80_python.timing.instruction_timing`). The system looks the Z80's
+   next instruction up before stepping it (`System._z80_offsets`, cached by its first
+   four bytes, read with `Board.z80_peek`, which has no side effects), and the board
+   places each FM, VDP and bank-window device access at the step's start plus that
+   offset plus what the Z80 has already been held (`Board._z80_access_time`). Where the
+   Z80 takes an interrupt that step the table does not apply and the access stays at
+   the step's start; an interrupt merely requested, with IFF1 clear or in EI's shadow,
+   does not count (z80-python's own acceptance test, `iff1` and `_ei_delay`). Identical
+   Z80 reads against the die from the reset: 398 to 1,150.
+2. **Not the arbiter.** The bank-access delay (`Board._bank_delay`) still places the
+   access at the step's start. The arbiter reads the 68000's bus cycles only as far as
+   the Z80 has been caught up to; an access later in the instruction lands past them on
+   a bus that looks idle, and MoD's spinning-68000 experiment then costs the Z80
+   exactly what a stopped 68000 does (682 wait states in 300 tries both ways;
+   `tests/test_milestone5.py` caught it). Placing the arbiter's accesses too needs the
+   Z80's catch-up to stop short of an instruction whose accesses would cross the
+   68000's clock; that, and with it undocumented-behavior open item 14, is next.
+3. **The 1,150 rested on two errors cancelling.** Before the Z80 starts, the 68000
+   copies its sound driver into Z80 RAM a byte at a time (7,357 writes over 1.2M
+   MCLK), and on the board it released the bus 252 MCLK before the die did. The die's
+   write-to-write spacings are 161, 168 or 175 MCLK where the board's are 161 or 175:
+   the cartridge refresh falling on a write to Z80 space holds it one 68000 clock, not
+   the cartridge's two and not the board's none. Of the 519 refreshes that fell on
+   those writes, 392 due a clock or more before /AS held it 7 MCLK and 127 due within
+   the last clock held it not at all, though they were used up (the next refresh came
+   1,785 MCLK later) -- every one. `board.Z80_REFRESH_STALL`, `Z80_REFRESH_LATE`;
+   undocumented-behavior "The bus" item 7. The bus is now released 7 MCLK from the
+   die's.
+4. **The FM's /IC: a reset or a pause, by where in its slot it lands.** With the Z80
+   now on time, the timer flag was early by 239 MCLK. Nuked-MD's fm.c, clocked the way
+   `fc1004.c` clocks it (scratch harness, not kept: the die's own code driven through
+   every position), resets the slot counter only if the assertion is sampled 1-3 FM
+   clocks into a slot; at 0, 4 or 5 clocks the counter keeps its count and resumes,
+   after the 12-clock stop, at the slot under way two clocks after the assertion. The
+   Overdrive 2 run's three assertions agree: the console reset (2.6 clocks in) reset
+   it, the first run's release-and-reassert (5.1 clocks in) paused it 11 clocks, the
+   final one (0.1 clocks in, sampled at the next) paused it 12. `ym2612.
+   IC_PAUSE_POSITIONS`; the rule the board had, always a reset, is item 4 of the
+   section above.
+5. **Why the reads still part.** The FM's phase at the Z80's final /IC depends on the
+   last resetting assertion, the console reset, and on everything the 68000 does
+   between them. The die's reset button reaches VRES and ZRES 80,496 MCLK after the
+   driver presses it (the board's `press_reset` is immediate), and before the reset the
+   two runs differ outright (the die freezes on its first run), so the board cannot be
+   lined up with the die to 7 MCLK from outside. Forcing the board's slot counter at
+   the final /IC through all 24 slots and seven grid offsets finds the die's phase
+   between two of the board's cycles: slot 18 with the grid 12-17 MCLK late gives
+   3,507 identical reads, where the best whole-cycle phase gives 1,150.
+6. **And what stops those at 3,507**: the 68000's boot runs out of step with the VDP.
+   From its precise vblank polls after the Z80 starts (every 210 MCLK), the die's VDP
+   runs 240,277 MCLK after the board's; the Z80 release, 235,880. The difference comes
+   from a start-up loop that reads CRAM back 64 words at a time in H40 with the
+   display on, re-checking vblank every ~20,500 MCLK: the board runs each pass 300-900
+   MCLK fast, so it leaves on a different pass. Per line the die stalls two reads, one
+   served at the hblank slot near $1CE and one near $002; the board stalls the same
+   pair in most lines, but after a read at 3,316 MCLK into a line it still catches an
+   end-of-line slot ($140/$142), where the die, from any read at 3,300-3,334, never
+   does (about 50 lines, three exceptions). That is a read-prefetch slot rule in H40
+   active lines, not yet settled: whether the die's end-of-line slots sit earlier, or
+   its prefetch needs more lead time, the data here does not say. The next thing to
+   settle.
+
+Also seen: after a reset release with a bus request already pending, the die's Z80
+fetches its first opcode before granting the bus; the board's grants first.
+
+Checks: both suites pass with z80-python `b62891b` installed (142 each, CPython 3.14 and
+PyPy 3.11). The milestone-1 replay, re-recorded (`scripts/mame_trace.py genesis GAME.zip
+--seconds 30`, MAME 0.285) and re-run on PyPy: all six games 0 unexplained, with the same
+instruction counts as before (Sonic 12,728,465 Z80 instructions, Streets of Rage 2
+11,269,553, Gunstar Heroes 15,425,681, Castlevania 8,460,818, Sonic 3 11,837,738 with
+1,688 interrupts, Phantasy Star IV 13,280,703). New tests: the Z80-space refresh stretch
+(`tests/test_board.py`), the /IC reset and pause (`tests/test_sprite_line_buffer.py`).
+
+### The Z80 after a hold, and a read-ahead rule that the hardware test refused
+
+Chasing the reads further, with the FM phase still forced (item 5 above) so that each
+change is judged on the Z80 reads it matches, from 3,507:
+
+1. **When the Z80 takes up its bus again** (Nuked-MD, all 83 bus releases and both
+   reset releases after the power-on reset). Its clock runs on through a hold: every
+   access falls on one phase of the 15-MCLK clock, 6 MCLK past a multiple of 105 on
+   both machines. After the write that releases the bus, its next access comes on the
+   first such edge 42 MCLK or more after the write began (42-56 measured); after a
+   reset release, 57 or more. A reset released with the bus already requested still
+   makes its first opcode fetch before letting go. And an instruction the request
+   falls inside keeps the machine cycle under way and resumes with its later accesses
+   moved, where the board used to rerun the whole instruction from the start.
+   `system.Z80_CLOCK_PHASE`, `Z80_RESUME_MCLK`, `Z80_RESET_RESUME_MCLK`,
+   `System._z80_resume`, `Board.z80_hold`. 3,507 to 6,305.
+2. **The Z80's VDP accesses are arbitrated.** Its 3,095 reads of the VDP ($7F08, the
+   V counter) in the run are held 60, 75 or 90 MCLK, the bank window's three lengths;
+   its RAM and FM reads take 30. They go over the 68000's bus, so they take the bank
+   window's delay (`board.Z80_VDP_ARBITRATED`). 6,305 to 6,970.
+3. **The arbiter sees the access where it falls.** With the delay at the access's own
+   time (item 2 of the section above undone), the Z80 is no longer stepped into an
+   instruction whose accesses would fall past the 68000's clock: it waits for the
+   next catch-up (`System.catch_up_z80`). MoD's experiment is back to its shape
+   (stopped 2-3 wait states, spinning mostly 3 with 2-4, the 68000's share 10-12),
+   and the reads against the die reach 7,435.
+
+**The read-ahead.** `scripts/run_read_slots.py` (new) sweeps bursts and pairs of CRAM
+reads across H40 active lines on Nuked-MD and the board. What the die showed: a read
+that waits for the buffer ends 42-48 MCLK later than the board's, at every slot; a
+fill needs the read that emptied the buffer to have begun about 21 MCLK before the
+slot; and the slot at H $142 fills no read at all. VSRAM reads behave the same; VRAM
+reads miss $140 too. Modelled as three rules, they reproduced the die's map exactly --
+and failed **VDPFIFOTesting's "FIFO Wait States"**, which passes on hardware
+(Nemesis) and, run here on Nuked-MD from the same ROM, on the die too. Each rule
+removed alone still failed; the test passes only with the release delay and the $142
+rule both gone. A hardware-verified test outranks a model fitted to die traces, and
+the die's own pass says the three rules are not how it works, only what it looks like
+from outside. **Not adopted**; the measurements and the script stay. What the die's
+read-ahead really is, is the next thing to find there: its VDP's read path, read from
+`vdp.c` itself rather than fitted from bus traces.
+
+Also tried, not adopted: the die's longer DMA start-up (item 15 of the open items);
+with 100 MCLK the best forced phase reached 7,835 reads, but the hardware source
+(Kabuto's 5.6 cycles) still judges that question.
+
+Checks: both suites pass (143, a test for the resume rule added); the six-game MAME
+lockstep still 0 unexplained. The mini sweep against `megadrive-branch.csv`: 3 better
+(Arkagis Revolution - Input Diagnostics from a lock-up to `same`, Dynamite Headdy and
+Ristar from `phase` to `same`), 3 worse (After Burner II 2,531 to 2,841 differing
+pixels, Ultraman 4,673 to 4,801, Windjammers 2,243 to 2,244), all still to triage.
+
+### Triage of the three worse carts
+
+Each of this round's three rules taken out in turn (scratch copies of `src/`, the
+sweep run against each):
+
+| cart | all rules | no VDP arbitration | no arbiter horizon | no resume | none of them | branch sweep |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| After Burner II (USA, Europe) | 2,841 | 2,527 | 2,841 | 2,841 | 2,527 | 2,531 |
+| Ultraman (Japan) | 4,801 | 4,801 | 4,733 | 4,770 | 4,814 | 4,673 |
+| Windjammers (Proto) | 2,244 | 2,243 | 2,243 | 2,243 | 2,243 | 2,243 |
+
+After Burner II moves with the Z80's VDP arbitration alone. Its title screen scatters
+star balls at random positions over a fixed logo, and blinks "PUSH START BUTTON": the
+logo and text match MAME's in every variant, the balls and the blink phase do not.
+Ultraman's title draws its logo with a random pixel dissolve; every differing pixel is
+inside the logo, and the count moves under every variant, the old rules included. Both
+are random effects whose seed follows timing, so a count moving is not a fault in the
+picture; Windjammers moves by one pixel. None is a regression. MAME can't judge them
+and a die run of 600 frames from power-on (about 40 minutes) would not start in step
+with the board either (the first-run freeze, Session 13). `tests/mini_sweep.txt`
+notes them so a later move is read the same way.
+
+### What "FIFO Wait States" can and cannot judge
+
+The read-ahead rules above were set aside because they failed VDPFIFOTesting's "FIFO
+Wait States". Traced on both machines from the ROM itself (die: Nuked-MD, frames
+56-170 with Start pressed at 55, as the harness does), sub-test 8 -- six data writes
+fill the FIFO, the long write `$00008F01` then sets up a VRAM read, and 16 status reads
+look for a full FIFO -- loops until it has seen full or 2,048 times:
+
+| machine | iterations | iterations with a full sample |
+| --- | ---: | ---: |
+| Nuked-MD | 812 | 1 (the last; the sixth write held 74 MCLK) |
+| board, no read-ahead rules | 1 | 1 |
+| board, with the rules | 2,049 (the limit) | 0 |
+
+Both machines spread the iterations over the whole line (34-35 bins of 100 MCLK), so
+neither is phase-locked. At the commonest timing (413 MCLK from the sixth write's end
+to the first status read) the die reads full in 0 of 281 iterations and the board
+without the rules read full at once. So the board's pass of this test was partly luck,
+and on the die the test passes about once per 800 iterations: it cannot discriminate
+between read-ahead models, and Nemesis's own note that data-port tests during
+transfers "fail occasionally" on hardware fits. The rules stay out anyway, on the
+other count: they did not move the Overdrive 2 comparison (3,507 identical reads with
+and without them). Scripts for this: the scratch `fifo8.py`/`vft8.py` harnesses were
+not kept; `scripts/run_read_slots.py` holds the measurement that matters.
+
+### The arbiter, measured
+
+The per-read Z80 wait mismatches (15 MCLK, now and then, on its reads of the VDP) came
+from Kabuto's footnote-1 arithmetic, which the board had used since milestone 5. Tested
+straight against the die -- every one of the 24,343 bank-window and VDP accesses in the
+Overdrive 2 trace, predicted from the die's own 68000 bus cycles around it -- it gives
+the die's wait for 76.8 % of them. What the die does, read off its bus (the Z80's own
+cycle on the 68000's bus is in the trace, marked as not driven by the 68000):
+
+1. A 68000 cycle that begins up to 21 MCLK after the Z80's /MREQ still goes first; none
+   that begins later does (every access in the run).
+2. The Z80's own cycle begins 17 MCLK after the last of those ends, and no sooner than
+   29 MCLK after /MREQ, on a 68000 clock edge. The grants 7 or 14 MCLK later than
+   17, which had looked unexplained, are this floor and edge.
+3. It ends on the first Z80 clock edge at /MREQ + 37 + 15w that leaves it at least 30
+   MCLK: 67, 82 or 97 MCLK after /MREQ for 2, 3 or 4 wait states, every access.
+4. The 68000's next cycle waits for its first clock edge 25 MCLK after that.
+5. A ROM read through the bank window that meets the cartridge refresh takes it: its
+   own cycle is 14 MCLK longer (Kabuto's ``b``). With the 68000 stopped a quarter of
+   the Z80's reads do, one per refresh period (882-889 MCLK apart).
+
+Rules 1-4 give the die's wait for 94.3 % of the accesses; in 97.8 % the grant is right
+and the rest are rule 5, which the board takes from its own refresh grid (the window
+in which a refresh lands on the Z80's read rather than passing on an idle bus is not
+pinned: the board takes every owed tick, and in MoD's stopped case gives 3 wait states
+to half the reads where the die gives it to a quarter). `arbiter.z80_access_wait`;
+Kabuto's arithmetic (`bank_access_delay`) and `Board._m68k_release` are gone. The
+board also moves the 68000's later cycles in its step by the delay each access costs
+it, so the cycle the 68000 resumes with is on the bus when the Z80's next access comes.
+
+Against MoD (`scripts/run_nuked_md.py arbiter`, hardware-captured, with the die beside
+it): the 68000 stopped, 2-3 wait states ("2-3"; the die 2.25, the board 2.49); in
+`jmp (a0)`, 2-3 with mean 2.86 (MoD 2-4, "about 2.93"; die 2.74); the `pop`'s second
+read, mean about 2.2 where MoD and the die have 3.5-3.6 -- no better than Kabuto's
+arithmetic was (2.04), and still open.
+
+On Overdrive 2, every Z80 read of the VDP now waits what the die's does, through the
+whole comparison window. The best forced-phase run stops at 4,738 reads rather than
+7,435, and the reason is not the arbiter: after the Z80 starts, the board's 68000
+makes its periodic bus request about 4,800 MCLK earlier than the die's (the boot
+offset between the two CPUs, Session 13), so the request lands on another Z80
+instruction; with the old arbiter the two holds cancelled exactly (-150/+150), with
+this one they miss by 15 MCLK and the timer-A poll flips. That offset is the next
+thing.
+
+Checks: both suites pass (142; Kabuto's formula test and `_m68k_release`'s test
+replaced by one for `z80_access_wait`); the six-game MAME lockstep 0 unexplained (it
+runs with the arbiter off); the mini sweep against the previous one: one move, Sansan
+(Japan) 2,370 to 3,134 pixels at the exact frame, still `phase` -- an identical frame
+remains within the window.

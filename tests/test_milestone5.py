@@ -18,8 +18,8 @@ from conftest import ROOT  # noqa: F401  (puts scripts/ on the path)
 from megadrive_python.arbiter import (
     AS_LOW_MCLK,
     BUSACK_PROPAGATION_MCLK,
-    bank_access_delay,
     busack_grant,
+    z80_access_wait,
 )
 from megadrive_python.cartridge import Cartridge
 from megadrive_python.machine import M68K_DIVIDER, MACHINES, MCLK_PER_LINE
@@ -27,19 +27,19 @@ from megadrive_python.system import System
 from megadrive_python.vdp import VDP
 
 
-def test_kabutos_formula_gives_mods_measured_wait_states() -> None:
-    """MoD's two logic-analyser cases fall out of Kabuto's footnote 1.
-
-    With the 68000 off the bus (``a`` = 1, no refresh delay) the Z80 waits "2-3"
-    cycles, depending only on how the clocks line up; when the request lands inside a
-    68000 bus cycle so that the grant takes a cycle longer, "there will be 4 wait
-    states"; and the 68000's own delay is "around 11 68k cycles" (Kabuto).
-    """
-    idle = {bank_access_delay(subcycle, 1, False)[0] for subcycle in range(7)}
-    assert idle == {2, 3}
-    assert {bank_access_delay(subcycle, 4, False)[0] for subcycle in range(7)} == {4}
-    delays = [bank_access_delay(s, a, False)[1] for s in range(7) for a in range(1, 5)]
-    assert 10 <= sum(delays) / len(delays) <= 12
+def test_a_z80_access_waits_as_the_die_times_it() -> None:
+    """On an idle bus the Z80 waits 2 (MoD: "2-3"); a 68000 cycle that begins up to 21
+    MCLK after the Z80's request still goes first, and the Z80's cycle begins 17 MCLK
+    after it ends; one that begins later does not; an owed refresh lengthens the
+    Z80's own cycle by 14 (Nuked-MD, docs/worklog.md "The arbiter, measured")."""
+    assert z80_access_wait(1000, [])[0] == 2
+    assert z80_access_wait(1000, [], refresh=1000)[0] == 3
+    assert z80_access_wait(1000, [[1021, AS_LOW_MCLK]])[0] == 4  # granted at 1,056
+    assert z80_access_wait(1000, [[1022, AS_LOW_MCLK]])[0] == 2
+    # Ending 8 MCLK in, the 68000's cycle leaves the grant at its floor, 29 MCLK after
+    # the request, on the next 68000 clock edge (6 past a multiple of 7).
+    wait, resume, own = z80_access_wait(1000, [[990, AS_LOW_MCLK]])
+    assert (own, wait, resume) == (1035, 2, 1000 + 37 + 30 + 25)
 
 
 def test_bus_grant_waits_for_the_end_of_the_machine_cycle() -> None:
@@ -58,27 +58,6 @@ def test_bus_grant_waits_for_the_end_of_the_machine_cycle() -> None:
     assert busack_grant(60, ends) == 60 + p
     assert busack_grant(61, ends) == 105 + p
     assert busack_grant(200, ends) == 200 + p
-
-
-def test_the_68000_holds_the_bus_only_while_as_is_low() -> None:
-    """A 68000 bus cycle is four clocks but the bus is the 68000's only while /AS is
-    asserted (68000 UM, "Bus Arbitration"), which Nuked-MD measures as 18 of the 28
-    MCLK.  So Kabuto's ``a`` is 3 at the start of a cycle, 1 at its end, and 1 again in
-    the 10 MCLK before the next one begins -- never the 4, 5 and 6 the board charged
-    while it held the whole cycle and looked ahead to the next
-    (docs/worklog.md, the timing session)."""
-    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
-    board = system.board
-    board.m68k_accesses = [[0, AS_LOW_MCLK], [28, AS_LOW_MCLK]]
-    assert board._m68k_release(0) == 3  # the whole of the first cycle is left
-    assert board._m68k_release(14) == 1  # 4 MCLK of it left
-    assert board._m68k_release(18) == 1  # /AS has risen: the bus is free
-    assert board._m68k_release(24) == 1  # still free, 4 MCLK before the next cycle
-    assert board._m68k_release(28) == 3  # the second cycle has begun
-    # A refresh stretch lengthens the cycle, which is Kabuto's "up to 6 cycles if the
-    # last access is delayed by the refresh logic".
-    board.m68k_accesses = [[0, AS_LOW_MCLK + 21]]
-    assert board._m68k_release(0) == 6
 
 
 def test_the_arbiter_charges_mods_measured_delays() -> None:

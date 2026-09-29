@@ -120,3 +120,10 @@ def test_the_window_survives_a_resolution_change(tmp_path) -> None:
         frontend.close()
     finally:
         pygame.quit()
+
+
+def test_the_title_bar_names_the_frame_and_the_emulated_time():
+    from megadrive_python.frontend import where
+
+    assert where(6800, 49.70) == "frame 6,800 (2:16)"
+    assert where(0, 59.92) == "frame 0 (0:00)"

@@ -28,8 +28,9 @@ from typing import TYPE_CHECKING
 from .arbiter import (
     AS_LOW_MCLK,
     BUSACK_PROPAGATION_MCLK,
-    MAX_RELEASE,
-    bank_access_delay,
+    CUTOFF_MCLK,
+    IDLE_GRANT_MCLK,
+    z80_access_wait,
 )
 from .cartridge import Cartridge
 from .io import IOChip
@@ -50,6 +51,16 @@ if TYPE_CHECKING:
 #: (die-derived) in four probe loops, 670 of 670 ticks each (docs/worklog.md).
 CART_REFRESH_MCLK = 896
 CART_REFRESH_STALL = 14
+#: The same refresh falling on a 68000 access to the Z80's space ($A00000-$A0FFFF)
+#: stretches it by one 68000 clock, not two -- and by none if it fell due only in the
+#: last 68000 clock before /AS, when it is used up all the same. Nothing hardware
+#: covers the question, so the die-derived model answers it: Nuked-MD's Overdrive 2
+#: start-up copies its sound driver into Z80 RAM a byte at a time, and of the 519
+#: refreshes that fell on those writes, 392 due a clock or more before /AS held the
+#: write 7 MCLK longer and 127 due within the last clock held it not at all, every
+#: one (docs/worklog.md, "The one-frame slip").
+Z80_REFRESH_STALL = 7
+Z80_REFRESH_LATE = 7
 #: The work-RAM refresh the VDP performs: once due, the next work-RAM access waits 3
 #: 68000 clocks; it falls due again 791-819 MCLK after that access started (Nuked-MD
 #: probes; Kabuto: "RAM accesses get their own further slowdowns"). The midpoint is
@@ -65,6 +76,13 @@ RAM_REFRESH_AFTER_MCLK = 805
 #: timing session). It is charged after the access, so the access itself still lands
 #: at the clock the bus cycle began at.
 Z80_SPACE_STALL = M68K_DIVIDER
+#: A Z80 access to the VDP ($7F00-$7F1F) goes over the 68000's bus, through the same
+#: arbitration as one through the bank window (:meth:`Board._bank_delay`): on
+#: Nuked-MD the Z80's 3,095 VDP reads in Overdrive 2's first 80 frames are held 60, 75
+#: or 90 MCLK, the bank window's three lengths, where its RAM and FM reads take 30
+#: (docs/worklog.md, "The Z80 after a hold"). Die-derived for reads; the run has no
+#: Z80 VDP writes, which take the same path because the VDP has no other bus.
+Z80_VDP_ARBITRATED = True
 
 
 class Lockup(Exception):
@@ -113,6 +131,12 @@ class Board:
         self.m68k: M68000CPU | None = None  # set by the system; read for open bus
         #: The master clock at which the current CPU step started, set by the system.
         self.step_start = 0
+        #: The Z80 instruction under way: its memory accesses' offsets from
+        #: :attr:`step_start` in master clocks (z80-python's access-timing table; None
+        #: when it does not apply, such as an interrupt acknowledge), and how many of
+        #: them it has made so far.
+        self.z80_offsets: tuple[int, ...] | None = None
+        self.z80_access = 0
         #: Master clocks the 68000 has been held during the current step (stalls).
         self.stall = 0
         #: How much of ``stall`` is the Z80-space hold (:data:`Z80_SPACE_STALL`), for
@@ -128,6 +152,8 @@ class Board:
         #: The two refreshes that slow the 68000 (``_bus_cycle``); their power-on phases
         #: are unknown, so a caller may set them (the capture harness fits them).
         self.cart_refresh_due = CART_REFRESH_MCLK
+        #: The refresh tick a Z80 access over the 68000's bus last took (``_bank_delay``).
+        self.z80_refresh_taken = -1
         self.ram_refresh_due = RAM_REFRESH_AFTER_MCLK
         self.refresh_enabled = True
         #: The arbiter's delays (milestone 5, :mod:`megadrive_python.arbiter`): the Z80's
@@ -138,7 +164,7 @@ class Board:
         self.arbiter_enabled = True
         #: Each 68000 bus cycle started in the step under way, in order, as
         #: ``[master clock /AS fell, master clocks it stays down]``: the arbiter reads
-        #: it to find how long the 68000 still needs the bus (:meth:`_m68k_release`).
+        #: it to see which of the 68000's cycles go before a Z80 access (:meth:`_bank_delay`).
         self.m68k_accesses: list[list[int]] = []
         #: Master clocks the Z80 has been held during its current step, and master
         #: clocks the 68000 owes for Z80 bank accesses made in its wake (they are added
@@ -158,6 +184,12 @@ class Board:
         self.z80_busack: Callable[[int], int] = lambda mclk: mclk
         #: Called when the Z80's reset line is released or asserted (True = held).
         self.on_z80_reset: Callable[[bool], None] = lambda held: None
+        #: Told when a write gives the Z80 its bus back or releases its reset
+        #: (``System._z80_resume``): the clock, and whether it was the reset.
+        self.on_z80_resume: Callable[[int, bool], None] = lambda t, reset: None
+        #: For the Z80 step resuming after a hold: from which clock its accesses wait,
+        #: and for how long.
+        self.z80_hold: tuple[int, int] | None = None
 
     # -- TMSS ------------------------------------------------------------------
 
@@ -195,8 +227,10 @@ class Board:
         if held != self.z80_reset:
             self.z80_reset = held
             self.sound_sync(t)
-            self.fm.reset_line(held)
+            self.fm.reset_line(held, t)
             self.on_z80_reset(held)
+            if not held:
+                self.on_z80_resume(t, True)
 
     def _tmss_select(self, cartridge: bool) -> None:
         """Bit 0 of $A14101: 1 puts the cartridge on the bus, 0 the boot ROM."""
@@ -264,7 +298,7 @@ class Board:
 
     def _bus_cycle(self, address: int) -> None:
         """One 68000 bus cycle about to start at ``address``: its refresh stalls, and
-        its place in the grid the arbiter reads (:meth:`_m68k_release`).
+        its place in the grid the arbiter reads (:meth:`_bank_delay`).
 
         The grid holds ``[start, span]``: the master clock /AS fell and how long it
         stays down, which a refresh stretch lengthens.
@@ -274,14 +308,20 @@ class Board:
         if grid is not None:
             grid.append([t, AS_LOW_MCLK])
         if t >= self.cart_refresh_due:
+            late = t - self.cart_refresh_due
             self.cart_refresh_due += (
                 (t - self.cart_refresh_due) // CART_REFRESH_MCLK + 1
             ) * CART_REFRESH_MCLK
+            stretch = 0
             if address < 0x800000:
-                self.stall += CART_REFRESH_STALL
-                t += CART_REFRESH_STALL
+                stretch = CART_REFRESH_STALL
+            elif address >> 16 == 0xA0 and late >= Z80_REFRESH_LATE:
+                stretch = Z80_REFRESH_STALL
+            if stretch:
+                self.stall += stretch
+                t += stretch
                 if grid is not None:
-                    grid[-1][1] += CART_REFRESH_STALL
+                    grid[-1][1] += stretch
         if address >= 0xE00000 and t >= self.ram_refresh_due:
             self.stall += RAM_REFRESH_STALL
             self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
@@ -290,53 +330,75 @@ class Board:
 
     # -- the arbiter ---------------------------------------------------------
 
-    def _m68k_release(self, t: int) -> int:
-        """Kabuto's ``a``: the 68000 cycles until the 68000 lets go of the bus, for a
-        Z80 request at master clock ``t``.
+    def _z80_access_time(self) -> int:
+        """The master clock of the Z80 access under way: its instruction's start, its
+        offset in the instruction (:attr:`z80_offsets`), and what the arbiter has held
+        the Z80 for so far in the instruction. Where the offset is not known, the
+        instruction's start, as before the table."""
+        offsets, k = self.z80_offsets, self.z80_access - 1
+        if offsets is not None and 0 <= k < len(offsets):
+            t = self.step_start + offsets[k] + self.z80_stall
+        else:
+            t = self.step_start + self.z80_stall
+        hold = self.z80_hold
+        return t + hold[1] if hold is not None and t >= hold[0] else t
 
-        "Thus there is an initial delay of 1 to 6 cycles. (Typically 1 to 4; up to 6
-        cycles if the last access is delayed by the refresh logic.)" (Kabuto, footnote
-        1). The board knows where each of the step's bus cycles began and how long it
-        held /AS (:meth:`_bus_cycle`, :data:`~megadrive_python.arbiter.AS_LOW_MCLK`
-        plus whatever the refresh stretched it by). An access the 68000 has not begun
-        holds nothing: the bus is free in the 10 MCLK between one cycle's /AS rising
-        and the next one's falling, which is what Nuked-MD's bus log shows and what
-        makes Kabuto's own range come out (docs/worklog.md, the timing session).
-        """
-        release = 1
-        for start, span in self.m68k_accesses:
-            if start + span <= t:
-                continue
-            if start > t:
-                break
-            left = -(-(start + span - t) // M68K_DIVIDER)
-            if left > release:
-                release = left
-        return min(release, MAX_RELEASE)
+    def z80_peek(self, address: int) -> int:
+        """A byte of the Z80's space without side effects, for looking at code: RAM
+        and cartridge ROM; anything else reads $FF."""
+        if address < 0x4000:
+            return self.z80_ram[address & 0x1FFF]
+        if address >= 0x8000:
+            full = self.bank | (address & 0x7FFF)
+            if full < 0x400000:
+                return self.cartridge.read_byte(full)
+        return 0xFF
 
     def _bank_delay(self) -> None:
-        """What one Z80 access through the bank window costs both CPUs (Kabuto's
-        footnote 1, :func:`~megadrive_python.arbiter.bank_access_delay`).
+        """What one Z80 access over the 68000's bus -- the bank window, or the VDP --
+        costs both CPUs (:func:`~megadrive_python.arbiter.z80_access_wait`).
 
-        z80-python reports only an instruction's total, so the access is placed at the
-        Z80 step's start plus whatever it has already been held: where inside the
-        instruction it really falls is not known (docs/polish.md). The 68000's share is
-        owed rather than charged, because the Z80 runs in its wake (``m68k_pending_stall``).
+        The access is placed where z80-python's access-timing table puts it inside the
+        instruction (:meth:`_z80_access_time`). The arbiter reads the 68000's bus
+        cycles, which are known only as far as the 68000 has run, so the Z80 is not
+        stepped into an instruction whose accesses would fall past that
+        (``System.catch_up_z80``). The 68000's share is owed rather than charged,
+        because the Z80 runs in its wake (``m68k_pending_stall``): the 68000 is
+        taken to want the bus again at once, the usual gap after its last cycle (or
+        at the cut-off, if the request found it idle), and waits from there.
         """
-        t = self.step_start + self.z80_stall
-        # "b (2 if the z80->ROM access is prolonged by a refresh delay, 0 if not)": the
-        # cartridge refresh grid (``CART_REFRESH_MCLK``) ticking inside the access.
-        # The tick is read, not consumed: the 68000's own accesses walk the same grid
-        # in ``_bus_cycle`` and, running ahead of the Z80, would otherwise always have
-        # taken it first.
-        since = (t - self.cart_refresh_due) % CART_REFRESH_MCLK
-        z80_cycles, m68k_cycles = bank_access_delay(
-            -t % M68K_DIVIDER, self._m68k_release(t), since < CART_REFRESH_STALL
+        t = self._z80_access_time()
+        # The cartridge refresh grid (``_bus_cycle``): the last tick due by the end of
+        # the Z80's grant window, owed if no 68000 cycle since took it and the Z80 has
+        # not already.
+        due = self.cart_refresh_due
+        tick = (
+            due + (t + CUTOFF_MCLK + IDLE_GRANT_MCLK - due) // CART_REFRESH_MCLK * CART_REFRESH_MCLK
         )
-        self.z80_stall += z80_cycles * Z80_DIVIDER
+        taken = tick == self.z80_refresh_taken or any(
+            tick <= begin <= t + CUTOFF_MCLK for begin, _span in self.m68k_accesses
+        )
+        wait, resume, own = z80_access_wait(t, self.m68k_accesses, None if taken else tick)
+        if not taken and tick <= own:
+            self.z80_refresh_taken = tick
+        wanted = t + CUTOFF_MCLK + 1
+        for begin, _span in self.m68k_accesses:
+            if begin > t + CUTOFF_MCLK:
+                break
+            wanted = max(wanted, begin + 4 * M68K_DIVIDER)  # its next, four clocks on
+        resume += -(resume - wanted) % M68K_DIVIDER
+        m68k_cycles = max(0, resume - wanted) // M68K_DIVIDER
+        if m68k_cycles:
+            # The 68000's cycles past the cut-off happen that much later: the one it
+            # resumes with is on the bus when the Z80's next access comes (the second
+            # read of a ``pop`` waits behind it on the die).
+            for cycle in self.m68k_accesses:
+                if cycle[0] > t + CUTOFF_MCLK:
+                    cycle[0] += m68k_cycles * M68K_DIVIDER
+        self.z80_stall += wait * Z80_DIVIDER
         self.m68k_pending_stall += m68k_cycles * M68K_DIVIDER
         self.bank_accesses += 1
-        self.bank_z80_cycles += z80_cycles
+        self.bank_z80_cycles += wait
         self.bank_m68k_cycles += m68k_cycles
 
     # -- the sound chips -----------------------------------------------------
@@ -621,7 +683,10 @@ class Board:
                 # $A11100 see the referee do (docs/worklog.md, the timing session).
                 self.busack_at = t + BUSACK_PROPAGATION_MCLK
                 self.catch_up_z80(t)
+            released = self.z80_bus_requested and not request and not self.z80_reset
             self.z80_bus_requested = request
+            if released:
+                self.on_z80_resume(t, False)
         elif offset & 0xFF00 == 0x1200:
             self.set_z80_reset(not high & 1, self.m68k_access_clock())
         elif offset & 0xFF00 == 0x3000:
@@ -645,6 +710,7 @@ class Board:
     # -- the Z80's bus ----------------------------------------------------------
 
     def z80_read(self, address: int) -> int:
+        self.z80_access += 1
         if address < 0x4000:
             return self.z80_ram[address & 0x1FFF]
         if address >= 0x8000:
@@ -652,14 +718,17 @@ class Board:
                 self._bank_delay()  # the arbiter holds both CPUs for this access
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
-            return self._fm_read(address & 3, self.step_start)
+            return self._fm_read(address & 3, self._z80_access_time())
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
-            return self.vdp.z80_read(address & 0x1F, self.step_start)
+            if self.arbiter_enabled and Z80_VDP_ARBITRATED:
+                self._bank_delay()  # the VDP is on the 68000's bus
+            return self.vdp.z80_read(address & 0x1F, self._z80_access_time())
         return 0xFF  # the bank register and $6100-$7EFF (CMD 2.1)
 
     def z80_write(self, address: int, value: int) -> None:
+        self.z80_access += 1
         if address < 0x4000:
             self.z80_ram[address & 0x1FFF] = value
         elif address >= 0x8000:
@@ -667,14 +736,16 @@ class Board:
                 self._bank_delay()
             self._z80_bank_write(self.bank | (address & 0x7FFF), value)
         elif address < 0x6000:
-            self.sound_sync(self.step_start)
+            self.sound_sync(self._z80_access_time())
             self.fm.write(address & 3, value)
         elif address < 0x6100:
             self.write_bank(value)
         elif address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
-            self.vdp.z80_write(address & 0x1F, value, self.step_start)
+            if self.arbiter_enabled and Z80_VDP_ARBITRATED:
+                self._bank_delay()
+            self.vdp.z80_write(address & 0x1F, value, self._z80_access_time())
 
     def _z80_bank_read(self, address: int) -> int:
         """A byte of the 68000's space through the Z80's window.
@@ -693,11 +764,11 @@ class Board:
         if top >= 0xC0:
             if address & 0xE700E0 != 0xC00000:
                 raise Lockup(f"Z80 bank access to ${address:06X}: outside the VDP's pattern")
-            return self.vdp.z80_bank_read(address & 0x1F, self.step_start)
+            return self.vdp.z80_bank_read(address & 0x1F, self._z80_access_time())
         if top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         if top == 0xA1 and address & 0xFFFF < 0x20:
-            return self.io.read(address, self.step_start)
+            return self.io.read(address, self._z80_access_time())
         if 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")
         return 0xFF
@@ -711,10 +782,10 @@ class Board:
         elif top >= 0xC0:
             if address & 0xE700E0 != 0xC00000:
                 raise Lockup(f"Z80 bank access to ${address:06X}: outside the VDP's pattern")
-            self.vdp.write_byte(address & 0x1F, value, self.step_start)
+            self.vdp.write_byte(address & 0x1F, value, self._z80_access_time())
         elif top == 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X}: the Z80's own space")
         elif top == 0xA1:
-            self._system_write(address, value, value, word=False, mclk=self.step_start)
+            self._system_write(address, value, value, word=False, mclk=self._z80_access_time())
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"Z80 bank access to ${address:06X} (32X area) without a 32X")

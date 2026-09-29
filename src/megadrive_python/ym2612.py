@@ -181,6 +181,26 @@ EG_ATTACK, EG_DECAY, EG_SUSTAIN, EG_RELEASE = 0, 1, 2, 3
 
 #: Master clocks per internal cycle, and internal cycles per output sample.
 MCLK_PER_CYCLE = 42
+
+#: Internal cycles the chip stands still after /IC is asserted. Nuked-MD's FM (``fm.c``
+#: ``FM_Prescaler``) stops its prescaler while ``ic_check`` holds -- /IC high now but
+#: low 12 FM clocks ago, i.e. for 12 clocks (2 internal cycles) after the assertion --
+#: and then restarts it from the assertion, /IC still low: the slot-23 marker keeps its
+#: 1,008-MCLK period through a long reset (docs/worklog.md, "The Z80 from the reset").
+#: Die-derived; the board used to freeze the counter until /IC was released.
+IC_FSM_HOLD = 2
+#: Whether the slot counter is also reset depends on where in its slot the assertion
+#: falls: ``i_fsm_reset`` (``fc1004.c``, ``ic_check`` three clocks late) resets it only
+#: if a phase-1 clock still comes while it holds. Measured by clocking Nuked-MD's own
+#: ``fm.c`` the way ``fc1004.c`` does through every position, and matching all three
+#: assertions of its Overdrive 2 run (a reset, two pauses): sampled 1-3 FM clocks into
+#: a slot, the counter restarts at slot 0; sampled 0, 4 or 5 clocks in, it keeps its
+#: count and goes on from the slot under way two clocks later (docs/worklog.md, "The
+#: one-frame slip"). /IC is sampled 3 FM clocks after the bus cycle that drives it
+#: begins, and the die's slots begin 24 MCLK after this model's cycles.
+IC_PAUSE_POSITIONS = (0, 4, 5)
+IC_SLOT_LAG = 3
+IC_RESUME_LOOKAHEAD = 11
 CYCLES_PER_SAMPLE = 24
 
 #: How long a status read holds its value before the chip stops driving the bus:
@@ -212,6 +232,9 @@ class YM2612:
         #: /RESET is shared with the Z80 and is driven by the board; a chip made on
         #: its own (a referee comparison, a test) starts running.
         self.in_reset = False
+        #: Internal cycles the slot counter is still held at 0 after /IC was asserted
+        #: (:data:`IC_FSM_HOLD`).
+        self._ic_hold = 0
         #: Finished samples, one per 24 cycles: the summed left and right DAC.  Kept
         #: out of :meth:`reset` because they are the output queue, not chip state: a
         #: game that pulses /RESET must not lose the samples already made.
@@ -374,13 +397,27 @@ class YM2612:
 
     # -- the board's side ---------------------------------------------------------
 
-    def reset_line(self, held: bool) -> None:
+    def reset_line(self, held: bool, mclk: int | None = None) -> None:
         """The YM2612 shares /RESET with the Z80: "For as long as the Z80 is reset,
-        the YM2612 cannot be used" (CMD ``gen-hw.txt`` 2.2)."""
+        the YM2612 cannot be used" (CMD ``gen-hw.txt`` 2.2).
+
+        Asserting /IC resets the chip and restarts its clock divider from the moment
+        of assertion (``mclk``, where the caller has brought the chip to), and resets
+        its slot counter or only pauses it, by where in the slot the assertion falls
+        (:data:`IC_PAUSE_POSITIONS`); releasing it resets nothing. The chip stands
+        still only briefly and then runs on while /IC stays low (:data:`IC_FSM_HOLD`),
+        so its sample timing after a reset follows when the reset began, not when it
+        ended."""
         if held and not self.in_reset:
-            mclk, cycles_run, writes = self.mclk, self.cycles_run, self.writes
+            cycles_run, writes, cycles = self.cycles_run, self.writes, self.cycles
+            start = self.mclk if mclk is None else max(mclk, self.mclk)
+            phase = start - self.mclk  # into the cycle under way (the caller synced)
             self.reset()
-            self.mclk, self.cycles_run, self.writes = mclk, cycles_run, writes
+            if ((phase - IC_SLOT_LAG) // 7) % 6 in IC_PAUSE_POSITIONS:
+                ahead = (phase + IC_RESUME_LOOKAHEAD) // MCLK_PER_CYCLE
+                self.cycles = (cycles + ahead) % CYCLES_PER_SAMPLE
+            self.mclk, self.cycles_run, self.writes = start, cycles_run, writes
+            self._ic_hold = IC_FSM_HOLD
         self.in_reset = held
 
     def write(self, port: int, value: int) -> None:
@@ -453,7 +490,11 @@ class YM2612:
         self.mclk += cycles * MCLK_PER_CYCLE
         self.cycles_run += cycles
         if self.in_reset:
-            # /IC holds the whole chip; nothing advances, and the output is silent.
+            # /IC holds the chip's state, and the output is silent, but the slot
+            # counter runs on once its brief hold after the assertion is over.
+            hold = min(self._ic_hold, cycles)
+            self._ic_hold -= hold
+            self.cycles = (self.cycles + cycles - hold) % CYCLES_PER_SAMPLE
             self._acc_n += cycles
             while self._acc_n >= CYCLES_PER_SAMPLE:
                 self._acc_n -= CYCLES_PER_SAMPLE

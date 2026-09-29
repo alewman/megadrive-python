@@ -43,7 +43,13 @@ source, the way sms-python does.
    Separately, **every 68000 access to $A00000-$A0FFFF is one 68000 clock longer**:
    nothing hardware says so, but Nuked-MD holds every such bus cycle 7 MCLK and MAME
    charges the same clock (`before_delay(1)`, "TODO: unverified"). The board charges it
-   since the timing session (open item 16).
+   since the timing session (open item 16). **A refresh landing on such an access costs
+   one clock more, not the cartridge's two, and none if it fell due within the last
+   68000 clock before /AS** -- used up all the same. Nuked-MD, Overdrive 2's start-up
+   copying its sound driver into Z80 RAM: of 519 refreshes on those writes, 392 held
+   the write 7 MCLK and 127 held it not at all, every one as the rule says
+   ([worklog.md](worklog.md), "The access-timing table, and what the slip turned
+   into"). Die-derived; nothing hardware covers it.
 8. **The bank register** is written a bit at a time; the result of a partial
    sequence is unknown (CMD could not find it).
 9. **The reset button is not a power cycle.** It pulses VRES#, which goes "to 68000
@@ -56,6 +62,14 @@ source, the way sms-python does.
    delay, "Minimum is 2.1ms" and variable; what a cartridge's own board does with
    VRES# (none of these sources says).
 
+10. **The Z80's clock runs on through a bus hold or a reset, and it takes its bus back on
+    that clock.** On Nuked-MD every Z80 access falls on one phase of its 15-MCLK clock;
+    after the 68000's write that ends a bus request the next access comes on the first
+    such edge at least 42 MCLK after the write began, after a reset release 57. With the
+    bus already requested at a reset release the Z80 still fetches its first opcode
+    first. Its accesses to the VDP go through the 68000's bus arbitration like those
+    through the bank window (held 60, 75 or 90 MCLK). Die-derived ([worklog.md](worklog.md),
+    "The Z80 after a hold").
 ## The VDP
 
 1. **The sprite cache.** The Y position and size/link fields of each sprite are
@@ -248,6 +262,79 @@ source, the way sms-python does.
     address that happens to be covered by the sprite cache it will get updated" reads
     as the rearranged address, which the board uses; BlastEm checks the address as
     written and stores both bytes. The demo's pictures are identical either way.
+25. **The sprite line buffer keeps a transparent pixel's palette, and a line's sprites
+    are read a line ahead.** Kabuto, "Precise details of sprite rendering"
+    (hardware-measured research): the buffer holds "7 bits per pixel: colour ...,
+    palette, priority", and "only transparent pixels (i.e. the 4 bits that come from
+    tile data are 0; palette and priority are ignored for this check) will get
+    overwritten with the 7 bits from the current sprite ... with certain debug flags
+    set, transparent pixels' palettes ... play an important role because these are
+    always overwritten so the sprite which contributes last wins". And phase 1 scans
+    the cache "2 H-borders before the raster line to be rendered", phase 2 reads X
+    and pattern "1 raster line before". The board kept opaque pixels only and ran all
+    three phases as the line began. **Overdrive 2's ring scene** (frames 6,540-7,060)
+    shows both: with the debug register's sprite plane forced on (bits 8-7 = 01), its
+    blue and magenta rings are palette entry 0 of transparent sprite pixels, and it
+    points register 5 at another table in the blank before its last line, after that
+    line's sprites were read. The board now scans (phases 1 and 2) when the line
+    before begins and draws (phase 3) when the line begins; a line nothing scanned
+    for is scanned as it begins, as before. Line granularity only: phase 2's reads
+    are taken at the start of the line before, not slot by slot. Not measured: a
+    transparent pixel's priority in shadow/highlight ("sometimes", Kabuto), and what
+    a line after a display-off line gets (Kabuto: "No sprites are checked while
+    display is disabled").
+26. **A transparent plane pixel keeps its tile's priority and palette.** Shadow is
+    decided by the planes' tile priority whether or not their pixels are transparent:
+    "If both A+B are low prio, the visible color becomes shadowed", and "sprite
+    darkness depends on plane tile priority, even when all plane tile pixels are
+    transparent" (Kabuto, "S/H"; hardware-measured research). BlastEm's
+    ``render_map`` keeps palette and priority on every plane pixel, and its
+    ``composite_highlight`` takes each plane's priority without a transparency test.
+    The board dropped both for a transparent pixel, so plane B showing through a
+    high-priority transparent tile of plane A was shadowed. **Overdrive 2's scene at
+    frames 9,750-10,125** (the shaded boxes and quads; Aubrey's "gray box missing a
+    kind of gray") is built that way: all 16 sampled frames went from 0-95% of
+    BlastEm's picture to identical. The palette shows where the debug register forces
+    a plane on: palette entry 0 of the tile's palette instead of the backdrop, as
+    BlastEm draws it. Opacity is still the colour bits alone everywhere.
+27. **The vertical border starts only if the V28/V30 mode in force as the V counter
+    reaches its line says so.** "When switching between V28 and V30 the only thing
+    that changes are the raster lines in which to switch vertical border / vblank /
+    vsync ... When switching to V30 within active scan and back to V28 after line 224
+    but before line 240 then the VDP will 'forget' to start the vertical border and
+    keep display active all the time ... the VDP tests it constantly, so having V28
+    active for a single VDP cycle during line 224 or V30 for line 240 will start the
+    border ... When opening the vertical border this way HIRQ runs continuously and is
+    not reset before the start of each frame" (Kabuto, "V28/V30 tricks";
+    hardware-measured research). BlastEm does the same: it enters its border state
+    only when the V counter equals ``inactive_start``, which follows register 1 live
+    (``check_switch_inactive``, ``update_video_params``), and reloads the H interrupt
+    counter only outside the active state. The board latched V28/V30 at the blanking
+    line of the mode already latched, after Exodus, so the trick did nothing: the
+    border started at 224 regardless and the H interrupt counter was reloaded through
+    it. Now ``VDP.border`` holds the border, started at the line where the V counter
+    meets the live mode's blanking line (or by a register 1 write during that line),
+    ended at line 0; the access slots, the status VBlank bit, the H interrupt reload
+    and whether a line is drawn follow it. The V counter's sequence, VSYNC and
+    interlace keep the mode latched at the blanking line, as before -- the model
+    Nemesis's HV captures (hardware-captured) were fitted against, and they are
+    unchanged to the word with the live border. Whether the counter's jump would
+    follow the live bit too is not tested here.
+    **Overdrive 2's arcade scene (frames 12,154-12,960)** switches to V30 at line ~207
+    and back at ~225 every frame and runs a 313-line chain of H interrupt handlers
+    whose last one releases the main loop. On the board the chain fell out of step, so
+    the loop ran every 1.4 frames, the demo fell 330 frames behind by 13,300 (Aubrey
+    saw it as a hang), and its vertical-blank DMA landed on visible lines. Now the 32
+    sampled 240-line frames of the scene are BlastEm's picture to the pixel and the
+    demo stays in step into the next scene.
+    Not settled: **whether VINT fires on a frame whose border never starts.** BlastEm
+    raises it from its border state only, so not; Kabuto says "vblank still works
+    normally", which may mean VSYNC only. The board follows BlastEm
+    (``VINT_WITHOUT_BORDER = False``), and Overdrive 2's pictures are identical either
+    way. A die-model measurement would settle it. Also not measured: the display's
+    lines 240 and on in an open-border frame are not drawn (they fall in the TV's
+    blanking), and a border started part way along a line takes effect from that
+    line's next slot.
 
 ## The pads and the I/O chip
 
@@ -324,6 +411,16 @@ source, the way sms-python does.
    (HardWareMan's oscilloscope traces; Aly James's `MD1_LADDER.wav`). The board
    carries it as `FMVariant.ladder` and it is what `ym2612ladder` differences in the
    referee comparison come from.
+9. **Asserting /IC stops the chip for 12 FM clocks and then lets it run on, and
+   whether its slot counter restarts depends on where in the slot the assertion
+   falls.** Nuked-MD's FM (`fm.c` `FM_Prescaler`'s `ic_check`, and `fc1004.c`'s
+   `i_fsm_reset`, three clocks late) restarts the counter at slot 0 only if a phase-1
+   clock comes while the reset holds: sampled 1-3 FM clocks into a slot it restarts;
+   sampled 0, 4 or 5 clocks in it keeps its count and resumes at the slot under way two
+   clocks later. Found by clocking the die's own `fm.c` through every position, and
+   matching all three assertions in its Overdrive 2 run; releasing /IC resets nothing.
+   So the chip's sample phase after a reset follows when the reset began, and, for a
+   short pulse, what came before it. Die-derived.
 
 ## The PSG and the analogue path
 
@@ -553,7 +650,12 @@ source, the way sms-python does.
     corrected the `pop`'s first read costs the board 2.97 wait states against the
     referee's 2.95, its second 2.04 against 3.60, and the pair 2.50 against 3.27. This
     is now the board's largest remaining arbiter difference and it is entirely the
-    missing accessor.
+    missing accessor. **The accessor exists now** (z80-python `b62891b`'s access-timing
+    table, adopted for the Z80's device accesses), but the arbiter still places bank
+    accesses at the step's start: it reads the 68000's bus cycles only as far as the
+    Z80 has been caught up to, and an access later in the instruction would land past
+    them on a bus that looks idle ([worklog.md](worklog.md), "The access-timing table,
+    and what the slip turned into", item 2).
 15. **The DMA's start-up cost**, adopted in the timing session and **not fully
     resolved**. Kabuto's fast-transfer formula has a +5.6-cycle intercept, so a
     one-word transfer costs 8 68000 cycles on his hardware; milestone 6 measured

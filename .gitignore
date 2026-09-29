@@ -17,17 +17,17 @@ htmlcov/
 # Fetched references and test programs; scripts/fetch_references.py fills
 # these from scripts/pinned_files.json and scripts/pinned_repos.json.
 # Never commit them: third-party documents, programs and source trees.
-reference/
-tests/test_roms/
+reference
+tests/test_roms
 
 # MAME oracle runs (scripts/mame_trace.py): traces, error.log, cfg, nvram.
 # Never commit ROMs or traces.
-tests/mame_traces/
+tests/mame_traces
 *.trace
 error.log
 
 # Compatibility sweep results (a later milestone).
-tests/compat/
+tests/compat
 
 # Sound the board writes (python -m megadrive_python --wav, the validation
 # scripts' own output) and anything unpacked from the hardware recordings.

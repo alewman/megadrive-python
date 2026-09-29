@@ -6,10 +6,11 @@ what that costs, in master clocks, on each side.
 
 What is modelled here, and from where (docs/validation.md ranks the sources):
 
-- **A Z80 access through its bank window** costs the Z80 2 to 5 of its own cycles and
-  the 68000 about 11 of its own (Kabuto, "The bus system"; hardware-measured
-  research).  His footnote 1 gives the arithmetic behind those averages, measured on
-  his Model 1, and :func:`bank_access_delay` is that arithmetic:
+- **A Z80 access over the 68000's bus** (the bank window, or the VDP) costs the Z80 2
+  to 5 of its own cycles and the 68000 about 11 of its own (Kabuto, "The bus system";
+  hardware-measured research).  The board modelled it with his footnote 1's arithmetic
+  until the die model was measured access by access (:func:`z80_access_wait`, and its
+  constants' comment); his words stay here because they still say what happens:
 
       "The 68k needs to release the bus first for the z80 to access it. If the next
       68k access 2 cycles ahead or less or already ongoing the 68k will finish it
@@ -28,17 +29,17 @@ What is modelled here, and from where (docs/validation.md ranks the sources):
       delay the 68k will effectively get before it can keep on doing its business
       again:  68k delay = ((Z80 delay) * 15 + subcycle + 46) / 7 - a."
 
-  What the timing session changed in that arithmetic is not the formula but the
-  ``a`` it is given: the 68000 holds the bus for the /AS-low part of its cycle
-  (:data:`AS_LOW_MCLK`), not for all four of its clocks, and an access it has not
-  started yet holds nothing.  Kabuto's "If the next 68k access 2 cycles ahead or less
-  ... the 68k will finish it first" was modelled as a look-ahead and made ``a`` too
-  large: in his own ``jmp (a0)`` case it produced 5s and 6s that neither Nuked-MD nor
-  MoD sees, a mean of 3.56 wait states against the referee's 2.74 and MoD's 2.93.
-  With the /AS-low span and no look-ahead the board reproduces the referee's whole
-  distribution (docs/worklog.md, the timing session).  Kabuto's own sentence is not
-  contradicted: a 68000 cycle is four clocks, and the next one does begin within two
-  -- the bus is simply free for the 10 MCLK in between.
+  The timing session had already changed the ``a`` his arithmetic was given: the 68000
+  holds the bus for the /AS-low part of its cycle (:data:`AS_LOW_MCLK`), not for all
+  four of its clocks, and an access it has not started yet holds nothing. Kabuto's "If
+  the next 68k access 2 cycles ahead or less ... the 68k will finish it first" was
+  modelled as a look-ahead and made ``a`` too large: in his own ``jmp (a0)`` case it
+  produced 5s and 6s that neither Nuked-MD nor MoD sees, a mean of 3.56 wait states
+  against the referee's 2.74 and MoD's 2.93. With the /AS-low span and no look-ahead
+  the board reproduces the referee's whole distribution (docs/worklog.md, the timing
+  session). Kabuto's own sentence is not contradicted: a 68000 cycle is four clocks,
+  and the next one does begin within two -- the bus is simply free for the 10 MCLK in
+  between.
 
   MoD's logic analyser on a Genesis 2 (forum t=1661; hardware-captured) measures the
   same thing from the other end and is what the model is judged against:
@@ -69,9 +70,6 @@ already does for the refresh steal.
 
 from __future__ import annotations
 
-#: The longest the 68000 is given to finish the access it is on before it lets go
-#: (Kabuto's ``a``, "1 to 6").
-MAX_RELEASE = 6
 #: How long the 68000 actually holds the bus for one bus cycle, in master clocks.
 #:
 #: A 68000 bus cycle is four clocks (28 MCLK), but the bus belongs to the 68000 only
@@ -85,12 +83,6 @@ MAX_RELEASE = 6
 #: if the last access is delayed by the refresh logic" (docs/worklog.md, the timing
 #: session).
 AS_LOW_MCLK = 18
-#: "After the last access finished there's a delay of 3 cycles for the bus to be
-#: granted", and "The access itself takes 2 cycles" (Kabuto, footnote 1).
-GRANT = 3
-ACCESS = 2
-#: The refresh logic can prolong the Z80's own access by 2 cycles (Kabuto's ``b``).
-REFRESH = 2
 #: The arbiter's own propagation, in master clocks, from the Z80 letting go of the bus
 #: to /BUSAK being seen on the 68000's side.  Zilog UM0080 says *when* the Z80 lets go
 #: and nothing about the board around it; nothing hardware in the pinned material
@@ -103,19 +95,61 @@ REFRESH = 2
 BUSACK_PROPAGATION_MCLK = 57
 
 
-def bank_access_delay(subcycle: int, release: int, refreshed: bool) -> tuple[int, int]:
-    """Kabuto's footnote 1, verbatim: the Z80's delay in Z80 cycles and the 68000's in
-    68000 cycles, for one Z80 access through the bank window.
+#: The arbitration of one Z80 access over the 68000's bus, as the die model times it
+#: (Nuked-MD, all 24,343 bank-window and VDP accesses of Overdrive 2's first 80
+#: frames; docs/worklog.md, "The arbiter, measured"), from the Z80's /MREQ at ``r``: a
+#: 68000 cycle that begins by ``r`` + :data:`CUTOFF_MCLK` still goes first; the Z80's
+#: own cycle on the 68000's bus begins :data:`GRANT_GAP_MCLK` after the last of them
+#: ends and no sooner than :data:`IDLE_GRANT_MCLK` after ``r``, on the next of the
+#: 68000's clock edges (the 7- and 14-MCLK "late" grants are that edge); it ends on
+#: the first Z80 clock edge ``r`` + :data:`RELEASE_MCLK` + 15w (w >= 2 wait states) at
+#: least :data:`OWN_CYCLE_MCLK` after it began; and the 68000's next cycle waits for
+#: the first of its clock edges :data:`RESUME_MCLK` after that. It predicts the die's
+#: wait exactly for 94.3 % of the accesses, Kabuto's arithmetic for 76.8 %; in nearly
+#: all the rest (97.8 % together) the grant is right and the Z80's own cycle is a ROM
+#: read that took the cartridge refresh, which the board's refresh grid supplies at
+#: run time. Die-derived. MoD's logic-analyser figures (hardware-captured) judge it: it
+#: gives his "2-3" with the 68000 stopped and his 2-4, mean just under 3, with it in
+#: ``jmp (a0)``; his ``pop`` case, the second read "at least 4", it does not (mean 2.2,
+#: as Kabuto's arithmetic before it; ``scripts/run_nuked_md.py arbiter``).
+CUTOFF_MCLK = 21
+GRANT_GAP_MCLK = 17
+IDLE_GRANT_MCLK = 29
+OWN_CYCLE_MCLK = 30
+RELEASE_MCLK = 37
+RESUME_MCLK = 25
+MIN_WAIT = 2
+REFRESH_MCLK = 14
+#: The 68000's clock edges fall 6 MCLK past a multiple of 7, where its cycles begin, on
+#: the die and on the board alike (``system.Z80_CLOCK_PHASE``).
+M68K_EDGE_PHASE = 6
 
-    ``subcycle`` is 0-6, how far ahead of the next 68000 clock edge the request was;
-    ``release`` is his ``a``, the 68000 cycles until the 68000 has finished the access
-    it is on (1-6); ``refreshed`` is his ``b`` != 0, the refresh logic prolonging the
-    Z80's own access.
-    """
-    read_delay = release + GRANT + (REFRESH if refreshed else 0) + ACCESS
-    z80_delay = (read_delay * 7 + 4 - subcycle) // 15
-    m68k_delay = (z80_delay * 15 + subcycle + 46) // 7 - release
-    return z80_delay, m68k_delay
+
+def z80_access_wait(request: int, m68k_cycles: list[list[int]],
+                    refresh: int | None = None) -> tuple[int, int, int]:  # fmt: skip
+    """For a Z80 access over the 68000's bus with /MREQ at ``request`` (MCLK), given
+    the 68000's bus cycles as ``[start, span]`` and the cartridge refresh still owed
+    (``refresh``, the clock it fell due, or None): the Z80's wait states, the master
+    clock from which the 68000 may start its next cycle, and when the Z80's own cycle
+    began. A refresh owed by then is taken by the Z80's own cycle, which takes
+    :data:`REFRESH_MCLK` longer -- Kabuto's ``b``, "The Z80 bus access itself can be
+    delayed as well by what seems to be refresh logic (up to 2 more cycles)"; on the
+    die with the 68000 stopped a quarter of the Z80's reads, one per refresh period."""
+    start = request + IDLE_GRANT_MCLK
+    for begin, span in m68k_cycles:
+        if begin > request + CUTOFF_MCLK:
+            break
+        if begin + span > request:
+            start = max(start, begin + span + GRANT_GAP_MCLK)
+    start += (M68K_EDGE_PHASE - start) % 7  # on one of the 68000's clock edges
+    length = OWN_CYCLE_MCLK
+    if refresh is not None and refresh <= start:
+        length += REFRESH_MCLK
+    wait = MIN_WAIT
+    while request + RELEASE_MCLK + 15 * wait < start + length:
+        wait += 1
+    end = request + RELEASE_MCLK + 15 * wait
+    return wait, end + RESUME_MCLK, start
 
 
 def busack_grant(request: int, machine_cycle_ends: list[int]) -> int:

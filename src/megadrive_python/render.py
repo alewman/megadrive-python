@@ -42,9 +42,10 @@ Where each rule comes from (docs/validation.md ranks the sources):
   checks on an MD1600.
 
 What this module does *not* model, and why (docs/worklog.md, milestones 3 and 5): the
-sprite phases are all evaluated when the line begins rather than spread over the two
-preceding lines, so a sprite table changed between a line's phase 1 and its phase 3
-takes effect a line or two early; a mid-line change lands at the access slot that
+sprite phases are timed to the line, not the slot -- phases 1 and 2 run when the line
+before begins and phase 3 when the line begins (docs/undocumented-behavior.md, VDP
+item 25), so a sprite table changed part way through the line before takes effect
+at the wrong point in it; a mid-line change lands at the access slot that
 carried it, not at the pixel the VDP would have been fetching for (the plane fetches
 run several pixels ahead of the pixels they feed); and with the display disabled the
 line shows the backdrop colour rather than the bus garbage Kabuto describes.
@@ -190,6 +191,9 @@ class Renderer:
         #: written through by VRAM writes that land in the sprite table (Kabuto,
         #: "General"). Moving the table does not fill it, as on the hardware.
         self.sprite_cache = bytearray(80 * 4)
+        #: What the line before scanned for the next line (:meth:`_sprite_scan`), as
+        #: ``((row, width, double interlace), latched sprites)``, or None.
+        self._scanned: tuple | None = None
 
     # -- the sprite cache ---------------------------------------------------------
 
@@ -214,8 +218,14 @@ class Renderer:
     # -- tiles --------------------------------------------------------------------
 
     def _tile_row(self, address: int, attribute: int, flip: bool) -> tuple:
-        """One pattern row as eight pixels: the CRAM index of each with the tile's
-        priority in bit 6, or 0 where the pattern is transparent."""
+        """One pattern row as eight pixels: the colour in bits 3-0, the tile's palette
+        in bits 5-4 and its priority in bit 6 -- a transparent pixel (colour 0) keeps
+        the palette and priority too. Opacity is the colour bits alone everywhere these
+        are used. The priority of a transparent plane pixel still decides shadow ("If
+        both A+B are low prio, the visible color becomes shadowed", Kabuto, "S/H";
+        "sprite darkness depends on plane tile priority, even when all plane tile
+        pixels are transparent"), and its palette shows where the debug register
+        forces the plane on. BlastEm's ``render_map`` keeps both the same way."""
         vram = self.vdp.vram
         data = (
             (vram[address] << 24)
@@ -232,7 +242,7 @@ class Renderer:
             ]  # fmt: skip
             if flip:
                 pixels.reverse()
-            row = tuple(attribute | pixel if pixel else 0 for pixel in pixels)
+            row = tuple(attribute | pixel for pixel in pixels)
             if len(self._tiles) >= TILE_CACHE_LIMIT:
                 self._tiles.clear()
             self._tiles[key] = row
@@ -403,17 +413,25 @@ class Renderer:
     # -- sprites ------------------------------------------------------------------
 
     def _sprites(self, line: list[int], width: int, screen_row: int, im2: bool) -> None:
-        """The sprite line buffer: Kabuto's phases 1 to 3, run together.
+        """The sprite line buffer, Kabuto's phases 1 to 3 run together: what a line
+        gets when there was no line before it to scan for it (:meth:`begin_line`)."""
+        self._sprite_draw(line, width, self._sprite_scan(width, screen_row, im2), im2)
+
+    def _sprite_scan(self, width: int, screen_row: int, im2: bool) -> list[tuple]:
+        """Phases 1 and 2 for display row ``screen_row``, which the hardware runs a line
+        ahead of it (Kabuto: phase 1 "2 H-borders before the raster line to be
+        rendered", phase 2 "1 raster line before").
 
         Phase 1 walks the cached linked list and keeps the first 20 (16) sprites whose
-        rows cover this line; phase 2 reads each one's X and pattern from the table;
-        phase 3 renders them into the line buffer, 40 (32) tiles at most, earlier
-        sprites winning every pixel, with the X = 0 rule masking the rest of the line.
+        rows cover the line; phase 2 reads each one's X and pattern from the table at
+        register 5 as it stands, and takes Y and size from the cache again to work out
+        the pattern row. What phase 2 latched is returned for :meth:`_sprite_draw`, so
+        a table moved or rewritten after the scan does not reach this line.
         """
         vdp = self.vdp
         vram = vdp.vram
         cache = self.sprite_cache
-        max_sprites, max_line, max_tiles = SPRITE_LIMITS[width]
+        max_sprites, max_line, _ = SPRITE_LIMITS[width]
         tile_rows = 16 if im2 else 8
         start_v = 0x100 if im2 else 0x80
         mask_v = 0x3FF if im2 else 0x1FF
@@ -439,10 +457,8 @@ class Renderer:
         base = (vdp.registers[5] << 9) & 0xFFFF
         if width == 320:
             base &= ~0x200
-        pattern_mask, pattern_bytes = (0x3FF, 64) if im2 else (0x7FF, 32)
-        tiles_left = max_tiles
-        rendering = True
-        last_x_nonzero = self.last_x_nonzero
+        pattern_mask = 0x3FF if im2 else 0x7FF
+        latched: list[tuple] = []
         for sprite in visible:
             entry = (base + sprite * 8) & 0xFFFF
             cached = sprite * 4
@@ -452,6 +468,25 @@ class Renderer:
             cells_y = (size & 3) + 1
             name = (vram[entry + 4] << 8) | vram[entry + 5]
             x = (((vram[entry + 6] << 8) | vram[entry + 7]) & 0x1FF) - 0x80
+            # "The VDP just considers the lowermost 5 bits of the difference of sprite Y
+            # coordinate and raster line" (Kabuto, phase 2), doubled in interlace mode 2.
+            row = (screen_row - y) & (0x3F if im2 else 0x1F)
+            if name & 0x1000:
+                row = cells_y * tile_rows - 1 - row
+            attribute, flip_x = (name >> 9) & 0x70, bool(name & 0x0800)
+            latched.append((x, attribute, flip_x, cells_x, cells_y, name & pattern_mask,
+                            row // tile_rows, row & (tile_rows - 1)))  # fmt: skip
+        return latched
+
+    def _sprite_draw(self, line: list[int], width: int, latched: list[tuple], im2: bool) -> None:
+        """Phase 3: fetch the latched sprites' tiles and render them into the line
+        buffer, 40 (32) tiles at most, earlier sprites winning every pixel, with the
+        X = 0 rule masking the rest of the line."""
+        pattern_bytes = 64 if im2 else 32
+        tiles_left = SPRITE_LIMITS[width][2]
+        rendering = True
+        last_x_nonzero = self.last_x_nonzero
+        for x, attribute, flip_x, cells_x, cells_y, pattern, cell_row, pattern_line in latched:
             if x == -0x80:
                 # "Rendering of further sprite pixels is disabled whenever a sprite is
                 # read from a cache slot with X=0 when the previous sprite read ... had
@@ -461,16 +496,6 @@ class Renderer:
                 last_x_nonzero = False
             else:
                 last_x_nonzero = True
-            attribute = (name >> 9) & 0x70
-            flip_x = bool(name & 0x0800)
-            # "The VDP just considers the lowermost 5 bits of the difference of sprite Y
-            # coordinate and raster line" (Kabuto, phase 2), doubled in interlace mode 2.
-            row = (screen_row - y) & (0x3F if im2 else 0x1F)
-            if name & 0x1000:
-                row = cells_y * tile_rows - 1 - row
-            pattern = name & pattern_mask
-            cell_row = row // tile_rows
-            pattern_line = row & (tile_rows - 1)
             out_of_tiles = False
             for cell in range(cells_x):
                 if tiles_left == 0:
@@ -487,13 +512,20 @@ class Renderer:
                     continue
                 row_pixels = self._tile_row(address, attribute, flip_x)
                 for i in range(8):
+                    # A transparent pixel still carries its sprite's palette and
+                    # priority, and any pixel whose colour bits are 0 is overwritten:
+                    # "Only transparent pixels (i.e. the 4 bits that come from tile
+                    # data are 0; palette and priority are ignored for this check)
+                    # will get overwritten with the 7 bits from the current sprite"
+                    # (Kabuto, phase 3). It shows only where the debug register forces
+                    # the sprite plane on: palette entry 0 instead of the backdrop.
                     pixel = row_pixels[i]
                     at = left + i
-                    if pixel and 0 <= at < width:
-                        if line[at]:
-                            self.collision = True
-                        else:
+                    if 0 <= at < width:
+                        if not line[at] & 15:
                             line[at] = pixel
+                        elif pixel & 15:
+                            self.collision = True
             if out_of_tiles:
                 break
         if tiles_left:
@@ -515,7 +547,19 @@ class Renderer:
         width = 320 if vdp.hmode.name == "H40" else 256
         im2 = vdp.interlace_double
         row = ((v << 1) | (1 if vdp.odd else 0)) if im2 else v
+        # The sprites of the line after this one are scanned now (phases 1 and 2). A
+        # line with its display off scans nothing ahead, and the line after it is then
+        # scanned when it begins, as every line was before the scan moved: Kabuto's
+        # "No sprites are checked while display is disabled" (phase 1) would leave it
+        # without sprites, and that is not measured here.
+        scanned, self._scanned = self._scanned, None
+        after = (v + 1) & 0x1FF
+        after_row = ((after << 1) | (1 if vdp.odd else 0)) if im2 else after
         if row >= 480:
+            # The line before the first (V = 511) is not shown, but its sprite scan is
+            # the first line's (Kabuto, "Topmost and bottommost raster line").
+            if vdp.display_enabled and after_row < 480:
+                self._scan_ahead(after_row, im2)
             return
         out = self.pixels[row]
         if self.cram_dirty or not self._palette:
@@ -545,8 +589,15 @@ class Renderer:
         self._line_s = [0] * width
         # The sprites of a line are fetched and drawn into the line buffer during the
         # horizontal blank before it (Kabuto, phase 3), so a mid-line write cannot
-        # change them: they are done once, here.
-        self._sprites(self._line_s, width, row, im2)
+        # change them: they are done once, here, from what the line before scanned. A
+        # line nothing scanned for (the display was off, or the mode changed) is
+        # scanned now, as the board did for every line before the scan moved.
+        if scanned is not None and scanned[0] == (row, width, im2):
+            self._sprite_draw(self._line_s, width, scanned[1], im2)
+        else:
+            self._sprites(self._line_s, width, row, im2)
+        if after_row < 480:
+            self._scan_ahead(after_row, im2)
         self._spans = self._plane_setup(width, v, row, im2)
         #: How far each plane has been fetched, and each plane's fine scroll, which
         #: places its 2-cell groups on the screen (``FETCH_AT``).
@@ -559,6 +610,11 @@ class Renderer:
         self._drawn = 0
         self._line_start = vdp.line_start
         self.pending = True
+
+    def _scan_ahead(self, row: int, im2: bool) -> None:
+        """Run phases 1 and 2 for display row ``row``, the next line's, and keep them."""
+        width = 320 if self.vdp.hmode.name == "H40" else 256
+        self._scanned = ((row, width, im2), self._sprite_scan(width, row, im2))
 
     def catch_up(self, offset: int, names: bool = False, limit: int | None = None) -> None:
         """Bring the line under way up to ``offset`` master clocks into it, before

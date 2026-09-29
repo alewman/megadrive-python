@@ -121,6 +121,30 @@ def test_a_68000_access_to_the_z80s_space_costs_one_extra_clock():
     assert board.z80_space_stall == 0
 
 
+def test_a_refresh_on_the_z80s_space_costs_one_clock_unless_it_is_late():
+    """The cartridge refresh falling on a 68000 access to $A00000-$A0FFFF holds it one
+    68000 clock, not the cartridge's two -- and none if it fell due within the last
+    clock before /AS, though it is used up either way: Nuked-MD's Overdrive 2 start-up,
+    392 and 127 of its 519 refreshes on Z80-RAM writes (docs/worklog.md, "The one-frame
+    slip")."""
+    from megadrive_python.board import Z80_REFRESH_STALL, Z80_SPACE_STALL
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    board = system.board
+    board.z80_reset = False
+    board.z80_bus_requested = True
+    board.arbiter_enabled = False
+    for late, stretch in ((14, Z80_REFRESH_STALL), (7, Z80_REFRESH_STALL), (3, 0)):
+        board.stall = 0
+        t = board.m68k_access_clock()
+        board.cart_refresh_due = t - late
+        board.write_byte(0xA00000, 0)
+        assert board.stall == Z80_SPACE_STALL + stretch, late
+        assert board.cart_refresh_due > t, late  # used up either way
+
+
 def test_capture_loop_rate():
     """The refresh rules give the capture loop its hardware rate, 143.588 MCLK per
     MOVE.L (A0),(A1)+ (docs/timing.md, "Bus sharing")."""
@@ -134,3 +158,27 @@ def test_capture_loop_rate():
 def test_genesis3_vsram():
     assert MACHINES["genesis3"].vdp.vsram_bytes == 0x80
     assert MACHINES["genesis"].vdp.vsram_bytes == 0x50
+
+
+def test_the_z80_takes_its_bus_back_on_its_own_clock():
+    """After the write that ends a bus request, the Z80's next access falls on the first
+    edge of its clock (6 MCLK past a multiple of 105 here) at least 42 MCLK after the
+    write began; after a reset release, 57 (Nuked-MD; docs/worklog.md, "The Z80 after a
+    hold")."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import Z80_DIVIDER
+    from megadrive_python.system import (
+        Z80_CLOCK_PHASE,
+        Z80_RESET_RESUME_MCLK,
+        Z80_RESUME_MCLK,
+        System,
+    )
+
+    for reset, wait in ((False, Z80_RESUME_MCLK), (True, Z80_RESET_RESUME_MCLK)):
+        for t in range(1_000_000, 1_000_105):
+            system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+            system.z80_mclk = 0
+            system._z80_resume(t, reset)
+            fetch = system.z80_mclk + Z80_DIVIDER  # T1 of the M1 cycle, then its access
+            assert fetch % Z80_DIVIDER == Z80_CLOCK_PHASE % Z80_DIVIDER, (reset, t)
+            assert t + wait <= fetch < t + wait + Z80_DIVIDER, (reset, t)

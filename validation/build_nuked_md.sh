@@ -55,10 +55,14 @@ CC=${CC:-gcc}
 CFLAGS=${CFLAGS:--O2 -w -Wno-incompatible-pointer-types -DTMSS_ENABLE=0}
 
 echo "nukedmd-headless (Nuked-MD @ $(cd "$src" && git rev-parse --short HEAD 2>/dev/null || echo 594ca2a))"
+# savestate.c's load_state is renamed so that the driver's own can wrap it (it re-aims
+# the chip's internal pointers after a load; see nuked_md_headless.c).
+$CC $CFLAGS -I "$out/sdl-stub" -I "$src" -Dload_state=nmd_inner_load_state \
+    -c "$src/savestate.c" -o "$out/savestate.o"
 $CC $CFLAGS -I "$out/sdl-stub" -I "$src" -o "$out/nukedmd-headless" \
     "$root/validation/nuked_md_headless.c" \
     "$src/md.c" "$src/68k.c" "$src/z80.c" "$src/fc1004.c" "$src/vdp.c" \
     "$src/fm.c" "$src/arbiter.c" "$src/iochip.c" "$src/tmss.c" "$src/vram.c" \
-    "$src/cartridge.c" "$src/controller.c" "$src/savestate.c" "$src/fj3002_fm.c"
+    "$src/cartridge.c" "$src/controller.c" "$out/savestate.o" "$src/fj3002_fm.c" -lz
 
 echo "built $out/nukedmd-headless"

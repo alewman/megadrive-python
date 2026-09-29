@@ -18,6 +18,28 @@
  *   NMD_PRESS=<t>:<mask>  set pad 1's buttons to <mask> at half-MCLK t.  Repeatable,
  *                         semicolon-separated: "100:128;200:0".  The mask is
  *                         Nuked-MD's controller.h bit set (START = 128).
+ *   NMD_RESET=<t0>:<t1>   hold the console's reset button from half-MCLK t0 to t1, as
+ *                         Nuked-MD's own frontend does (md.wres and the arbiter's
+ *                         ext_wres low; controller.c, F12).  Overdrive 2 needs it after
+ *                         its first run ("requires pressing Reset after the first run",
+ *                         Nuked-MD Notes.md).
+ *   NMD_PLOT_LIST=<spec>  plot these frames, "a-b/s,c,...", to <NMD_PLOT>.<frame>.
+ *   NMD_PICS=<dir>        plot *every* frame, zlib-compressed, appended to <dir>/pics.z,
+ *                         indexed in <dir>/pics.idx (frame u32, offset u64, bytes u32,
+ *                         half-MCLK u64); each record inflates to one NMD_PLOT file's
+ *                         body (counts, samples, V counters).
+ *   NMD_AUDIO=<file>      the chip's sound: FM left, FM right and PSG, each summed over
+ *                         one FM sample period (2016 half-MCLK, as Nuked-MD's audio.c
+ *                         windows them), as int32 triples.
+ *   NMD_SAVE_EVERY=<n>    a save state every n frames, taken where md.c takes its own
+ *   NMD_SAVE_DIR=<dir>    (pending_save_state), kept as <dir>/sNNNNNN.sav with the
+ *                         driver's counters and the partial frame in sNNNNNN.drv.
+ *   NMD_FMSIG=<file>      every change of the FM's BUSY latch (fm.c busy_latch[1]), its
+ *                         timer flags, its slot-23 marker (fsm_sel23), its timer clock
+ *                         (fsm_clock_timers) and /IC, as "half-MCLK busy timerA timerB
+ *                         sel23 timerclock ic" lines.
+ *   NMD_LOAD=<file.sav>   start from such a save (and its .drv): nothing is plotted,
+ *                         traced into pictures or sounded until it has been loaded.
  *   NMD_TRACE=<path>      write the binary trace there (see the record below).
  *   NMD_TRACE_FROM=<t>    first half-MCLK traced (default 0).
  *   NMD_TRACE_TO=<t>      one past the last (default NMD_STOP).
@@ -61,6 +83,8 @@
 #include "md.h"
 #include "fc1004.h"
 #include "vram.h"
+#include "savestate.h"
+#include <zlib.h>
 
 /* --- what md.c calls into audio.c and video.c -------------------------------- */
 
@@ -80,9 +104,28 @@ static const char *plot_file = 0;
 static long plot_frame = -1;
 static long plot_count_frames = 1; /* NMD_PLOT_FRAMES: this many from NMD_PLOT_FRAME on */
 static long plot_frames_seen = 0;
+/* NMD_PLOT_LIST: the frames to plot, as "a-b/s,c,d-e" (ranges inclusive, /s a step),
+   each written to <NMD_PLOT>.<frame>; overrides NMD_PLOT_FRAME(S). */
+#define PLOT_LIST_MAX 65536
+static unsigned char plot_list[PLOT_LIST_MAX];
+static int plot_use_list = 0;
+static long plot_list_last = -1;
 static int plot_line = -1, plot_x = 0, plot_ohsync = 1, plot_ovsync = 1, plot_done = 0;
 static unsigned char plot_buf[PLOT_LINES][PLOT_SAMPLES][3];
 static unsigned short plot_count[PLOT_LINES];
+static FILE *pics_file = 0, *pics_index = 0; /* NMD_PICS */
+static uint64_t pics_offset = 0;
+static FILE *audio_file = 0;                 /* NMD_AUDIO */
+static int32_t audio_sum[3], audio_buf[3 * 8192];
+static int audio_n = 0;
+static long save_every = 0;                  /* NMD_SAVE_EVERY */
+static const char *save_dir = 0;
+static int save_requested = 0;
+static FILE *fmsig_file = 0;                 /* NMD_FMSIG */
+static int fmsig_last = -1;
+static const char *load_path = 0;            /* NMD_LOAD */
+static int load_pending = 0;
+static void audio_flush(void);
 static unsigned short plot_vcount[PLOT_LINES]; /* the die's V counter at each row's /HSYNC */
 /* the vertical-scroll log's file and window (see vdpsig_sample) */
 static FILE *vdpsig_file = 0;
@@ -94,7 +137,7 @@ static void plot_write(void)
 {
     char name[4096];
     FILE *f;
-    if (plot_count_frames > 1)
+    if (plot_count_frames > 1 || plot_use_list)
         snprintf(name, sizeof name, "%s.%ld", plot_file, plot_frames_seen);
     else
         snprintf(name, sizeof name, "%s", plot_file);
@@ -111,13 +154,47 @@ static void plot_write(void)
     fclose(f);
 }
 
+static void pics_write(void)
+{
+    static unsigned char body[sizeof plot_count + sizeof plot_buf + sizeof plot_vcount];
+    static unsigned char packed[sizeof body + sizeof body / 100 + 1024];
+    uLongf n = sizeof packed;
+    memcpy(body, plot_count, sizeof plot_count);
+    memcpy(body + sizeof plot_count, plot_buf, sizeof plot_buf);
+    memcpy(body + sizeof plot_count + sizeof plot_buf, plot_vcount, sizeof plot_vcount);
+    if (compress2(packed, &n, body, sizeof body, 1) != Z_OK) {
+        fprintf(stderr, "compress failed at frame %ld\n", plot_frames_seen);
+        return;
+    }
+    fwrite(packed, 1, n, pics_file);
+    uint32_t frame = (uint32_t)plot_frames_seen, bytes = (uint32_t)n;
+    uint64_t t = mcycles;
+    fwrite(&frame, 4, 1, pics_index);
+    fwrite(&pics_offset, 8, 1, pics_index);
+    fwrite(&bytes, 4, 1, pics_index);
+    fwrite(&t, 8, 1, pics_index);
+    pics_offset += n;
+}
+
 void Video_PlotVDP(void)
 {
     int hsync = ym.vdp.o_hsync, vsync = ym.vdp.o_vsync;
-    if (!plot_file || plot_done)
+    if ((!plot_file && !pics_file) || plot_done || load_pending)
         return;
     if (plot_ovsync && !vsync) {
-        if (plot_frames_seen >= plot_frame && plot_frames_seen < plot_frame + plot_count_frames) {
+        if (pics_file) {
+            if (plot_line >= 0)
+                pics_write();
+            memset(plot_count, 0, sizeof plot_count);
+            memset(plot_buf, 0, sizeof plot_buf);
+        } else if (plot_use_list) {
+            if (plot_frames_seen < PLOT_LIST_MAX && plot_list[plot_frames_seen]) {
+                plot_write();
+                memset(plot_count, 0, sizeof plot_count);
+            }
+            if (plot_frames_seen >= plot_list_last)
+                plot_done = 1;
+        } else if (plot_frames_seen >= plot_frame && plot_frames_seen < plot_frame + plot_count_frames) {
             plot_write();
             memset(plot_count, 0, sizeof plot_count);
             if (plot_frames_seen == plot_frame + plot_count_frames - 1)
@@ -125,6 +202,10 @@ void Video_PlotVDP(void)
         }
         plot_frames_seen++;
         plot_line = -1;
+        if (save_every && plot_frames_seen % save_every == 0 && !save_requested) {
+            pending_save_state = 1; /* md.c saves at the top of its next loop */
+            save_requested = 1;
+        }
     }
     if (plot_ohsync && !hsync) {
         plot_line++;
@@ -134,7 +215,9 @@ void Video_PlotVDP(void)
     }
     plot_ohsync = hsync;
     plot_ovsync = vsync;
-    if (plot_frames_seen < plot_frame || plot_frames_seen >= plot_frame + plot_count_frames
+    if (!pics_file && (plot_use_list ? (plot_frames_seen >= PLOT_LIST_MAX || !plot_list[plot_frames_seen])
+                       : (plot_frames_seen < plot_frame
+                          || plot_frames_seen >= plot_frame + plot_count_frames))
         || plot_line < 0 || plot_line >= PLOT_LINES
         || plot_x >= PLOT_SAMPLES)
         return;
@@ -192,6 +275,7 @@ static int inited;
 static uint64_t press_at[MAX_PRESSES];
 static int press_mask[MAX_PRESSES];
 static int presses;
+static uint64_t reset_from = ~0ull, reset_to = ~0ull; /* NMD_RESET */
 
 static uint32_t zclk_edges;
 static int prev_zclk = -1;
@@ -286,6 +370,12 @@ static void setup(void)
     if ((s = getenv("NMD_TRACE_MASK"))) trace_mask = (unsigned)strtoul(s, 0, 0);
     if ((s = getenv("NMD_PROGRESS"))) progress_every = strtoull(s, 0, 0);
     if ((s = getenv("NMD_PRESS"))) parse_presses(s);
+    if ((s = getenv("NMD_RESET"))) {
+        char *end;
+        reset_from = strtoull(s, &end, 0);
+        if (*end == ':')
+            reset_to = strtoull(end + 1, 0, 0);
+    }
     dump_ram = getenv("NMD_DUMP_RAM");
     dump_zram = getenv("NMD_DUMP_ZRAM");
     dump_vram = getenv("NMD_DUMP_VRAM");
@@ -297,6 +387,54 @@ static void setup(void)
     if ((s = getenv("NMD_VRAMSIG"))) vram_file = fopen(s, "w");
     if ((s = getenv("NMD_PLOT_FRAME"))) plot_frame = strtol(s, 0, 0);
     if ((s = getenv("NMD_PLOT_FRAMES"))) plot_count_frames = strtol(s, 0, 0);
+    if ((s = getenv("NMD_PICS"))) {
+        char name[4096];
+        snprintf(name, sizeof name, "%s/pics.z", s);
+        pics_file = fopen(name, "ab");
+        snprintf(name, sizeof name, "%s/pics.idx", s);
+        pics_index = fopen(name, "ab");
+        if (!pics_file || !pics_index) {
+            fprintf(stderr, "cannot open NMD_PICS in %s\n", s);
+            exit(1);
+        }
+        fseek(pics_file, 0, SEEK_END);
+        pics_offset = (uint64_t)ftell(pics_file);
+    }
+    if ((s = getenv("NMD_AUDIO"))) audio_file = fopen(s, "ab");
+    if ((s = getenv("NMD_FMSIG"))) fmsig_file = fopen(s, "w");
+    if ((s = getenv("NMD_SAVE_EVERY"))) save_every = strtol(s, 0, 0);
+    save_dir = getenv("NMD_SAVE_DIR");
+    if (save_every && !save_dir) save_dir = ".";
+    if ((load_path = getenv("NMD_LOAD"))) {
+        FILE *in = fopen(load_path, "rb"), *out = fopen(DEFAULT_SAVE_NAME, "wb");
+        char block[65536];
+        size_t n;
+        if (!in || !out) {
+            fprintf(stderr, "cannot stage %s\n", load_path);
+            exit(1);
+        }
+        while ((n = fread(block, 1, sizeof block, in)) > 0)
+            fwrite(block, 1, n, out);
+        fclose(in);
+        fclose(out);
+        pending_load_state = 1; /* md.c loads at the top of its next loop */
+        load_pending = 1;
+    }
+    if ((s = getenv("NMD_PLOT_LIST"))) {
+        while (*s) {
+            char *end;
+            long a = strtol(s, &end, 0), b = a, step = 1;
+            if (*end == '-') b = strtol(end + 1, &end, 0);
+            if (*end == '/') step = strtol(end + 1, &end, 0);
+            for (long f = a; f <= b && f < PLOT_LIST_MAX; f += step > 0 ? step : 1) {
+                plot_list[f] = 1;
+                if (f > plot_list_last) plot_list_last = f;
+            }
+            plot_use_list = 1;
+            s = *end == ',' ? end + 1 : end;
+            if (*end && *end != ',') break;
+        }
+    }
     if ((s = getenv("NMD_TRACE"))) {
         trace_file = fopen(s, "wb");
         if (!trace_file)
@@ -307,6 +445,12 @@ static void setup(void)
 static void finish(void)
 {
     flush_events();
+    audio_flush();
+    if (audio_file) fclose(audio_file);
+    if (fmsig_file) fclose(fmsig_file);
+    if (pics_file) fclose(pics_file);
+    if (pics_index) fclose(pics_index);
+    audio_file = pics_file = pics_index = 0;
     if (vram_file) {
         fclose(vram_file);
         vram_file = 0;
@@ -426,6 +570,55 @@ static void vram_sample(void)
 }
 
 /* Called once per half-MCLK, after md.c has resolved every bus. */
+/* What the driver itself must carry across a save: its frame count and where it was
+   in the frame being plotted, so that a run from a save numbers and draws frames as
+   the run that saved it did. */
+static void driver_state(const char *path, int save)
+{
+    FILE *f = fopen(path, save ? "wb" : "rb");
+    size_t (*io)(void *, size_t, size_t, FILE *) =
+        save ? (size_t (*)(void *, size_t, size_t, FILE *))fwrite : fread;
+    if (!f) {
+        fprintf(stderr, "cannot open %s\n", path);
+        exit(1);
+    }
+    io(&plot_frames_seen, sizeof plot_frames_seen, 1, f);
+    io(&plot_line, sizeof plot_line, 1, f);
+    io(&plot_x, sizeof plot_x, 1, f);
+    io(&plot_ohsync, sizeof plot_ohsync, 1, f);
+    io(&plot_ovsync, sizeof plot_ovsync, 1, f);
+    io(plot_count, sizeof plot_count, 1, f);
+    io(plot_vcount, sizeof plot_vcount, 1, f);
+    io(plot_buf, sizeof plot_buf, 1, f);
+    io(audio_sum, sizeof audio_sum, 1, f);
+    fclose(f);
+}
+
+/* md.c calls load_state at the top of its loop.  Nuked-MD's own (savestate.c, built
+   here as nmd_inner_load_state by validation/build_nuked_md.sh) restores the chip
+   structure whole, including six pointers FC1004_Init aims back into it: valid in
+   the process that saved, stale in any other.  So they are aimed again here, before a
+   single cycle runs from the loaded state. */
+int nmd_inner_load_state(const char *filename);
+int load_state(const char *filename)
+{
+    int result = nmd_inner_load_state(filename);
+    ym.arb.ext_vaddress_out = &ym.o_vaddress;
+    ym.arb.ext_data_out = &ym.o_vdata;
+    ym.ioc.ext_vdata_out = &ym.o_vdata;
+    ym.ioc.ext_zdata_out = &ym.o_zdata;
+    ym.ioc.ext_vaddress_out = &ym.o_vaddress;
+    ym.tmss.ext_data_out = &ym.o_vdata;
+    return result;
+}
+
+static void audio_flush(void)
+{
+    if (audio_file && audio_n)
+        fwrite(audio_buf, sizeof(int32_t), (size_t)audio_n * 3, audio_file);
+    audio_n = 0;
+}
+
 void Audio_Update(void)
 {
     int i, as, tracing, zact;
@@ -433,12 +626,60 @@ void Audio_Update(void)
     if (!inited)
         setup();
 
+    if (load_pending) {
+        if (pending_load_state)
+            return; /* the frames before the load are not this run's */
+        char drv[4096];
+        snprintf(drv, sizeof drv, "%.*s.drv", (int)(strlen(load_path) - 4), load_path);
+        driver_state(drv, 0);
+        load_pending = 0;
+        fprintf(stderr, "loaded %s at half-MCLK %llu, frame %ld\n", load_path,
+                (unsigned long long)mcycles, plot_frames_seen);
+    }
+    if (save_requested && !pending_save_state) {
+        char name[4096];
+        snprintf(name, sizeof name, "%s/s%06ld.sav", save_dir, plot_frames_seen);
+        if (rename(DEFAULT_SAVE_NAME, name) == 0) {
+            snprintf(name, sizeof name, "%s/s%06ld.drv", save_dir, plot_frames_seen);
+            driver_state(name, 1);
+        } else {
+            fprintf(stderr, "save at frame %ld was not written\n", plot_frames_seen);
+        }
+        save_requested = 0;
+    }
+    if (fmsig_file) {
+        int now = (ym.fm.busy_latch[1] & 1) | (ym.fm.status_timer_a_dlatch & 1) << 1
+                  | (ym.fm.status_timer_b_dlatch & 1) << 2 | (ym.fm.fsm_sel23 & 1) << 3
+                  | (ym.fm.fsm_clock_timers & 1) << 4 | (ym.fm.input.ic & 1) << 5;
+        if (now != fmsig_last) {
+            fprintf(fmsig_file, "%llu %d %d %d %d %d %d\n", (unsigned long long)mcycles,
+                    now & 1, (now >> 1) & 1, (now >> 2) & 1, (now >> 3) & 1, (now >> 4) & 1,
+                    (now >> 5) & 1);
+            fmsig_last = now;
+        }
+    }
+    if (audio_file) {
+        audio_sum[0] += ym.fm.out_l;
+        audio_sum[1] += ym.fm.out_r;
+        audio_sum[2] += ym.vdp.psg.psg_out;
+        if (mcycles % 2016 == 0) {
+            memcpy(audio_buf + 3 * audio_n, audio_sum, sizeof audio_sum);
+            memset(audio_sum, 0, sizeof audio_sum);
+            if (++audio_n == 8192)
+                audio_flush();
+        }
+    }
+
     vdpsig_sample();
     vram_sample();
 
     for (i = 0; i < presses; i++)
         if (mcycles == press_at[i])
             controller_buttons_state_1 = press_mask[i];
+    if (mcycles == reset_from || mcycles == reset_to) {
+        md.wres = mcycles == reset_to; /* active low: 0 while the button is held */
+        ym.arb.input.ext_wres = md.wres;
+    }
 
     /* ZCLK edges: the Z80's own time base, so that a type-2 cycle's length can be
        read in T-states and its wait states counted. */

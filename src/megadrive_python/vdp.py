@@ -397,6 +397,17 @@ V30_NTSC = VMode(0x1FF, 0x200, 0x0F0, None)
 V28_PAL = VMode(0x102, 0x1CA, 0x0E0, 0x100, interlaced_last=0x101)
 V30_PAL = VMode(0x10A, 0x1D2, 0x0F0, 0x108, interlaced_last=0x109)
 
+#: Whether VINT fires on a frame whose vertical border never started (the V28/V30
+#: trick, :attr:`VDP.border`). Kabuto says only that "vblank still works normally";
+#: BlastEm raises VINT from its border state alone, so not on such a frame. Not
+#: measured: an experiment switch while it is decided.
+VINT_WITHOUT_BORDER = False
+
+#: The border tested against the live V28/V30 mode (:attr:`VDP.border`); False puts
+#: back the board's earlier rule, the border from the latched mode's blanking line,
+#: for the compatibility sweep's triage (``scripts/compat_sweep.py``).
+LIVE_BORDER = True
+
 #: Write targets (code bits 3-0) and read targets (bits 4-0).
 WRITE_VRAM, WRITE_CRAM, WRITE_VSRAM = 0x01, 0x03, 0x05
 READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
@@ -501,6 +512,16 @@ class VDP:
         self.interlace_double = False
         self.v = 0x1FF
         self.previous_v = 0x1FE
+        #: The vertical border: on from the line where the V counter meets the blanking
+        #: line of the V28/V30 mode in force *at that moment* ($E0 or $F0) to the end of
+        #: the frame. "The VDP tests it constantly, so having V28 active for a single VDP
+        #: cycle during line 224 or V30 for line 240 will start the border", and
+        #: switching to V30 before line 224 and back to V28 before line 240 means it
+        #: never starts: the display stays active all frame and "HIRQ runs continuously
+        #: and is not reset before the start of each frame" (Kabuto, "V28/V30 tricks").
+        #: Overdrive 2's arcade scene runs on that (docs/worklog.md, "The arcade").
+        self.border = False
+        self._border_started = False  # the border began on the line under way
         self.line_start = 0
         self.mclk = 0
         self.slots = self.hmode.slots_idle
@@ -539,14 +560,22 @@ class VDP:
         if number == 0 and (value ^ old) & 0x02 and value & 0x02:
             # 0 -> 1 on the HV latch bit latches the counter (Exodus Ports.cpp 1858-1871).
             self.hv_latched = self._hv_now()
-        elif number == 1 and (value ^ old) & 0x40:
+        elif number == 1 and (value ^ old) & 0x48:
+            if (
+                LIVE_BORDER
+                and (value ^ old) & 0x08
+                and not self.border
+                and self.v == self._blank_line()
+            ):
+                # The mode that blanks from this line came in part way along it.
+                self.border = self._border_started = True
             self._choose_slots()
 
     # -- time ------------------------------------------------------------------------------
 
     def _choose_slots(self) -> None:
         """The slot list for the current line, and where in it the VDP is."""
-        active = self.display_enabled and (self.v <= self.vmode.active_last or self.v == 0x1FF)
+        active = self.display_enabled and (not self.border or self.v == 0x1FF)
         self.slots = self.hmode.slots_active if active else self.hmode.slots_idle
         self.slot_index = bisect_right(self.slots, self.mclk - self.line_start - 1)
 
@@ -555,7 +584,7 @@ class VDP:
         start = self.line_start
         self.line_end = start + mode.length
         self.hblank_at = start + mode.offset_of[mode.hblank_set]
-        vint_line = self.v == self.vmode.vblank_set
+        vint_line = self.v == self.vmode.vblank_set if VINT_WITHOUT_BORDER else self._border_started
         self.vint_at = start + mode.offset_of[0x001] if vint_line else -1
         self.odd_at = start + mode.offset_of[0x002] if vint_line else -1
         # The picture of a line is drawn where its active display begins (the HBlank
@@ -563,7 +592,7 @@ class VDP:
         # the horizontal blank that precedes the same line -- are already in place.
         self.render_at = (
             start + mode.offset_of[mode.hblank_clear]
-            if self.rendering and self.v <= self.vmode.active_last
+            if self.rendering and not self.border and self.v < 0x0F0
             else -1
         )
         self._choose_slots()
@@ -659,6 +688,17 @@ class VDP:
         if new_v == vmode.vblank_set:
             self._latch_vmode()
             vmode = self.vmode
+        was_border = self.border
+        if new_v == 0:
+            self.border = False
+            was_border = False  # line 0 counts the H interrupt down, as every line did
+        self._border_started = False
+        if not LIVE_BORDER:
+            self.border = new_v >= vmode.vblank_set
+            self._border_started = new_v == vmode.vblank_set
+            was_border = new_v > vmode.vblank_set
+        elif not self.border and new_v == self._blank_line():
+            self.border = self._border_started = True
         self.v = new_v
         if new_v == 0:
             self.frame += 1
@@ -666,7 +706,7 @@ class VDP:
         if self.hmode.name == "H40":
             self.hmode = vmode.h40_line(new_v, self.interlace, self.odd)
         # The HINT counter at the V increment point (Exodus General.cpp 2268-2289).
-        if new_v > vmode.vblank_set:
+        if was_border:
             self.hint_counter = self.registers[10]
         elif self.hint_counter == 0:
             self.hint_counter = self.registers[10]
@@ -692,8 +732,17 @@ class VDP:
         self._line_events()
         self.hblank_at = -1
 
+    def _blank_line(self) -> int:
+        """The line the vertical border starts on for the V28/V30 mode register 1 holds
+        now ($E0 or $F0): the border is tested against the live mode (:attr:`border`),
+        where the V counter's sequence, VSYNC and interlace keep the mode latched at
+        the blanking line (:meth:`_latch_vmode`) -- which Nemesis's HV captures hold the
+        board to."""
+        return 0x0F0 if self.registers[1] & 0x08 else 0x0E0
+
     def _latch_vmode(self) -> None:
-        """V28/V30 and interlace changes latch at VBlank (Exodus General.cpp 2203-2215)."""
+        """V28/V30 and interlace changes latch at VBlank (Exodus General.cpp 2203-2215),
+        for the V counter's sequence and VSYNC; the border does not wait for it."""
         v30 = bool(self.registers[1] & 0x08)
         if self.pal:
             self.vmode = V30_PAL if v30 else V28_PAL
@@ -774,7 +823,7 @@ class VDP:
         """
         h = self.hcounter()
         v = self.v
-        vblank = (self.vmode.vblank_set <= v < 0x1FF) or not self.display_enabled
+        vblank = (self.border and v != 0x1FF) or not self.display_enabled
         hblank = h >= self.hmode.hblank_set or h < self.hmode.hblank_clear
         renderer = self.renderer
         return (
