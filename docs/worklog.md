@@ -4963,3 +4963,28 @@ picture; Windjammers moves by one pixel. None is a regression. MAME can't judge 
 and a die run of 600 frames from power-on (about 40 minutes) would not start in step
 with the board either (the first-run freeze, Session 13). `tests/mini_sweep.txt`
 notes them so a later move is read the same way.
+
+### What "FIFO Wait States" can and cannot judge
+
+The read-ahead rules above were set aside because they failed VDPFIFOTesting's "FIFO
+Wait States". Traced on both machines from the ROM itself (die: Nuked-MD, frames
+56-170 with Start pressed at 55, as the harness does), sub-test 8 -- six data writes
+fill the FIFO, the long write `$00008F01` then sets up a VRAM read, and 16 status reads
+look for a full FIFO -- loops until it has seen full or 2,048 times:
+
+| machine | iterations | iterations with a full sample |
+| --- | ---: | ---: |
+| Nuked-MD | 812 | 1 (the last; the sixth write held 74 MCLK) |
+| board, no read-ahead rules | 1 | 1 |
+| board, with the rules | 2,049 (the limit) | 0 |
+
+Both machines spread the iterations over the whole line (34-35 bins of 100 MCLK), so
+neither is phase-locked. At the commonest timing (413 MCLK from the sixth write's end
+to the first status read) the die reads full in 0 of 281 iterations and the board
+without the rules read full at once. So the board's pass of this test was partly luck,
+and on the die the test passes about once per 800 iterations: it cannot discriminate
+between read-ahead models, and Nemesis's own note that data-port tests during
+transfers "fail occasionally" on hardware fits. The rules stay out anyway, on the
+other count: they did not move the Overdrive 2 comparison (3,507 identical reads with
+and without them). Scripts for this: the scratch `fifo8.py`/`vft8.py` harnesses were
+not kept; `scripts/run_read_slots.py` holds the measurement that matters.
