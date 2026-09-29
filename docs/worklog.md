@@ -4988,3 +4988,54 @@ transfers "fail occasionally" on hardware fits. The rules stay out anyway, on th
 other count: they did not move the Overdrive 2 comparison (3,507 identical reads with
 and without them). Scripts for this: the scratch `fifo8.py`/`vft8.py` harnesses were
 not kept; `scripts/run_read_slots.py` holds the measurement that matters.
+
+### The arbiter, measured
+
+The per-read Z80 wait mismatches (15 MCLK, now and then, on its reads of the VDP) came
+from Kabuto's footnote-1 arithmetic, which the board had used since milestone 5. Tested
+straight against the die -- every one of the 24,343 bank-window and VDP accesses in the
+Overdrive 2 trace, predicted from the die's own 68000 bus cycles around it -- it gives
+the die's wait for 76.8 % of them. What the die does, read off its bus (the Z80's own
+cycle on the 68000's bus is in the trace, marked as not driven by the 68000):
+
+1. A 68000 cycle that begins up to 21 MCLK after the Z80's /MREQ still goes first; none
+   that begins later does (every access in the run).
+2. The Z80's own cycle begins 17 MCLK after the last of those ends, and no sooner than
+   29 MCLK after /MREQ, on a 68000 clock edge. The grants 7 or 14 MCLK later than
+   17, which had looked unexplained, are this floor and edge.
+3. It ends on the first Z80 clock edge at /MREQ + 37 + 15w that leaves it at least 30
+   MCLK: 67, 82 or 97 MCLK after /MREQ for 2, 3 or 4 wait states, every access.
+4. The 68000's next cycle waits for its first clock edge 25 MCLK after that.
+5. A ROM read through the bank window that meets the cartridge refresh takes it: its
+   own cycle is 14 MCLK longer (Kabuto's ``b``). With the 68000 stopped a quarter of
+   the Z80's reads do, one per refresh period (882-889 MCLK apart).
+
+Rules 1-4 give the die's wait for 94.3 % of the accesses; in 97.8 % the grant is right
+and the rest are rule 5, which the board takes from its own refresh grid (the window
+in which a refresh lands on the Z80's read rather than passing on an idle bus is not
+pinned: the board takes every owed tick, and in MoD's stopped case gives 3 wait states
+to half the reads where the die gives it to a quarter). `arbiter.z80_access_wait`;
+Kabuto's arithmetic (`bank_access_delay`) and `Board._m68k_release` are gone. The
+board also moves the 68000's later cycles in its step by the delay each access costs
+it, so the cycle the 68000 resumes with is on the bus when the Z80's next access comes.
+
+Against MoD (`scripts/run_nuked_md.py arbiter`, hardware-captured, with the die beside
+it): the 68000 stopped, 2-3 wait states ("2-3"; the die 2.25, the board 2.49); in
+`jmp (a0)`, 2-3 with mean 2.86 (MoD 2-4, "about 2.93"; die 2.74); the `pop`'s second
+read, mean about 2.2 where MoD and the die have 3.5-3.6 -- no better than Kabuto's
+arithmetic was (2.04), and still open.
+
+On Overdrive 2, every Z80 read of the VDP now waits what the die's does, through the
+whole comparison window. The best forced-phase run stops at 4,738 reads rather than
+7,435, and the reason is not the arbiter: after the Z80 starts, the board's 68000
+makes its periodic bus request about 4,800 MCLK earlier than the die's (the boot
+offset between the two CPUs, Session 13), so the request lands on another Z80
+instruction; with the old arbiter the two holds cancelled exactly (-150/+150), with
+this one they miss by 15 MCLK and the timer-A poll flips. That offset is the next
+thing.
+
+Checks: both suites pass (142; Kabuto's formula test and `_m68k_release`'s test
+replaced by one for `z80_access_wait`); the six-game MAME lockstep 0 unexplained (it
+runs with the arbiter off); the mini sweep against the previous one: one move, Sansan
+(Japan) 2,370 to 3,134 pixels at the exact frame, still `phase` -- an identical frame
+remains within the window.

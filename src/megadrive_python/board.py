@@ -28,8 +28,9 @@ from typing import TYPE_CHECKING
 from .arbiter import (
     AS_LOW_MCLK,
     BUSACK_PROPAGATION_MCLK,
-    MAX_RELEASE,
-    bank_access_delay,
+    CUTOFF_MCLK,
+    IDLE_GRANT_MCLK,
+    z80_access_wait,
 )
 from .cartridge import Cartridge
 from .io import IOChip
@@ -151,6 +152,8 @@ class Board:
         #: The two refreshes that slow the 68000 (``_bus_cycle``); their power-on phases
         #: are unknown, so a caller may set them (the capture harness fits them).
         self.cart_refresh_due = CART_REFRESH_MCLK
+        #: The refresh tick a Z80 access over the 68000's bus last took (``_bank_delay``).
+        self.z80_refresh_taken = -1
         self.ram_refresh_due = RAM_REFRESH_AFTER_MCLK
         self.refresh_enabled = True
         #: The arbiter's delays (milestone 5, :mod:`megadrive_python.arbiter`): the Z80's
@@ -161,7 +164,7 @@ class Board:
         self.arbiter_enabled = True
         #: Each 68000 bus cycle started in the step under way, in order, as
         #: ``[master clock /AS fell, master clocks it stays down]``: the arbiter reads
-        #: it to find how long the 68000 still needs the bus (:meth:`_m68k_release`).
+        #: it to see which of the 68000's cycles go before a Z80 access (:meth:`_bank_delay`).
         self.m68k_accesses: list[list[int]] = []
         #: Master clocks the Z80 has been held during its current step, and master
         #: clocks the 68000 owes for Z80 bank accesses made in its wake (they are added
@@ -295,7 +298,7 @@ class Board:
 
     def _bus_cycle(self, address: int) -> None:
         """One 68000 bus cycle about to start at ``address``: its refresh stalls, and
-        its place in the grid the arbiter reads (:meth:`_m68k_release`).
+        its place in the grid the arbiter reads (:meth:`_bank_delay`).
 
         The grid holds ``[start, span]``: the master clock /AS fell and how long it
         stays down, which a refresh stretch lengthens.
@@ -327,30 +330,6 @@ class Board:
 
     # -- the arbiter ---------------------------------------------------------
 
-    def _m68k_release(self, t: int) -> int:
-        """Kabuto's ``a``: the 68000 cycles until the 68000 lets go of the bus, for a
-        Z80 request at master clock ``t``.
-
-        "Thus there is an initial delay of 1 to 6 cycles. (Typically 1 to 4; up to 6
-        cycles if the last access is delayed by the refresh logic.)" (Kabuto, footnote
-        1). The board knows where each of the step's bus cycles began and how long it
-        held /AS (:meth:`_bus_cycle`, :data:`~megadrive_python.arbiter.AS_LOW_MCLK`
-        plus whatever the refresh stretched it by). An access the 68000 has not begun
-        holds nothing: the bus is free in the 10 MCLK between one cycle's /AS rising
-        and the next one's falling, which is what Nuked-MD's bus log shows and what
-        makes Kabuto's own range come out (docs/worklog.md, the timing session).
-        """
-        release = 1
-        for start, span in self.m68k_accesses:
-            if start + span <= t:
-                continue
-            if start > t:
-                break
-            left = -(-(start + span - t) // M68K_DIVIDER)
-            if left > release:
-                release = left
-        return min(release, MAX_RELEASE)
-
     def _z80_access_time(self) -> int:
         """The master clock of the Z80 access under way: its instruction's start, its
         offset in the instruction (:attr:`z80_offsets`), and what the arbiter has held
@@ -376,32 +355,50 @@ class Board:
         return 0xFF
 
     def _bank_delay(self) -> None:
-        """What one Z80 access through the bank window costs both CPUs (Kabuto's
-        footnote 1, :func:`~megadrive_python.arbiter.bank_access_delay`).
+        """What one Z80 access over the 68000's bus -- the bank window, or the VDP --
+        costs both CPUs (:func:`~megadrive_python.arbiter.z80_access_wait`).
 
         The access is placed where z80-python's access-timing table puts it inside the
         instruction (:meth:`_z80_access_time`). The arbiter reads the 68000's bus
         cycles, which are known only as far as the 68000 has run, so the Z80 is not
         stepped into an instruction whose accesses would fall past that
-        (``System.catch_up_z80``); placed at the step's start instead, MoD's spinning
-        68000 cost the Z80 no more than a stopped one (``tests/test_milestone5.py``).
-        The 68000's share is owed rather than charged, because the Z80 runs in its
-        wake (``m68k_pending_stall``).
+        (``System.catch_up_z80``). The 68000's share is owed rather than charged,
+        because the Z80 runs in its wake (``m68k_pending_stall``): the 68000 is
+        taken to want the bus again at once, the usual gap after its last cycle (or
+        at the cut-off, if the request found it idle), and waits from there.
         """
         t = self._z80_access_time()
-        # "b (2 if the z80->ROM access is prolonged by a refresh delay, 0 if not)": the
-        # cartridge refresh grid (``CART_REFRESH_MCLK``) ticking inside the access.
-        # The tick is read, not consumed: the 68000's own accesses walk the same grid
-        # in ``_bus_cycle`` and, running ahead of the Z80, would otherwise always have
-        # taken it first.
-        since = (t - self.cart_refresh_due) % CART_REFRESH_MCLK
-        z80_cycles, m68k_cycles = bank_access_delay(
-            -t % M68K_DIVIDER, self._m68k_release(t), since < CART_REFRESH_STALL
+        # The cartridge refresh grid (``_bus_cycle``): the last tick due by the end of
+        # the Z80's grant window, owed if no 68000 cycle since took it and the Z80 has
+        # not already.
+        due = self.cart_refresh_due
+        tick = (
+            due + (t + CUTOFF_MCLK + IDLE_GRANT_MCLK - due) // CART_REFRESH_MCLK * CART_REFRESH_MCLK
         )
-        self.z80_stall += z80_cycles * Z80_DIVIDER
+        taken = tick == self.z80_refresh_taken or any(
+            tick <= begin <= t + CUTOFF_MCLK for begin, _span in self.m68k_accesses
+        )
+        wait, resume, own = z80_access_wait(t, self.m68k_accesses, None if taken else tick)
+        if not taken and tick <= own:
+            self.z80_refresh_taken = tick
+        wanted = t + CUTOFF_MCLK + 1
+        for begin, _span in self.m68k_accesses:
+            if begin > t + CUTOFF_MCLK:
+                break
+            wanted = max(wanted, begin + 4 * M68K_DIVIDER)  # its next, four clocks on
+        resume += -(resume - wanted) % M68K_DIVIDER
+        m68k_cycles = max(0, resume - wanted) // M68K_DIVIDER
+        if m68k_cycles:
+            # The 68000's cycles past the cut-off happen that much later: the one it
+            # resumes with is on the bus when the Z80's next access comes (the second
+            # read of a ``pop`` waits behind it on the die).
+            for cycle in self.m68k_accesses:
+                if cycle[0] > t + CUTOFF_MCLK:
+                    cycle[0] += m68k_cycles * M68K_DIVIDER
+        self.z80_stall += wait * Z80_DIVIDER
         self.m68k_pending_stall += m68k_cycles * M68K_DIVIDER
         self.bank_accesses += 1
-        self.bank_z80_cycles += z80_cycles
+        self.bank_z80_cycles += wait
         self.bank_m68k_cycles += m68k_cycles
 
     # -- the sound chips -----------------------------------------------------
