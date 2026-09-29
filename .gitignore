@@ -17,7 +17,7 @@ htmlcov/
 # Fetched references and test programs; scripts/fetch_references.py fills
 # these from scripts/pinned_files.json and scripts/pinned_repos.json.
 # Never commit them: third-party documents, programs and source trees.
-reference/
+reference
 tests/test_roms
 
 # MAME oracle runs (scripts/mame_trace.py): traces, error.log, cfg, nvram.
