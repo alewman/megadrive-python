@@ -201,6 +201,7 @@ class HMode:
         self.last = last
         self.first_high = first_high
         self.slots_active: list[int] = []
+        self.no_read_fill: frozenset[int] = frozenset()
         self.slots_idle: list[int] = []
         #: Where display pixel 0 falls in ``hvals``, so that ``position(offset) -
         #: display_at`` is the screen X a master clock lands on.  The active display is
@@ -268,6 +269,8 @@ _ACTIVE_SLOTS = {
     "H40": (0x002, 0x012, 0x022, 0x042, 0x052, 0x062, 0x082, 0x092, 0x0A2, 0x0C2, 0x0D2,
             0x0E2, 0x102, 0x112, 0x122, 0x140, 0x142, 0x1CE),
 }  # fmt: skip
+#: Active-line slots that fill no data-port read (:data:`READ_RELEASE_MCLK`).
+_NO_READ_FILL = {"H40": (0x142,)}
 #: The refresh slots of an idle line, by H counter, from Exodus's own tables
 #: ("Refresh cycle slots (H32)"/"(H40)", Timing.cpp 1463-1520): five in H32 and six in
 #: H40, "one more than there is during an active line", which is where the fifth (H32)
@@ -335,6 +338,7 @@ _DISPLAY_START = {"H32": 0x000, "H40": 0x000}
 for _mode in (H32, H40, H40_VSYNC, H40_LONG, H40_SHORT):
     _mode.slots_active = sorted(_mode.offset_of[h] for h in _ACTIVE_SLOTS[_mode.name])
     _mode.slots_idle = _idle_slots(_mode)
+    _mode.no_read_fill = frozenset(_mode.offset_of[h] for h in _NO_READ_FILL.get(_mode.name, ()))
     _mode.display_at = _mode.hvals.index(_DISPLAY_START[_mode.name])
 
 
@@ -415,6 +419,23 @@ READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
 #: MCLK a DMA transfer takes to read one word from the 68000's bus (Exodus
 #: ``dmaTransferReadTimeInMclkCycles``, ``S315_5313.h`` line 919).
 DMA_READ_MCLK = 16
+
+#: The data port's read-ahead, as the die model times it. A read that waits for the
+#: buffer is let go :data:`READ_RELEASE_MCLK` after the slot that fills it, not at the
+#: slot; a slot fills the buffer only :data:`READ_FILL_LEAD_MCLK` or more after the read
+#: that emptied it began; and in an active H40 line the slot at H $142 fills no read.
+#: Nuked-MD, a cartridge sweeping bursts and pairs of CRAM, VSRAM and VRAM reads across
+#: the line (``scripts/run_read_slots.py``): the die ends a waiting read 42-48 MCLK
+#: after the board did at every slot, catches $140 from a read begun 22 MCLK before it
+#: and not from one 15 before, and from 15 before misses $142 too. Overdrive 2's boot
+#: polls vblank once per pass of a CRAM readback, so the rules decide which pass it
+#: leaves on: without them the board reaches the Z80's start 4,182 MCLK late against its
+#: own vblank, with them 57 MCLK early (docs/worklog.md, Session 14). Die-derived:
+#: nothing hardware-captured times the read-ahead. VDPFIFOTesting's "FIFO Wait States"
+#: fails with them every time; it passes on the die about once per 800 iterations, so
+#: it cannot judge them (``scripts/run_vdpfifotesting.py``, ``INTERMITTENT``).
+READ_RELEASE_MCLK = 45
+READ_FILL_LEAD_MCLK = 21
 #: A 68000 bus cycle without wait states: 4 clocks.
 WRITE_CYCLE_MCLK = 28
 #: A 68000-memory transfer's fixed start-up, before its first word is read.
@@ -478,6 +499,10 @@ class VDP:
         self.read_buffer = 0
         self.read_available = False
         self.read_half = False
+        #: When the buffer's word can be handed over, and the earliest a slot may fill
+        #: it again (:data:`READ_RELEASE_MCLK`, :data:`READ_FILL_LEAD_MCLK`).
+        self.read_ready_at = 0
+        self.read_fill_after = 0
         # DMA.
         self.fill_running = False
         self.transfer_active = False
@@ -913,14 +938,27 @@ class VDP:
             self._copy()
             self._dma_step()
         did_read = False
-        if not fifo[self.fifo_read][4] and not self.read_available and (self.code & 0x13) == 0:
+        if (
+            not fifo[self.fifo_read][4] and not self.read_available and (self.code & 0x13) == 0
+            and self.mclk >= self.read_fill_after and not self._no_read_fill()
+        ):  # fmt: skip
             self._read_cache()
             did_read = True
+            if self.read_available:
+                self.read_ready_at = self.mclk + READ_RELEASE_MCLK
         if fifo[self.fifo_read][4] and not did_read:
             self._fifo_write()
         if self.code & 0x20 and dmd < 2 and self.transfer_cached and not self._fifo_full():
             self._transfer_push()
             self._dma_step()
+
+    def _no_read_fill(self) -> bool:
+        """This slot fills no data-port read: H40's $142 in an active line
+        (:data:`READ_RELEASE_MCLK`)."""
+        return (
+            self.slots is self.hmode.slots_active
+            and self.mclk - self.line_start in self.hmode.no_read_fill
+        )
 
     def _vram_write_byte(self, address: int, value: int) -> None:
         # VRAM holds each word byte-swapped, so a byte access reaches the other byte of
@@ -1186,7 +1224,8 @@ class VDP:
             if (self.code & 0x13) != 0:
                 return self.read_buffer  # an invalid read target locks up the hardware
             self._advance(mclk, lambda: self.read_available)
-            self.hold = max(0, self.mclk - mclk)
+            self.hold = max(0, self.read_ready_at - mclk)
+            self.read_fill_after = mclk + self.hold + READ_FILL_LEAD_MCLK
             self.read_available = False
             self.read_half = False
             return self.read_buffer

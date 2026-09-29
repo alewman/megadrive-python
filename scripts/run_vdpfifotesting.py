@@ -50,6 +50,11 @@ INTERMITTENT = (
     "DP Writes During DMA Fill VRAM",
     "DP Writes During DMA Fill CRAM",
     "DP Writes During DMA Fill VSRAM",
+    # Not in Nemesis's list: traced from this ROM on Nuked-MD, sub-test 8 sees a full
+    # FIFO once in 812 iterations and the test passes on that one; the board, being
+    # deterministic, meets the case or never does (docs/worklog.md, "What FIFO Wait
+    # States can and cannot judge"; vdp.READ_RELEASE_MCLK).
+    "FIFO Wait States",
 )
 
 

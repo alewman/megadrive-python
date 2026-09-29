@@ -336,6 +336,19 @@ source, the way sms-python does.
     blanking), and a border started part way along a line takes effect from that
     line's next slot.
 
+28. **The data port's read-ahead hands a word over late, needs lead time, and skips
+    H40's $142.** A read that waits for the buffer is released 45 MCLK after the slot
+    that fills it, not at the slot; a slot fills the buffer only if the read that emptied
+    it began at least 21 MCLK before; and in an active H40 line the slot at H $142 fills
+    no read. Measured on Nuked-MD with bursts and pairs of CRAM, VSRAM and VRAM reads
+    swept across the line (`scripts/run_read_slots.py`). Overdrive 2's boot, which polls
+    vblank once per pass of a CRAM readback, depends on it: without the rule the board
+    reaches the Z80's start 4,182 MCLK late against its own vblank, with it 57 MCLK early,
+    and the demo's one-frame slip moves from 6,981 to 7,095 ([worklog.md](worklog.md),
+    Session 14). Die-derived. VDPFIFOTesting's "FIFO Wait States" fails with it every
+    time; on the die that test passes once per ~800 iterations, so it cannot judge the
+    rule and is counted with Nemesis's intermittent tests.
+
 ## The pads and the I/O chip
 
 1. **The 6-button pad's timeout has no one value.** It is a capacitor discharging, and

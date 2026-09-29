@@ -5039,3 +5039,57 @@ replaced by one for `z80_access_wait`); the six-game MAME lockstep 0 unexplained
 runs with the arbiter off); the mini sweep against the previous one: one move, Sansan
 (Japan) 2,370 to 3,134 pixels at the exact frame, still `phase` -- an identical frame
 remains within the window.
+
+## Session 14 (2026-09-29): the boot offset
+
+Merged into main (d8fdf1c); the 7,435-read state is tagged `od2-z80-7435` (6b07497)
+as the regression baseline, reproducible with the forced FM phase. Aubrey's brief: find
+the first point where the board's 68000 gets ahead of the referee's, reporting for each
+experiment the boot offset, the first divergence, the matching Z80 reads and whether
+the visible frame slip moves; no new forced alignment.
+
+**The measure.** The boot offset is the Z80's start (the 68000's second release of the
+bus after the final sound reset) measured against the start of the next vblank line on
+each machine: 183,964 MCLK on the referee (its line starts taken from `NMD_VDPSIG`'s
+/HSYNC log, `reference/boot-frame`, and the H counter it logs), 179,782 on the board.
+**Board minus referee: +4,182 MCLK**, the board's 68000 late against its own VDP.
+
+**Where it comes from.** `scripts/od2_boot_drift.py` (new) lines up the two 68000s'
+bus cycles by address and kind and prints where the time difference steps. From the
+last vblank edge before the Z80's start through the start itself the two stay within
+about 100 MCLK -- but that edge is found by a loop that polls vblank only once per
+pass of a CRAM readback (every ~20,500 MCLK), so where each machine leaves it depends
+on how long its passes take, and the board's run 300-900 MCLK short (the read-ahead,
+Session 13's "The access-timing table" item 6). After the Z80's start the next vblank
+wait then ends 4,074 MCLK early on the board: that is the offset, surfacing.
+
+| experiment | boot offset | matching Z80 reads, unforced | first divergence | frames 6,981-7,100 at the aligned offset |
+| --- | ---: | ---: | --- | ---: |
+| main (d8fdf1c) | +4,154 | 197 | timer-A poll (FM phase) | 22 / 120; late from 6,981 |
+| + the three read-ahead rules | **-57** | **4,738** | 15-30 MCLK per bus hold | **111 / 120; late from 7,095** |
+| + cartridge refresh restarted at the reset button | -130 | 1,150 (best of 25 reset clocks) | -- | not run |
+
+All unforced, the reset button pressed with ZRES at the die-aligned clock (26,601,687,
+found by stepping 7 MCLK at a time; 26,601,680 follows from the VDP offset 240,316).
+With the read-ahead rules the unforced run reaches what the forced one reached with the
+same arbiter: the boot no longer needs the FM phase forced. What remains at 4,738: at
+each of the 68000's bus requests the board holds the Z80 15-30 MCLK longer, and the
+drift tool shows why: the board takes work-RAM and cartridge refreshes on cycles where
+the die takes none, so the two refresh schedules are out of phase after the reset. The
+third row tried the one explanation the die suggested -- its refresh ticks sit where
+its reset pulse began, modulo 896 -- and it made every clock worse; not adopted.
+
+**The read-ahead rules and the hardware gate.** They are the same three rules set
+aside in Session 13 (the read waits 45 MCLK after the slot that fills it, a fill needs
+the read that emptied the buffer begun 21 MCLK before the slot, H40's $142 fills no
+read), and with them VDPFIFOTesting's "FIFO Wait States" fails on the board every time.
+On the die that test passes about once per 800 iterations ("What FIFO Wait States can
+and cannot judge"). Adopting them means moving that test to the intermittent list the
+harness already keeps for Nemesis's "fail occasionally" tests, which is Aubrey's call.
+**Aubrey adopted them.** `vdp.READ_RELEASE_MCLK`, `READ_FILL_LEAD_MCLK` and the $142 rule
+are in `src/`; "FIFO Wait States" is in `run_vdpfifotesting.INTERMITTENT` with the die
+evidence, and the test exempts the intermittent ones; a new test holds the board's
+read slots to the die's measured windows (`tests/test_milestone5.py`); VDP item 28.
+Checks: both suites pass (143); MAME lockstep six games 0 unexplained; the mini sweep
+against the previous one: Gauntlet IV (USA, Europe) (En,Ja) from `differs` to `phase`,
+nothing worse.

@@ -45,13 +45,16 @@ def test_hv_captures():
 @pytest.mark.skipif(not FIFO_TESTING.exists(), reason="VDPFIFOTesting is not fetched")
 @pytest.mark.parametrize("machine", ["genesis", "megadrive", "genesis3"])
 def test_vdpfifotesting(machine):
-    """Every test Nemesis reports passing on hardware passes; a Genesis 3 (0x80-byte
-    VSRAM) fails VSRAM tests and only those."""
+    """Every test that passes reliably on hardware passes (the intermittent ones --
+    Nemesis's four and "FIFO Wait States", which the die passes once per ~800
+    iterations -- are exempt); a Genesis 3 (0x80-byte VSRAM) fails VSRAM tests and only
+    those."""
     import run_vdpfifotesting
 
     tests, footers, _ = run_vdpfifotesting.run(machine, 40, 3000)
     assert len(tests) == 122, footers[-1]
     failed = {t["name"] for t in tests if run_vdpfifotesting.verdict(t) == "FAIL"}
+    failed -= set(run_vdpfifotesting.INTERMITTENT)
     if machine == "genesis3":
         assert failed and all("VSRAM" in name for name in failed)
     else:

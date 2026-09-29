@@ -217,3 +217,22 @@ def test_a_vram_write_lands_inside_the_line_being_drawn() -> None:
     pixels = renderer.pixels[row]
     assert pixels[0] == 1, pixels[:8]
     assert pixels[319] == 2, pixels[312:]
+
+
+def test_data_port_reads_end_where_the_die_lets_them_go() -> None:
+    """A burst of CRAM reads in an active H40 line waits for the read-ahead at each
+    slot; Nuked-MD lets each go within these windows of the line (MCLK, the board's
+    line start; ``scripts/run_read_slots.py``), and never at the end-of-line slot $140
+    or $142 the board used to catch (``vdp.READ_RELEASE_MCLK``; docs/worklog.md
+    Session 14). Active lines only: in blanking every slot is open."""
+    import run_read_slots
+
+    die = [(365, 371), (828, 834), (956, 962), (1084, 1090), (1340, 1346), (1468, 1474),
+           (1596, 1602), (1852, 1858), (1980, 1986), (2108, 2114), (2364, 2370),
+           (2492, 2498), (2620, 2626), (2876, 2882), (3004, 3010), (3132, 3138),
+           (3372, 3378)]  # fmt: skip
+    rom = run_read_slots.cartridge(True, True)
+    ends = [end for end, stall, v in run_read_slots.board(rom) if stall and 2 <= v < 222]
+    assert ends
+    outside = [e for e in ends if not any(lo - 8 <= e <= hi + 8 for lo, hi in die)]
+    assert len(outside) <= len(ends) // 50, sorted(set(outside))[:10]
