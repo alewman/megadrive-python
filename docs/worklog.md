@@ -4889,3 +4889,55 @@ instruction counts as before (Sonic 12,728,465 Z80 instructions, Streets of Rage
 11,269,553, Gunstar Heroes 15,425,681, Castlevania 8,460,818, Sonic 3 11,837,738 with
 1,688 interrupts, Phantasy Star IV 13,280,703). New tests: the Z80-space refresh stretch
 (`tests/test_board.py`), the /IC reset and pause (`tests/test_sprite_line_buffer.py`).
+
+### The Z80 after a hold, and a read-ahead rule that the hardware test refused
+
+Chasing the reads further, with the FM phase still forced (item 5 above) so that each
+change is judged on the Z80 reads it matches, from 3,507:
+
+1. **When the Z80 takes up its bus again** (Nuked-MD, all 83 bus releases and both
+   reset releases after the power-on reset). Its clock runs on through a hold: every
+   access falls on one phase of the 15-MCLK clock, 6 MCLK past a multiple of 105 on
+   both machines. After the write that releases the bus, its next access comes on the
+   first such edge 42 MCLK or more after the write began (42-56 measured); after a
+   reset release, 57 or more. A reset released with the bus already requested still
+   makes its first opcode fetch before letting go. And an instruction the request
+   falls inside keeps the machine cycle under way and resumes with its later accesses
+   moved, where the board used to rerun the whole instruction from the start.
+   `system.Z80_CLOCK_PHASE`, `Z80_RESUME_MCLK`, `Z80_RESET_RESUME_MCLK`,
+   `System._z80_resume`, `Board.z80_hold`. 3,507 to 6,305.
+2. **The Z80's VDP accesses are arbitrated.** Its 3,095 reads of the VDP ($7F08, the
+   V counter) in the run are held 60, 75 or 90 MCLK, the bank window's three lengths;
+   its RAM and FM reads take 30. They go over the 68000's bus, so they take the bank
+   window's delay (`board.Z80_VDP_ARBITRATED`). 6,305 to 6,970.
+3. **The arbiter sees the access where it falls.** With the delay at the access's own
+   time (item 2 of the section above undone), the Z80 is no longer stepped into an
+   instruction whose accesses would fall past the 68000's clock: it waits for the
+   next catch-up (`System.catch_up_z80`). MoD's experiment is back to its shape
+   (stopped 2-3 wait states, spinning mostly 3 with 2-4, the 68000's share 10-12),
+   and the reads against the die reach 7,435.
+
+**The read-ahead.** `scripts/run_read_slots.py` (new) sweeps bursts and pairs of CRAM
+reads across H40 active lines on Nuked-MD and the board. What the die showed: a read
+that waits for the buffer ends 42-48 MCLK later than the board's, at every slot; a
+fill needs the read that emptied the buffer to have begun about 21 MCLK before the
+slot; and the slot at H $142 fills no read at all. VSRAM reads behave the same; VRAM
+reads miss $140 too. Modelled as three rules, they reproduced the die's map exactly --
+and failed **VDPFIFOTesting's "FIFO Wait States"**, which passes on hardware
+(Nemesis) and, run here on Nuked-MD from the same ROM, on the die too. Each rule
+removed alone still failed; the test passes only with the release delay and the $142
+rule both gone. A hardware-verified test outranks a model fitted to die traces, and
+the die's own pass says the three rules are not how it works, only what it looks like
+from outside. **Not adopted**; the measurements and the script stay. What the die's
+read-ahead really is, is the next thing to find there: its VDP's read path, read from
+`vdp.c` itself rather than fitted from bus traces.
+
+Also tried, not adopted: the die's longer DMA start-up (item 15 of the open items);
+with 100 MCLK the best forced phase reached 7,835 reads, but the hardware source
+(Kabuto's 5.6 cycles) still judges that question.
+
+Checks: both suites pass (143, a test for the resume rule added); the six-game MAME
+lockstep still 0 unexplained. The mini sweep against `megadrive-branch.csv`: 3 better
+(Arkagis Revolution - Input Diagnostics from a lock-up to `same`, Dynamite Headdy and
+Ristar from `phase` to `same`), 3 worse (After Burner II 2,531 to 2,841 differing
+pixels, Ultraman 4,673 to 4,801, Windjammers 2,243 to 2,244), all still to triage.

@@ -54,6 +54,21 @@ MAX_Z80_T = 23
 #: for 128 VCLK" (Eke, forum t=1262; VCLK is the 68000's clock).
 RESET_PULSE_CLOCKS = 128
 
+#: When the Z80 takes up its bus again, measured on the die model (Nuked-MD, the
+#: Overdrive 2 run from power-on; docs/worklog.md, "The Z80 after a hold"). Its clock
+#: runs on through a bus hold and a reset: every one of its accesses falls on the same
+#: phase of the 15-MCLK clock, which on the die and the board alike meets the 68000's
+#: 7-MCLK clock at 6 MCLK past every multiple of 105. After the 68000's write that
+#: releases the bus, its next access comes on the first such edge 42 MCLK or more after
+#: the write began (83 of 83 releases, 42 to 56 MCLK); after the write that releases
+#: its reset, 57 or more (both releases in the run). And when the reset is released
+#: with the bus already requested, it makes that first opcode fetch before it lets go
+#: -- BUSREQ is sampled only at the end of a machine cycle (Zilog UM0080) -- and the
+#: rest of the instruction waits for the bus. Die-derived.
+Z80_CLOCK_PHASE = 6
+Z80_RESUME_MCLK = 42
+Z80_RESET_RESUME_MCLK = 57
+
 
 class System:
     """Machine + cartridge, ready to run."""
@@ -74,6 +89,7 @@ class System:
         board.catch_up_z80 = self.catch_up_z80
         board.z80_busack = self.z80_busack
         board.on_z80_reset = self._z80_reset_line
+        board.on_z80_resume = self._z80_resume
         self.vdp = board.vdp
         #: The analogue path the two sound chips meet in (docs: audio.py).
         self.audio = AudioPath(machine)
@@ -89,6 +105,9 @@ class System:
         #: Instructions the Z80 left for later because the 68000 took its bus in the
         #: middle of them (catch_up_z80).
         self.z80_deferred = 0
+        #: The instruction the Z80 is part way through while its bus is held: its start
+        #: and the clock from which its remaining accesses wait (:meth:`_z80_resume`).
+        self._z80_partial: tuple[int, int] | None = None
         #: The reset button has been pressed and the 68000 not yet reset
         #: (:meth:`press_reset`).
         self.reset_pressed = False
@@ -107,6 +126,8 @@ class System:
 
     def _z80_reset_line(self, held: bool) -> None:
         if held:
+            self._z80_partial = None
+            self.board.z80_hold = None
             # The reset state is applied at once; the Z80 is not stepped while held.
             z80 = self.z80
             z80.request_reset()
@@ -140,11 +161,18 @@ class System:
         try:
             while self.z80_mclk < mclk:
                 if not board.z80_running:
-                    self.z80_mclk = mclk
+                    if self._z80_partial is None:
+                        self.z80_mclk = mclk
                     break
                 if stopping and self.z80_mclk + MAX_Z80_T * Z80_DIVIDER >= mclk:
-                    offsets = self.z80_access_offsets()
-                    if any(self.z80_mclk + t * Z80_DIVIDER >= mclk for t in offsets):
+                    offsets = self._z80_offsets()  # the table's, as the horizon below
+                    if any(self.z80_mclk + t >= mclk for t in offsets):
+                        # The machine cycle under way at the request finishes; the
+                        # accesses after it wait for the bus (:meth:`_z80_resume`).
+                        ends = [self.z80_mclk + t * Z80_DIVIDER
+                                for t in self.z80_machine_cycle_ends()]  # fmt: skip
+                        let_go = next((end for end in ends if end >= mclk), mclk)
+                        self._z80_partial = (self.z80_mclk, let_go)
                         self.z80_deferred += 1
                         break
                 if vdp.z80_irq_at(self.z80_mclk):
@@ -157,14 +185,49 @@ class System:
                 else:
                     z80.clear_maskable_interrupt()
                     board.z80_offsets = self._z80_offsets()
+                offsets = board.z80_offsets
+                if offsets and self.z80_mclk + offsets[-1] >= mclk and not board.z80_hold:
+                    # An access of this instruction would fall past the 68000's clock,
+                    # where the arbiter cannot yet see the 68000's bus: it runs at the
+                    # next catch-up, which reaches past it (``Board._bank_delay``).
+                    break
                 board.z80_access = 0
                 board.step_start = self.z80_mclk
                 board.z80_stall = 0
-                self.z80_mclk += z80.step() * Z80_DIVIDER + board.z80_stall
+                hold = board.z80_hold[1] if board.z80_hold else 0
+                self.z80_mclk += z80.step() * Z80_DIVIDER + board.z80_stall + hold
+                board.z80_hold = None
                 self.z80_instructions += 1
         finally:
             self._in_z80 = False
             board.step_start = self.mclk
+
+    def _z80_resume(self, t: int, reset: bool) -> None:
+        """The 68000's write at ``t`` has given the Z80 its bus back, or released its
+        reset (:data:`Z80_RESUME_MCLK`). An instruction left part way through
+        (``_z80_partial``) resumes with its remaining accesses moved to that edge on;
+        otherwise the next instruction's opcode fetch falls there."""
+        wait = Z80_RESET_RESUME_MCLK if reset else Z80_RESUME_MCLK
+        edge = t + wait + (Z80_CLOCK_PHASE - t - wait) % Z80_DIVIDER
+        board = self.board
+        if reset and board.z80_bus_requested:
+            # The opcode fetch, T1 of a four-T-state M1 cycle, before the bus goes.
+            start = edge - Z80_DIVIDER
+            self.z80_mclk = start
+            self._z80_partial = (start, start + 4 * Z80_DIVIDER)
+            return
+        if self._z80_partial is None:
+            self.z80_mclk = max(self.z80_mclk, edge - Z80_DIVIDER)
+            return
+        start, let_go = self._z80_partial
+        self._z80_partial = None
+        waiting = [start + o for o in self._z80_offsets() if start + o >= let_go]
+        if waiting:
+            board.z80_hold = (let_go, max(0, edge - waiting[0]))
+        else:
+            # Nothing left but internal T-states: the next fetch comes at the edge.
+            end = start + self.z80_machine_cycle_ends()[-1] * Z80_DIVIDER
+            board.z80_hold = (let_go, max(0, edge - Z80_DIVIDER - end))
 
     def _z80_offsets(self) -> tuple[int, ...]:
         """Where each memory access of the Z80's next instruction falls, in master

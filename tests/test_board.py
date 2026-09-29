@@ -158,3 +158,27 @@ def test_capture_loop_rate():
 def test_genesis3_vsram():
     assert MACHINES["genesis3"].vdp.vsram_bytes == 0x80
     assert MACHINES["genesis"].vdp.vsram_bytes == 0x50
+
+
+def test_the_z80_takes_its_bus_back_on_its_own_clock():
+    """After the write that ends a bus request, the Z80's next access falls on the first
+    edge of its clock (6 MCLK past a multiple of 105 here) at least 42 MCLK after the
+    write began; after a reset release, 57 (Nuked-MD; docs/worklog.md, "The Z80 after a
+    hold")."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import Z80_DIVIDER
+    from megadrive_python.system import (
+        Z80_CLOCK_PHASE,
+        Z80_RESET_RESUME_MCLK,
+        Z80_RESUME_MCLK,
+        System,
+    )
+
+    for reset, wait in ((False, Z80_RESUME_MCLK), (True, Z80_RESET_RESUME_MCLK)):
+        for t in range(1_000_000, 1_000_105):
+            system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+            system.z80_mclk = 0
+            system._z80_resume(t, reset)
+            fetch = system.z80_mclk + Z80_DIVIDER  # T1 of the M1 cycle, then its access
+            assert fetch % Z80_DIVIDER == Z80_CLOCK_PHASE % Z80_DIVIDER, (reset, t)
+            assert t + wait <= fetch < t + wait + Z80_DIVIDER, (reset, t)

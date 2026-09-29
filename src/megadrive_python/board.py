@@ -75,6 +75,13 @@ RAM_REFRESH_AFTER_MCLK = 805
 #: timing session). It is charged after the access, so the access itself still lands
 #: at the clock the bus cycle began at.
 Z80_SPACE_STALL = M68K_DIVIDER
+#: A Z80 access to the VDP ($7F00-$7F1F) goes over the 68000's bus, through the same
+#: arbitration as one through the bank window (:meth:`Board._bank_delay`): on
+#: Nuked-MD the Z80's 3,095 VDP reads in Overdrive 2's first 80 frames are held 60, 75
+#: or 90 MCLK, the bank window's three lengths, where its RAM and FM reads take 30
+#: (docs/worklog.md, "The Z80 after a hold"). Die-derived for reads; the run has no
+#: Z80 VDP writes, which take the same path because the VDP has no other bus.
+Z80_VDP_ARBITRATED = True
 
 
 class Lockup(Exception):
@@ -174,6 +181,12 @@ class Board:
         self.z80_busack: Callable[[int], int] = lambda mclk: mclk
         #: Called when the Z80's reset line is released or asserted (True = held).
         self.on_z80_reset: Callable[[bool], None] = lambda held: None
+        #: Told when a write gives the Z80 its bus back or releases its reset
+        #: (``System._z80_resume``): the clock, and whether it was the reset.
+        self.on_z80_resume: Callable[[int, bool], None] = lambda t, reset: None
+        #: For the Z80 step resuming after a hold: from which clock its accesses wait,
+        #: and for how long.
+        self.z80_hold: tuple[int, int] | None = None
 
     # -- TMSS ------------------------------------------------------------------
 
@@ -213,6 +226,8 @@ class Board:
             self.sound_sync(t)
             self.fm.reset_line(held, t)
             self.on_z80_reset(held)
+            if not held:
+                self.on_z80_resume(t, True)
 
     def _tmss_select(self, cartridge: bool) -> None:
         """Bit 0 of $A14101: 1 puts the cartridge on the bus, 0 the boot ROM."""
@@ -343,8 +358,11 @@ class Board:
         instruction's start, as before the table."""
         offsets, k = self.z80_offsets, self.z80_access - 1
         if offsets is not None and 0 <= k < len(offsets):
-            return self.step_start + offsets[k] + self.z80_stall
-        return self.step_start + self.z80_stall
+            t = self.step_start + offsets[k] + self.z80_stall
+        else:
+            t = self.step_start + self.z80_stall
+        hold = self.z80_hold
+        return t + hold[1] if hold is not None and t >= hold[0] else t
 
     def z80_peek(self, address: int) -> int:
         """A byte of the Z80's space without side effects, for looking at code: RAM
@@ -361,16 +379,16 @@ class Board:
         """What one Z80 access through the bank window costs both CPUs (Kabuto's
         footnote 1, :func:`~megadrive_python.arbiter.bank_access_delay`).
 
-        The access is placed at the Z80 step's start plus whatever it has already been
-        held, not where z80-python's access-timing table puts it inside the instruction
-        (:meth:`_z80_access_time`): the arbiter reads the 68000's bus cycles only as
-        far as the Z80 has been caught up to, and an access later in the instruction
-        falls past them onto a bus that looks idle -- MoD's spinning 68000 then costs
-        the Z80 no more than a stopped one (``tests/test_milestone5.py``). The 68000's
-        share is owed rather than charged, because the Z80 runs in its wake
-        (``m68k_pending_stall``).
+        The access is placed where z80-python's access-timing table puts it inside the
+        instruction (:meth:`_z80_access_time`). The arbiter reads the 68000's bus
+        cycles, which are known only as far as the 68000 has run, so the Z80 is not
+        stepped into an instruction whose accesses would fall past that
+        (``System.catch_up_z80``); placed at the step's start instead, MoD's spinning
+        68000 cost the Z80 no more than a stopped one (``tests/test_milestone5.py``).
+        The 68000's share is owed rather than charged, because the Z80 runs in its
+        wake (``m68k_pending_stall``).
         """
-        t = self.step_start + self.z80_stall
+        t = self._z80_access_time()
         # "b (2 if the z80->ROM access is prolonged by a refresh delay, 0 if not)": the
         # cartridge refresh grid (``CART_REFRESH_MCLK``) ticking inside the access.
         # The tick is read, not consumed: the 68000's own accesses walk the same grid
@@ -668,7 +686,10 @@ class Board:
                 # $A11100 see the referee do (docs/worklog.md, the timing session).
                 self.busack_at = t + BUSACK_PROPAGATION_MCLK
                 self.catch_up_z80(t)
+            released = self.z80_bus_requested and not request and not self.z80_reset
             self.z80_bus_requested = request
+            if released:
+                self.on_z80_resume(t, False)
         elif offset & 0xFF00 == 0x1200:
             self.set_z80_reset(not high & 1, self.m68k_access_clock())
         elif offset & 0xFF00 == 0x3000:
@@ -704,6 +725,8 @@ class Board:
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
+            if self.arbiter_enabled and Z80_VDP_ARBITRATED:
+                self._bank_delay()  # the VDP is on the 68000's bus
             return self.vdp.z80_read(address & 0x1F, self._z80_access_time())
         return 0xFF  # the bank register and $6100-$7EFF (CMD 2.1)
 
@@ -723,6 +746,8 @@ class Board:
         elif address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
+            if self.arbiter_enabled and Z80_VDP_ARBITRATED:
+                self._bank_delay()
             self.vdp.z80_write(address & 0x1F, value, self._z80_access_time())
 
     def _z80_bank_read(self, address: int) -> int:

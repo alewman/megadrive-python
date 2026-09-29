@@ -62,6 +62,14 @@ source, the way sms-python does.
    delay, "Minimum is 2.1ms" and variable; what a cartridge's own board does with
    VRES# (none of these sources says).
 
+10. **The Z80's clock runs on through a bus hold or a reset, and it takes its bus back on
+    that clock.** On Nuked-MD every Z80 access falls on one phase of its 15-MCLK clock;
+    after the 68000's write that ends a bus request the next access comes on the first
+    such edge at least 42 MCLK after the write began, after a reset release 57. With the
+    bus already requested at a reset release the Z80 still fetches its first opcode
+    first. Its accesses to the VDP go through the 68000's bus arbitration like those
+    through the bank window (held 60, 75 or 90 MCLK). Die-derived ([worklog.md](worklog.md),
+    "The Z80 after a hold").
 ## The VDP
 
 1. **The sprite cache.** The Y position and size/link fields of each sprite are
