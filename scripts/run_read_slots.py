@@ -128,8 +128,9 @@ def referee(rom: bytes, h40: bool) -> list[tuple[int, int]]:
     return out
 
 
-def board(rom: bytes) -> list[tuple[int, int]]:
-    """The board's (line position, stall) for every data-port read in the window."""
+def board(rom: bytes) -> list[tuple[int, int, int]]:
+    """The board's (line position, stall, V counter) for every data-port read in the
+    window."""
     from megadrive_python.cartridge import Cartridge
     from megadrive_python.machine import MACHINES
     from megadrive_python.system import System
@@ -137,7 +138,7 @@ def board(rom: bytes) -> list[tuple[int, int]]:
     system = System(MACHINES["genesis"], Cartridge(rom))
     system.board.fm.enabled = False
     cpu, vdp = system.m68k, system.vdp
-    out: list[tuple[int, int]] = []
+    out: list[tuple[int, int, int]] = []
     read = cpu._read_word
 
     def logged(address: int) -> int:
@@ -147,7 +148,7 @@ def board(rom: bytes) -> list[tuple[int, int]]:
         if address & 0xFFFFFE == 0xC00000 and FIRST * FRAME_MCLK <= start < LAST * FRAME_MCLK:
             stall = system.board.stall - before
             end = start + nuked_md.AS_LOW + stall
-            out.append(((end - vdp.line_start) % vdp.hmode.length, stall))
+            out.append(((end - vdp.line_start) % vdp.hmode.length, stall, vdp.v))
         return value
 
     cpu._read_word = logged
@@ -156,10 +157,10 @@ def board(rom: bytes) -> list[tuple[int, int]]:
     return out
 
 
-def table(reads: list[tuple[int, int]]) -> dict[int, collections.Counter]:
+def table(reads: list[tuple]) -> dict[int, collections.Counter]:
     """Stalled reads by where they end, in one-clock bins."""
     by: dict[int, collections.Counter] = collections.defaultdict(collections.Counter)
-    for at, stall in reads:
+    for at, stall, *_ in reads:
         if stall > 0:
             by[at // BIN * BIN][stall // BIN * BIN] += 1
     return by

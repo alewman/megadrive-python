@@ -5085,5 +5085,11 @@ the read that emptied the buffer begun 21 MCLK before the slot, H40's $142 fills
 read), and with them VDPFIFOTesting's "FIFO Wait States" fails on the board every time.
 On the die that test passes about once per 800 iterations ("What FIFO Wait States can
 and cannot judge"). Adopting them means moving that test to the intermittent list the
-harness already keeps for Nemesis's "fail occasionally" tests, which is Aubrey's call;
-until then they live in the scratch variant, not in `src/`.
+harness already keeps for Nemesis's "fail occasionally" tests, which is Aubrey's call.
+**Aubrey adopted them.** `vdp.READ_RELEASE_MCLK`, `READ_FILL_LEAD_MCLK` and the $142 rule
+are in `src/`; "FIFO Wait States" is in `run_vdpfifotesting.INTERMITTENT` with the die
+evidence, and the test exempts the intermittent ones; a new test holds the board's
+read slots to the die's measured windows (`tests/test_milestone5.py`); VDP item 28.
+Checks: both suites pass (143); MAME lockstep six games 0 unexplained; the mini sweep
+against the previous one: Gauntlet IV (USA, Europe) (En,Ja) from `differs` to `phase`,
+nothing worse.
