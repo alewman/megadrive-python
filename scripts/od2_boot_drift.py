@@ -64,11 +64,9 @@ def vblank_anchor(cycles: list[tuple], before: int, k: int) -> int:
 
 def referee(trace: Path) -> list[tuple]:
     """(t, word address, r/w, held MCLK, data) for the referee's 68000-driven cycles."""
-    out = []
-    for e in nuked_md.read_trace(trace):
-        if e.type == nuked_md.EV_M68K and e.by_m68k:
-            out.append((e.t, e.addr & 0xFFFFFE, "r" if e.read else "w", e.length - AS_LOW, e.data))
-    return out
+    return [(e.t, e.addr & 0xFFFFFE, "r" if e.read else "w", e.length - AS_LOW, e.data)
+            for e in nuked_md.read_trace(trace)
+            if e.type == nuked_md.EV_M68K and e.by_m68k]  # fmt: skip
 
 
 def board(rom: Path, reset_mclk: int, until: int) -> list[tuple]:
@@ -139,7 +137,7 @@ def main() -> int:
     parser.add_argument("--zero", type=int, default=1, help="which $A11100 release anchors")
     parser.add_argument("--min-step", type=int, default=1, help="smallest change shown")
     parser.add_argument("--vblank", type=int, default=0,
-                        help="anchor at the K-th vblank edge before the Z80's start instead")  # fmt: skip
+                        help="anchor at the K-th vblank edge before the Z80's start")  # fmt: skip
     args = parser.parse_args()
     theirs = referee(args.trace)
     ours = board(args.rom, args.reset_mclk, args.until)
