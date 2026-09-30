@@ -182,3 +182,22 @@ def test_the_z80_takes_its_bus_back_on_its_own_clock():
             fetch = system.z80_mclk + Z80_DIVIDER  # T1 of the M1 cycle, then its access
             assert fetch % Z80_DIVIDER == Z80_CLOCK_PHASE % Z80_DIVIDER, (reset, t)
             assert t + wait <= fetch < t + wait + Z80_DIVIDER, (reset, t)
+
+
+def test_an_interrupted_z80_instruction_resumes_as_a_whole():
+    """An instruction the 68000's bus request cut after one of its machine cycles moves
+    as a whole: whatever follows the cut -- an access or an internal T-state -- comes at
+    the Z80's resume edge, and the internal T-states after it stay in place (the die: a
+    fetch, the release, then the instruction's internal T-states before its next read;
+    docs/worklog.md "The bus holds")."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import Z80_DIVIDER
+    from megadrive_python.system import Z80_CLOCK_PHASE, Z80_RESUME_MCLK, System
+
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    t = 1_000_000
+    start, let_go = t - 200, t - 140  # cut at the end of its first machine cycle
+    system._z80_partial = (start, let_go)
+    system._z80_resume(t, False)
+    edge = t + Z80_RESUME_MCLK + (Z80_CLOCK_PHASE - t - Z80_RESUME_MCLK) % Z80_DIVIDER
+    assert system.board.z80_hold == (let_go, edge - Z80_DIVIDER - let_go)

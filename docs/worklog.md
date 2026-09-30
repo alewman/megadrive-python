@@ -5222,3 +5222,38 @@ comparison here has met. So at the driver's level BlastEm does not side with the
 referee against the board; its frame-level slip at 7,051 is its own driver's path, not
 evidence about the die's. The bus-hold steps (option A) are left to the referee alone,
 with the Z80 caution noted above.
+
+### The bus holds (option A, against the referee alone)
+
+Each of the 68000's bus requests after the Z80's start, step by step on both machines
+(the request, the Z80's last access, the release, the Z80's first access after it):
+
+- **The 68000's side is exact.** With the request lined up, its bus cycles through the
+  hold are the same cycles at the same clocks on both machines, the release 161 MCLK
+  after the request every time. (A scratch log had stamped the 68000's writes one bus
+  cycle early, which looked like a 28-MCLK longer hold on the board; the board's own
+  resume path gets the true clock.)
+- **The Z80's resume matches** where the two Z80s are still in step: 56 and 53 MCLK
+  after the release at the first two holds on the board, 56 and 52 on the referee; the
+  third, 55 against 46, differs because the 68000's release falls at another phase of
+  the Z80's clock -- the board's 68000 is 21 MCLK late by the first hold, from a
+  work-RAM refresh the referee does not take (Session 14's refresh section).
+- **One rule corrected.** At a later hold the referee's Z80 fetches an opcode after the
+  request, lets go at the end of that fetch, and after the release runs the
+  instruction's internal T-states before its next read (122 MCLK after the release).
+  The board put the next *access* at the resume edge, folding those internal T-states
+  into the hold; it now moves the rest of the instruction as a whole, so whatever
+  follows the cut comes at the edge (`System._z80_resume`; `tests/test_board.py`). It
+  does not move Overdrive 2's numbers (the holds where it matters come after the two
+  Z80 streams part); the mini sweep: MUSHA 30,077 to 28,736 differing pixels, Ultraman
+  (the timing-seeded dissolve) +16.
+- **The clocks agree.** Lined up by their VDPs, the referee's 68000 and Z80 edges fall
+  1 MCLK earlier than the board's, both -- within what the line-start derivation can
+  resolve. (A first reading of 29 MCLK matched the wrong lines of the 105-MCLK pattern.)
+
+So the hold mechanics are right, and what is left in the Z80 comparison comes back to
+the 68000's refresh schedule after the reset: the die restarts it there, the board does
+not, and adopting the die's restart moved the Overdrive 2 slip earlier (Session 14).
+That contradiction is the open question.
+
+Checks: both suites pass (144); MAME lockstep 0 unexplained.
