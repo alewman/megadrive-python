@@ -67,10 +67,24 @@ def test_the_vdp_is_not_reset() -> None:
 
 def test_the_pulse_holds_the_68000_for_128_clocks_before_the_exception() -> None:
     system = _system()
+    fetches = []
+    board = system.board
+
+    def read_word(address):
+        fetches.append(board.m68k_access_clock())
+        return board.read_word(address)
+
+    system.m68k.attach_bus(board.read_byte, read_word, board.write_byte, board.write_word)
+    start = system.mclk
     system.press_reset()
     elapsed = system.step()
-    # 42 clocks of reset exception (m68000-python's ``reset``) after the pulse
-    assert elapsed == (RESET_PULSE_CLOCKS + 42) * M68K_DIVIDER
+    # 40 clocks of reset exception (m68000-python's ``reset``, UM Table 8-14) after the
+    # pulse, and the refresh its bus cycles take; the vector fetch comes after the
+    # pulse, 14 clocks on, as on Nuked-MD (docs/worklog.md, "The reset exception";
+    # m68000-python #3).
+    assert elapsed == (RESET_PULSE_CLOCKS + 40) * M68K_DIVIDER + system.board.stall
+    pulse_end = start + RESET_PULSE_CLOCKS * M68K_DIVIDER
+    assert fetches[0] == pulse_end + 14 * M68K_DIVIDER
 
 
 def test_a_halted_68000_is_brought_back() -> None:
@@ -81,3 +95,27 @@ def test_a_halted_68000_is_brought_back() -> None:
     assert not system.m68k.halted
     system.run_frame()
     assert _boots(system) == 2
+
+
+def test_the_reset_restarts_the_refresh(monkeypatch) -> None:
+    """The reset button restarts the cartridge refresh grid from the pulse's start and
+    clears a pending work-RAM refresh (a supported finding: docs/worklog.md, "The reset
+    exception, the console model, and the refresh contradiction"); with
+    ``RESET_RESTARTS_REFRESH`` off the board keeps its power-on grid."""
+    import megadrive_python.system as system_module
+    from megadrive_python.board import CART_REFRESH_MCLK
+
+    system = _system()
+    start = system.mclk
+    system.press_reset()
+    system.step()
+    assert start % CART_REFRESH_MCLK  # (a press off the power-on grid, or this proves nothing)
+    grid = system.board.cart_refresh_due - start
+    assert grid % CART_REFRESH_MCLK == 0  # the grid starts again at the pulse
+    assert system.board.stall == 14  # and the vector fetch after the pulse takes it
+
+    monkeypatch.setattr(system_module, "RESET_RESTARTS_REFRESH", False)
+    system = _system()
+    system.press_reset()
+    system.step()
+    assert system.board.cart_refresh_due % CART_REFRESH_MCLK == 0  # the power-on grid

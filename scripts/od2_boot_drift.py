@@ -9,7 +9,10 @@ goes, so the first cycle where the board runs ahead is named rather than guessed
 
 The referee's cycles come from a Nuked-MD bus trace (``validation/nuked_md_headless.c``
 ``NMD_TRACE``) covering the window, the board's from :meth:`Board._bus_cycle`, which
-every 68000 access passes through. Both are anchored at the same event: the 68000's
+every 68000 access passes through. The board runs as ``megadrive-tmss`` by default: the
+referee reports version 1 at $A10001 (a TMSS Model 1, its README's VA7), and Overdrive 2
+takes a different path at boot on a version 0 console (docs/worklog.md, "The console
+model"). Both are anchored at the same event: the 68000's
 second write of $0000 to $A11100 after the final $A11200 release (the Z80's start).
 For each aligned cycle the report gives the referee's time since the anchor, the
 difference (board minus referee, MCLK), and what the two held the 68000 for; a line
@@ -75,17 +78,22 @@ def referee(trace: Path) -> list[tuple]:
             if e.type == nuked_md.EV_M68K and e.by_m68k]  # fmt: skip
 
 
-def board(rom: Path, reset_mclk: int, until: int) -> list[tuple]:
+def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss",
+          refresh_restart: bool = True) -> list[tuple]:  # fmt: skip
     """The same for the board, from power-on to ``until`` MCLK, reset pressed at
     ``reset_mclk`` as in docs/worklog.md Session 13's aligned run."""
+    import megadrive_python.system
+
+    megadrive_python.system.RESET_RESTARTS_REFRESH = refresh_restart  # A or B, Session 14
     log: list[list] = []
     bus_cycle = Board._bus_cycle
     writing = {"flag": False}
 
     def logged(self, address):
-        before = self.stall
+        # The cycle starts before any refresh stretches it: stamped first.
+        before, start = self.stall, self.m68k_access_clock()
         bus_cycle(self, address)
-        log.append([self.m68k_access_clock(), address & 0xFFFFFE, "w" if writing["flag"] else "r",
+        log.append([start, address & 0xFFFFFE, "w" if writing["flag"] else "r",
                     self.stall - before, 0])  # fmt: skip
 
     def wrapped(original, byte):
@@ -117,14 +125,22 @@ def board(rom: Path, reset_mclk: int, until: int) -> list[tuple]:
 
     Board.read_word = read_logged(Board.read_word, False)
     Board.read_byte = read_logged(Board.read_byte, True)
-    system = System(MACHINES["megadrive"], Cartridge.from_image(load_image(rom)))
+    # The last instruction boundary before the press, from a first run (the press is
+    # made there, at the exact clock: ``System.press_reset(at=...)``).
+    probe = System(MACHINES[machine], Cartridge.from_image(load_image(rom)))
+    stop = 0
+    while probe.mclk <= reset_mclk:
+        stop = probe.mclk
+        probe.step()
+    del log[:]
+    system = System(MACHINES[machine], Cartridge.from_image(load_image(rom)))
     system.board.fm.enabled = True
     pressed = False
     while system.mclk < until:
         if not pressed and system.mclk + 1_000_000 >= reset_mclk:
-            while system.mclk < reset_mclk:
+            while system.mclk < stop:
                 system.step()
-            system.press_reset()
+            system.press_reset(at=reset_mclk)
             pressed = True
         system.step()
     # Stalls the board charges *after* the access (the Z80-space clock, a VDP hold)
@@ -136,10 +152,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("rom", type=Path)
     parser.add_argument("trace", type=Path, help="Nuked-MD trace covering the window")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_719)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_687)
+    parser.add_argument("--machine", default="megadrive-tmss",
+                        help="the referee is a TMSS Model 1 (version 1)")  # fmt: skip
     parser.add_argument("--span", type=int, default=200_000, help="MCLK after the anchor")
     parser.add_argument("--until", type=int, default=42_800_000, help="board run length")
     parser.add_argument("--changes", type=int, default=60, help="difference changes shown")
+    parser.add_argument("--no-refresh-restart", action="store_true",
+                        help="the board without system.RESET_RESTARTS_REFRESH (A)")  # fmt: skip
     parser.add_argument("--zero", type=int, default=1, help="which $A11100 release anchors")
     parser.add_argument("--from-reset", type=int, nargs=2, metavar=("REFEREE", "BOARD"),
                         help="anchor at the reset vector fetch after these clocks")  # fmt: skip
@@ -148,7 +168,7 @@ def main() -> int:
                         help="anchor at the K-th vblank edge before the Z80's start")  # fmt: skip
     args = parser.parse_args()
     theirs = referee(args.trace)
-    ours = board(args.rom, args.reset_mclk, args.until)
+    ours = board(args.rom, args.reset_mclk, args.until, args.machine, not args.no_refresh_restart)
     if args.from_reset:
         a_r = reset_anchor(theirs, args.from_reset[0])
         a_b = reset_anchor(ours, args.from_reset[1])

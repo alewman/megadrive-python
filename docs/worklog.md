@@ -5257,3 +5257,91 @@ not, and adopting the die's restart moved the Overdrive 2 slip earlier (Session 
 That contradiction is the open question.
 
 Checks: both suites pass (144); MAME lockstep 0 unexplained.
+
+### The reset exception, the console model, and the refresh contradiction
+
+Following the 68000's bus cycles from the reset button on (`od2_boot_drift.py
+--from-reset`) found three things before any refresh question:
+
+- **The reset exception ran before the pulse.** The board fetched the reset vectors at
+  the start of the 128-clock pulse and added the pulse afterwards, with the fetches
+  stamped at a stale clock. On the die the 68000 is held for the pulse (896 MCLK) and
+  fetches its vectors after it, the first taking the cartridge refresh then due. The
+  board now holds it first (`System.step`), and `System.press_reset(at=...)` presses at
+  an exact clock (the 68000 held from its next clock edge) for the referee comparisons.
+- **The console model.** At +364 MCLK Overdrive 2 reads $A10001: the die answers $E1
+  (version 1, a TMSS Model 1, the VA7 its README names) and the board's `megadrive`
+  $E0 (version 0), so the program writes "SEGA" to $A14000 on one and skips it on the
+  other -- 210 MCLK in the first instructions. Every referee comparison so far ran the
+  board as the pre-TMSS model; `od2_compare.py` and `od2_boot_drift.py` now default to
+  `megadrive-tmss`, which matches the die cycle for cycle through that check.
+- **The core's reset is 42 clocks.** m68000-python's `reset` returns 42 clocks where
+  its docstring and the 68000 UM (Table 8-14) say 40; its bus cycles match the die's
+  except the first vector fetch, 16 clocks after the pulse where the die's is at 14.
+  A core question, to raise on m68000-python, not to work around here.
+
+The refresh, with those settled. The die's cartridge refresh grid restarts at the reset
+pulse's start; its work-RAM refresh is not the board's rule (after the reset the die's
+next refreshed RAM access is 2,700 MCLK after the first, with unrefreshed ones between)
+but no simple rule fits it -- a line-based grid, an 896 grid taken by RAM accesses, a
+count since the last all do worse than predicting "never" (492 of 544). What the reset
+does show is that the pending RAM refresh is cleared there.
+
+| board (megadrive-tmss) | 68000 timing steps (7+ MCLK) from the reset through the boot | after the Z80's start (290k MCLK) | matching Z80 reads, best press | frames 6,981-7,200 aligned |
+| --- | ---: | ---: | ---: | ---: |
+| reset fixed (A) | 30,924 | 527 | 4,738 | 111 / 220; late from 7,094 |
+| + cartridge grid restarted and RAM refresh cleared at the reset pulse (B) | 24,532 | 116 | 1,150 | 22 / 220; late from 6,981 |
+
+On the 68000's own bus cycles, which is what the refresh changes, B is the closer board
+by a factor of four to five after the Z80's start. On the measures further downstream
+-- the Z80-read threshold and the picture 7,000 frames on -- it is worse. Which the
+board should follow is Aubrey's call; B is not adopted yet. The reset-order fix and the
+exact-clock press are adopted (neither moves A's numbers).
+
+Checks: both suites pass (144; the reset test now checks the vector fetch comes after
+the pulse and counts the refresh it takes).
+
+**Aubrey's decision: B.** "Go with B as the current implementation, but record the
+refresh behavior as a supported finding rather than a fully proven model. The deciding
+evidence is the direct 68000 bus-cycle comparison, since that is the subsystem the
+refresh change actually affects." So `system.RESET_RESTARTS_REFRESH` is on, documented
+as a supported finding (undocumented-behavior, the bus, item 11), and A stays
+reproducible: `od2_compare.py` and `od2_boot_drift.py --no-refresh-restart`, which give
+the table's numbers exactly. B is not to be tuned further to recover the late-frame
+picture unless the discrepancy that causes it is found. The core's 40-clock reset is
+raised on m68000-python as issue #3 (a reproducer, the die's clocks beside the core's,
+and a proposed test), not compensated here; it arrives with the next pin bump.
+
+### Open: Aubrey's Overdrive 2 playthrough notes (2026-09-30)
+
+From watching a full run on the frontend, recorded to investigate later. Frame numbers
+are the frontend's title-bar counter: frames since power-on, **no reset pressed**, so
+they are not the die-aligned numbering of the referee comparisons (those press reset at
+frame 25; the two differ by a constant to be measured before comparing).
+
+| frames | what Aubrey saw | confidence | related, already on record |
+| --- | --- | --- | --- |
+| ~5,673 | the scene transition from the ship crash to the 3D ninja view: garbage on screen | seen | -- |
+| ~5,700-5,900 (from ~5,787) | the ninja's arm colours change to the wrong colour, wrong through the scene, right again by 5,900 | seen | a palette (CRAM) timing or a palette-index question; mid-line CRAM placement is die-measured (item 20) but only checked 9,175-9,725 |
+| ~7,000; 7,065-7,066 | a black flash just before 7,065 shows junk (white lines and dots) in the centre of the frame | unsure | the one-frame slip lies here (7,047-7,095; Sessions 13-14) -- a frame shown a frame early or late may be the cause, not the drawing |
+| ~10,100 | vertical-line garbage as the scene transition is set up | seen | -- |
+| ~12,500 | the robot "breaks the frame" and the picture should get wider: a width change (H32 to H40), or start at the widest | seen | the frontend reopening its window on a size change (the arcade section, Session 13) and letterboxing (the other agent's area); the board draws what the mode says, so first check whether the width is the board's or the window's |
+
+Also still open from before: the rotating boxes' black scanlines (~14,400-14,850), the
+B-masked debug-register scenes (8,150-9,125), and the arcade V-interrupt question (die
+bus trace over die frames 12,230-12,260).
+
+### m68000-python pinned at 38dbd0f (its #3 fixed)
+
+Issue #3 went to m68000-python and came back as its PR #4 (merged 38dbd0f): `reset()`
+reads the SSP vector after 14 clocks, 40 in all, as UM Table 8-14 and Nuked-MD have it.
+The pin moves there from 51ee1a5, which also brings the core's polish round (the halt on
+a double bus fault during the reset sequence, 1f43e0b) and lets the board read the
+public `step_clocks` instead of the private `_cycles` (docs/polish.md's item, done).
+
+Checks: both suites pass (145; the reset test now expects 40 clocks and the vector read
+14 clocks after the pulse); the MAME lockstep, six games, 0 unexplained; the mini sweep:
+one better, none worse -- Phantasy Star Fukkokuban (Japan) from an `error:` (a fault in
+its reset sequence) to `same`, the double-bus-fault halt; Overdrive 2's harness numbers
+unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchronise the
+68000 before the Z80 starts, so two clocks at the reset do not reach it).

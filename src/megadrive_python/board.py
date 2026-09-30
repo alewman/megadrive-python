@@ -247,18 +247,15 @@ class Board:
         """The master clock at which the 68000's current bus access starts.
 
         m68000-python counts an instruction's clocks as it goes, adding 4 for each
-        bus access *before* calling the host (``_cycles`` in its ``_core.py``), so
-        inside a bus callback ``_cycles - 4`` is the clock the access began at,
-        counted from the start of the step. That attribute is private: reading it
-        here is the labelled workaround for the accessor proposed to m68000-python as
-        its PR #1, ``M68000CPU.step_clocks`` (docs/worklog.md, "Proposed core
-        change"). This is the only place the board reads it; when the PR lands,
-        ``cpu._cycles`` below becomes ``cpu.step_clocks``.
+        bus access *before* calling the host, and says so publicly: inside a bus
+        callback ``M68000CPU.step_clocks - 4`` is the clock the access began at,
+        counted from the start of the step (its PR #1; the board read the private
+        ``_cycles`` until the pin reached it, docs/polish.md).
         """
         cpu = self.m68k
         if cpu is None:
             return self.step_start + self.stall
-        return self.step_start + self.stall + (cpu._cycles - 4) * M68K_DIVIDER
+        return self.step_start + self.stall + (cpu.step_clocks - 4) * M68K_DIVIDER
 
     @property
     def z80_running(self) -> bool:
