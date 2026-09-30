@@ -5366,8 +5366,11 @@ unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchro
   writes the die does not refresh, +57,540, and the reverse, -36,708: the board refreshes
   work RAM more often), about 3,400 comes after `MULS.W` (the core charges 2 clocks more
   than the die's 68000 for some operands), 2 clocks at a `MOVEM.W` to memory (the core's
-  first write 2 idle clocks late), and the rest is the level-4 interrupt (the per-line
-  palette writes) entered at other instructions, which largely cancels.
+  first write 2 idle clocks late), and about +17,500 in steps the alignment could
+  not name. The biggest of those, 1,100-1,600 MCLK each, are only the level-4 interrupt
+  (the per-line palette writes) arriving at other instructions: both sides take 225
+  per frame, one a line, and the board's entry is no slower (217 MCLK on average
+  against the die's 228).
 - **Next.** The work-RAM refresh is the largest measured term and the rule the boot
   could not pin down (544 RAM accesses there); this 3D code makes tens of thousands of
   RAM accesses in the die's trace, enough to find it. `MULS` and `MOVEM` are core timing
