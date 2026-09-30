@@ -5093,3 +5093,132 @@ read slots to the die's measured windows (`tests/test_milestone5.py`); VDP item 
 Checks: both suites pass (143); MAME lockstep six games 0 unexplained; the mini sweep
 against the previous one: Gauntlet IV (USA, Europe) (En,Ja) from `differs` to `phase`,
 nothing worse.
+
+### The refresh after the reset (not adopted)
+
+With the read-ahead in, the Z80 comparison stops where the board holds the Z80 15-30
+MCLK longer at each bus request, and the drift tool shows refresh stalls one machine
+takes and the other does not. What the die says, from the whole power-on trace
+(`reference/z80-reset/t.bin`):
+
+- **Work RAM**: the next access falls due for its refresh 812 MCLK after the last one
+  that took it, not the board's 805 (gaps of 805 or less: never refreshed; 812: 9 of 14;
+  819 and more: all but two). It settles the 791-819 window of `RAM_REFRESH_AFTER_MCLK`.
+- **The cartridge refresh** is a rigid 896-MCLK grid, as the board has it, and a tick is
+  taken by the first 68000 access after it -- stretched only if that access is a
+  cartridge read (12,753 ticks; a VDP or work-RAM access after a tick takes it with no
+  stretch, 1,627 times). But on the die the grid **starts at the console reset**: no
+  cartridge read is stretched before the reset, and afterwards every stretched one lies
+  0-28 MCLK after a multiple of 896 from the reset pulse's start. The board keeps its
+  power-on grid through the reset, and its cartridge stalls coincide with the die's for
+  1 of ~13,400 refreshes after it.
+
+Restarting the board's grid at the reset button, the phase swept in 7-MCLK steps, the
+coincident stalls rise to 8,048 (at +21 MCLK, from 1). The metrics, against main
+(69b9e86), reset pressed at 26,601,687:
+
+| | boot offset | matching Z80 reads (best of 11 reset clocks) | frames 6,981-7,200 aligned | first frame late |
+| --- | ---: | ---: | ---: | ---: |
+| main | -57 | 4,738 | 111 / 220 | 7,094 |
+| work RAM at 812 | -- | 4,738 | not run | -- |
+| cartridge grid restarted at the reset (+21) | -46 | 1,150 | 94 / 220 | 7,075, then two late |
+
+So the change that makes the board's refresh agree with the die's makes the picture
+worse; neither is adopted, the work-RAM threshold because it moves nothing. The likely
+reason the Z80 reads and the slip resist: they also carry the YM2612's phase from
+before the reset, where the die froze on its first run and the board did not (Session
+13), and the slip itself is the two sound drivers drifting apart (Session 13, "the
+one-frame slip"). A 68000-side change that is right on the die can still land the
+sound driver on a worse phase. `scripts/od2_boot_drift.py` gains `--from-reset`, to
+compare the 68000s from the reset vector on.
+
+### Removing the sound phase as a variable (Aubrey: ROM-specific, not ideal, worth it)
+
+Aubrey agreed to align the YM2612 to the referee's measured state in the comparison
+harness only, knowing it ties the comparison to this ROM. What the measurements said
+about *where*:
+
+- **Not at the console reset.** Both machines' slot counters are *reset* there (the
+  referee's next marker comes 1,077 MCLK after /IC, the reset case; the board's goes
+  from cycle 9 to 0), so the phase after it depends only on when the button is pressed,
+  which is aligned. The history before the reset -- the die's first-run freeze -- does
+  not reach the sound chip. (This corrects the previous section's guess.)
+- **At the Z80's start.** From the final sound reset to the Z80's start the 68000 runs
+  1,208,224 MCLK on the referee, 1,208,242 on main and 1,208,251 with the refresh
+  restart. The Z80 reads flip from 4,738 to 1,150 on that 9-MCLK difference: the timer-A
+  poll after the start crosses its threshold at 10-15 MCLK. The count is a threshold
+  detector, not a measure of distance.
+
+`scripts/od2_compare.py` (new) is the harness for Session 14's numbers: the reset
+button pressed with ZRES at the exact clock, the boot offset and the matching Z80 reads
+reported, `--src` to run another board, and `--align-fm`, labelled ROM-specific, which
+sets the board's slot counter at the Z80's start to the referee's phase there (its
+slot-23 marker 41 MCLK after the start; the board's cycle 0 85 MCLK after the marker,
+calibrated on main, whose reads match). Results:
+
+| board | aligned | boot offset | matching Z80 reads |
+| --- | --- | ---: | ---: |
+| main | no | -57 | 4,738 |
+| main | yes | -57 | 4,738 (by construction) |
+| work RAM at 812 | yes | -57 | 4,738 |
+| cartridge grid restarted at the reset (+21) | yes | -46 | 1,150 |
+
+With the sound phase removed, the refresh restart still loses, and the per-read drift
+says why: it matches the referee better at the first bus hold (15 MCLK short where main
+is 30), but its Z80 starts 15 MCLK later against the 68000's release, and the sum of
+such 15-MCLK steps puts the timer-A poll on the other side. Each of those steps -- the
+Z80's resume after a bus hold, the 68000's cycles in the hold, the refresh within it --
+is a separate question at the 7-15 MCLK level, and the Z80 count cannot tell them apart.
+
+### BlastEm with the same reset (Aubrey's suggestion)
+
+Aubrey: reset BlastEm at frame 25 too, for a second view from the accurate camp -- the
+differences might not all be the board's. `scripts/blastem_frames.py` gains
+`--reset-frame` and `--seed`: BlastEm's soft reset lands at a random point of the next
+frame (`genesis.c` `soft_reset`, `rand()`), so the process's generator is seeded first
+and a run repeats exactly; the reset is placed to the frame, not to the clock. Its
+frames, cropped of its 8-line top border and mapped to the board's DAC levels, are
+scored against the referee's with `scripts/compare_referee.py` like the board's.
+
+Frames 6,981-7,200: every BlastEm frame is identical to one of the referee's, and
+BlastEm **slips one frame against the referee at 7,051** -- where the board slipped
+before the read-ahead (7,047-7,051; Session 13), and for all seven seeds tried, i.e.
+wherever in the frame its reset lands. The board, with the read-ahead, slips at 7,094.
+
+So two independent emulators part from the die model at 7,051 the same way. Session 13
+traced that slip to the die's 68000 being late into a V-counter wait because its Z80
+made 332 bank reads in the stretch before, against the board's 54: the two sound drivers
+were at different points of their playback. BlastEm is a detector and cannot overrule
+the die; but the die's Z80 is the part of Nuked-MD with a known fault (its README's
+Notes put Overdrive 2's first-run freeze down to a Z80 microcode issue), and its chip
+combination (NMOS 68000 and Z80 with the FC1004) matches no console Sega sold. Where the
+die and both emulators disagree about the Z80, the die is not an obviously better judge.
+
+### Three ways at the sound driver (A2)
+
+To use BlastEm as a tie-breaker at a finer grain than frames, `blastem_frames.py` gains
+`--event-log`: BlastEm's hardware event log (`event_log.c`, the standalone's `-e`),
+started through the libretro core before the cartridge loads, so it records every
+YM2612 register write with its clock. The same stream comes from the referee's bus
+trace (the Z80's writes to $4000-$4003) and from the board's YM2612. Two cautions from
+doing it: the referee's trace shows the driver's data-port writes but not all its
+address-port writes, so the streams are compared on the data-port values alone (the
+DAC samples and the timer-control $35s, in order); and BlastEm's timestamps swing by
+about 270 MCLK from write to write where the board's stay within the FM clock's 42 of
+the referee's, so BlastEm cannot referee questions at the 15-MCLK level.
+
+Identical data-port writes from the driver's first ($FF, $02, $15, ...) after the reset:
+
+| streams | identical writes |
+| --- | ---: |
+| referee vs board | 470 |
+| referee vs BlastEm | 435 |
+| board vs BlastEm | 435 |
+
+The referee and the board run together longest; BlastEm leaves both at the same write,
+the same way. Each departure is where the timer-control write falls among the DAC
+samples -- when timer A overflows against the Z80 -- the sensitivity every Z80
+comparison here has met. So at the driver's level BlastEm does not side with the
+referee against the board; its frame-level slip at 7,051 is its own driver's path, not
+evidence about the die's. The bus-hold steps (option A) are left to the referee alone,
+with the Z80 caution noted above.

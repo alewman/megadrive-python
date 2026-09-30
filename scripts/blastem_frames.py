@@ -18,6 +18,13 @@ pixel format is accepted, and everything else is refused so the core uses its de
 
     python scripts/blastem_frames.py CORE ROM OUT --frames 4600,4625 [--states]
     python scripts/blastem_frames.py CORE ROM OUT --range 4100:5200:25
+    python scripts/blastem_frames.py CORE ROM OUT --range 6980:7300:1 --reset-frame 25
+
+``--reset-frame N`` presses the console's reset button before frame N, as the referee's
+Overdrive 2 run does (docs/worklog.md, Session 13). BlastEm's soft reset lands at a
+random point in the frame that follows (``genesis.c`` ``soft_reset``: ``rand()``), so the
+C library's generator is seeded first (``--seed``) and the run repeats exactly; the
+reset is placed to the frame, not to the clock.
 """
 
 from __future__ import annotations
@@ -49,7 +56,8 @@ GET_SYSTEM_DIRECTORY, GET_SAVE_DIRECTORY, SET_PIXEL_FORMAT, GET_CAN_DUPE = 9, 31
 
 
 def run(core_path: Path, rom: Path, out: Path, wanted: set[int], states: bool,
-        work: Path) -> int:  # fmt: skip
+        work: Path, reset_frame: int = 0, seed: int = 1,
+        event_log: Path | None = None) -> int:  # fmt: skip
     out.mkdir(parents=True, exist_ok=True)
     core = C.CDLL(str(core_path))
     directory = C.c_char_p(str(work).encode())
@@ -94,6 +102,12 @@ def run(core_path: Path, rom: Path, out: Path, wanted: set[int], states: bool,
     core.retro_set_input_poll(callbacks[4])
     core.retro_set_input_state(callbacks[5])
     core.retro_init()
+    if event_log is not None:
+        # BlastEm's own hardware event log (``event_log.c``; ``blastem -e`` in the
+        # standalone build), started before the cartridge is loaded as the standalone
+        # does, so ``event_system_start`` writes its header. Read with
+        # ``scripts/blastem_events.py``; the core closes it at exit.
+        core.event_log_file(str(event_log).encode())
     image = rom.read_bytes()
     buffer = C.create_string_buffer(image, len(image))
     info = GameInfo(str(rom).encode(), C.cast(buffer, C.c_void_p), len(image), None)
@@ -103,6 +117,9 @@ def run(core_path: Path, rom: Path, out: Path, wanted: set[int], states: bool,
     core.retro_serialize.restype = C.c_bool
     last = max(wanted)
     while state["frame"] < last:
+        if reset_frame and state["frame"] == reset_frame - 1:
+            C.CDLL(None).srand(seed)  # the core's rand() is the process's
+            core.retro_reset()
         core.retro_run()
         if states and state["frame"] in wanted:
             size = core.retro_serialize_size()
@@ -121,6 +138,9 @@ def main() -> int:
     parser.add_argument("--range", default="", help="first:last:step, inclusive")
     parser.add_argument("--states", action="store_true", help="save serialized states too")
     parser.add_argument("--work", type=Path, help="save/system directory (default: temp)")
+    parser.add_argument("--reset-frame", type=int, default=0, help="press reset before it")
+    parser.add_argument("--seed", type=int, default=1, help="rand() seed for the reset")
+    parser.add_argument("--event-log", type=Path, help="write BlastEm's event log here")
     args = parser.parse_args()
     wanted = {int(n) for n in args.frames.split(",") if n}
     if args.range:
@@ -130,7 +150,8 @@ def main() -> int:
         parser.error("no frames asked for")
     with tempfile.TemporaryDirectory() as temp:
         presented = run(args.core, args.rom, args.out, wanted, args.states,
-                        args.work or Path(temp))  # fmt: skip
+                        args.work or Path(temp), args.reset_frame, args.seed,
+                        args.event_log)  # fmt: skip
     print(f"{len(wanted)} frames wanted, {presented} presented")
     return 0
 
