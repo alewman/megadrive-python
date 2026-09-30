@@ -78,6 +78,21 @@ def test_the_arbiter_charges_mods_measured_delays() -> None:
     assert 9 <= sum(m68k) / len(m68k) <= 13
 
 
+def test_a_z80_access_costs_a_busy_68000_only_what_it_overlaps() -> None:
+    """A 68000 inside a multiply is not on the bus, so a Z80 bank read granted then
+    costs it only what runs past the multiply: ``mulu.w d0,d0`` / ``bra.s`` loses about
+    3 of its cycles to each read where MoD's always-on-the-bus ``jmp (a0)`` loses about
+    11 (Nuked-MD in Overdrive 2's 3D scene; docs/worklog.md "The ninja's arm colours")."""
+    import run_bus_arbiter as harness
+
+    multiplying = [
+        m68k for _, m68k in harness.run(harness.Z80_READ, bytes.fromhex("c0c060fc"), 300)
+    ]
+    spinning = [m68k for _, m68k in harness.run(harness.Z80_READ, harness.M68K_SPIN, 300)]
+    assert min(multiplying) == 0
+    assert sum(multiplying) / len(multiplying) < 5 < 9 < sum(spinning) / len(spinning)
+
+
 @pytest.mark.parametrize(
     ("register12", "display", "expected"),
     [(0x00, True, 16), (0x00, False, 167), (0x81, True, 18), (0x81, False, 205)],

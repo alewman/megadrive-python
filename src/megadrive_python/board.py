@@ -83,6 +83,16 @@ Z80_SPACE_STALL = M68K_DIVIDER
 #: (docs/worklog.md, "The Z80 after a hold"). Die-derived for reads; the run has no
 #: Z80 VDP writes, which take the same path because the VDP has no other bus.
 Z80_VDP_ARBITRATED = True
+#: A Z80 access over the 68000's bus delays the 68000 only from the bus cycle it next
+#: wants: one inside a long internal operation (a multiply, a divide, a shift) costs it
+#: what runs past that operation, not the whole grant. The board charged every access
+#: as if the 68000 wanted the bus four clocks after its last cycle, and in Overdrive
+#: 2's 3D scene (frames 5,790-5,804, the ninja's arms) that made 28 % of the Z80's
+#: 9,710 bank reads cost the 68000 13 clocks where the die charges 13 for 6 % of its
+#: reads, and the board's 68000 fell about 10,000 MCLK a frame behind the die's. Die-derived
+#: (Nuked-MD's 68000 trace from its frame-5,750 save; docs/worklog.md "The ninja's arm
+#: colours"); MoD's ``jmp (a0)`` loop, always on the bus, costs the same either way.
+Z80_GRANT_OVERLAPS_IDLE = True
 
 
 class Lockup(Exception):
@@ -172,6 +182,8 @@ class Board:
         #: inside has already been executed -- ``System.step``).
         self.z80_stall = 0
         self.m68k_pending_stall = 0
+        #: The master clock the 68000's last instruction ended at (``System.step``).
+        self.m68k_step_end = 0
         #: Totals for ``scripts/run_bus_arbiter.py``: bank accesses and the cycles they
         #: cost each CPU.
         self.bank_accesses = 0
@@ -379,10 +391,18 @@ class Board:
         if not taken and tick <= own:
             self.z80_refresh_taken = tick
         wanted = t + CUTOFF_MCLK + 1
+        nxt = None
         for begin, _span in self.m68k_accesses:
             if begin > t + CUTOFF_MCLK:
+                nxt = begin
                 break
             wanted = max(wanted, begin + 4 * M68K_DIVIDER)  # its next, four clocks on
+        if Z80_GRANT_OVERLAPS_IDLE:
+            # The 68000 waits only from when it wants the bus again: its next bus cycle
+            # in this instruction, or else where its next instruction starts.
+            if nxt is None:
+                nxt = self.m68k_step_end + self.m68k_pending_stall
+            wanted = max(wanted, nxt)
         resume += -(resume - wanted) % M68K_DIVIDER
         m68k_cycles = max(0, resume - wanted) // M68K_DIVIDER
         if m68k_cycles:

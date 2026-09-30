@@ -439,6 +439,7 @@ class System:
             cpu.clock += stall // M68K_DIVIDER  # keeps the E-clock phase in step
         self.mclk = start + elapsed
         self.m68k_instructions += 1
+        board.m68k_step_end = self.mclk
         self.catch_up_z80(self.mclk)
         return elapsed
 
