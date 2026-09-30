@@ -5309,4 +5309,5 @@ as a supported finding (undocumented-behavior, the bus, item 11), and A stays
 reproducible: `od2_compare.py` and `od2_boot_drift.py --no-refresh-restart`, which give
 the table's numbers exactly. B is not to be tuned further to recover the late-frame
 picture unless the discrepancy that causes it is found. The core's 40-clock reset is
-raised on m68000-python, not compensated here.
+raised on m68000-python as issue #3 (a reproducer, the die's clocks beside the core's,
+and a proposed test), not compensated here; it arrives with the next pin bump.
