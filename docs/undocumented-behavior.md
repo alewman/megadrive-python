@@ -81,6 +81,14 @@ source, the way sms-python does.
     the die's Z80 caveat. The work-RAM refresh's rule after the reset is not settled.
     `system.RESET_RESTARTS_REFRESH` (Aubrey's decision, [worklog.md](worklog.md)
     Session 14); the OD2 harnesses' `--no-refresh-restart` runs the board without it.
+12. **A Z80 bank read costs the 68000 only the bus time it wanted.** Kabuto's "average
+    68k delay is around 11 68k cycles" and MoD's measurements are of a 68000 always on
+    the bus. Inside a multiply or another long internal operation it is not, and on
+    Nuked-MD a read granted then costs it only what runs past the operation: in
+    Overdrive 2's 3D scene 13-clock charges are 6 % of the Z80's reads on the die, where
+    charging from four clocks after the 68000's last cycle gave 28 % and put its 68000
+    about 10,000 MCLK a frame behind. Die-derived; `board.Z80_GRANT_OVERLAPS_IDLE`
+    ([worklog.md](worklog.md), "The ninja's arm colours").
 
 ## The VDP
 

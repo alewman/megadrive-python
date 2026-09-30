@@ -5371,7 +5371,53 @@ unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchro
   (the per-line palette writes) arriving at other instructions: both sides take 225
   per frame, one a line, and the board's entry is no slower (217 MCLK on average
   against the die's 228).
-- **Next.** The work-RAM refresh is the largest measured term and the rule the boot
-  could not pin down (544 RAM accesses there); this 3D code makes tens of thousands of
-  RAM accesses in the die's trace, enough to find it. `MULS` and `MOVEM` are core timing
-  questions for m68000-python, with the die's cycles as evidence.
+- **What it really was: the Z80's bank reads.** That breakdown named steps by where
+  the alignment put them, and the arbiter's charge lands at the start of the 68000's
+  next instruction (`m68k_pending_stall`), so it was filed under whatever came next.
+  Two measures without an alignment found it. Ranked by each address's mean cost
+  (board minus die, times the die's count), the main loop's fetches ($3BAC6E-$3BACE0)
+  cost 7-14 MCLK more on the board, in gaps of 70-130 MCLK with no stall logged.
+  Across the whole window the board's 68000 has 9,234 such gaps against the die's 7,381,
+  and longer ones. The die's trace logs the Z80's
+  bank reads on the 68000's bus (cycles the 68000 did not drive): 8,597, 540-810 a
+  frame, against the board's 9,710. What each cost the 68000, in its clocks:
+
+  | | 9 | 10 | 11 | 12 | 13 |
+  |---|---:|---:|---:|---:|---:|
+  | die (68000 interval round the read) | 431 | 2,804 | 3,719 | 476 | 565 |
+  | board | 103 | 3,569 | 2,345 | 778 | 2,681 |
+
+  On the die 12-13 come with the cartridge refresh (a read 0-84 MCLK after a tick);
+  on the board 13 comes at every refresh phase. It is the arbiter's arithmetic at 3 wait
+  states when the 68000 is taken to want the bus four clocks after its last cycle
+  (`_bank_delay`'s `wanted`) -- and in this code it often does not: the loop is
+  multiplies and long register operations, and a Z80 read granted inside one costs the
+  68000 only what runs past it. `Z80_GRANT_OVERLAPS_IDLE` charges from the 68000's next
+  bus cycle in the instruction, or where its next instruction starts:
+
+  | | board, before | board, after | die |
+  |---|---:|---:|---:|
+  | 13-clock reads | 2,681 | 241 | 565 |
+  | 10 / 11-clock reads | 3,569 / 2,345 | 2,903 / 3,469 | 2,804 / 3,719 |
+  | lag behind the die, per frame (vblank milestones) | ~10,000 | 3,000-7,000 | |
+  | aligned frames 5,741-5,840 identical | 57 of 100 | **100 of 100** | |
+  | frames 6,981-7,200 at the expected offset | 22 of 220 | 110 of 220 | |
+  | first of those only at another offset | 6,981 | 7,053 | |
+  | boot, 68000 bus cycles 1.4M MCLK after reset: steps / end | 1,402 / +18 | 1,355 / +12 | |
+  | boot offset; matching Z80 reads | -67; 187 | -61; 1,150 | |
+
+  MoD's `jmp (a0)` loop, always on the bus, costs the 68000 10.86 cycles a read before
+  and 10.78 after (Kabuto's "around 11"); a `mulu.w d0,d0` / `bra.s` loop 11.01 before,
+  3.09 after (`test_a_z80_access_costs_a_busy_68000_only_what_it_overlaps`).
+  Die-derived; no hardware source measures the 68000's side with it off the bus.
+  Suites 146 pass on both interpreters; the mini sweep against `mini-pin.csv`: 2 better
+  (Sansan 3,134 -> 2,370 pixels, Windjammers 2,244 -> 2,243), 1 worse (Sonic 3, 831 ->
+  862 against MAME, a detector that has no arbiter), 112 unchanged.
+- **Tooling.** The measure that found it, without an alignment: for each (address,
+  kind), the mean time to the next cycle on each side, the difference times the
+  die's count. A running `System` pickles: a snapshot at frame 5,789 of the aligned run
+  replays the window in seconds instead of 10 minutes (a fresh process must build one
+  `System` first, which builds the core's dispatch table).
+- **Left.** The lag still grows 3-7k MCLK a frame, and the pictures match through
+  5,840 regardless. The work-RAM refresh and `MULS` (+4,914 / -1,484 MCLK after it,
+  net about +3,400 over the window) are next, then the other playthrough notes.
