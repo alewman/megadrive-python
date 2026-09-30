@@ -14,7 +14,7 @@ authors = [{ name = "alewman" }]
 dependencies = [
     # Not on PyPI: pinned by git revision (docs/handoff-brief.md). For development,
     # install the local clone at this revision first (docs/worklog.md, "Environment").
-    "m68000-python @ git+https://github.com/alewman/m68000-python@51ee1a5a1ac9be2a773476d264e859adb2fb6c94",
+    "m68000-python @ git+https://github.com/alewman/m68000-python@38dbd0f3b6622d715d14f4c0b90fcdf84a12692d",
     # 0.4.0 introduced the callables contract the board is built for; the access-timing
     # table (z80_python.timing, PR #19) is not released yet, so the merge is pinned.
     "z80-python @ git+https://github.com/alewman/z80-python@b62891b9bac68da196ccb47c77e1e579f207dc1c",

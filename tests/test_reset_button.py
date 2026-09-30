@@ -78,12 +78,13 @@ def test_the_pulse_holds_the_68000_for_128_clocks_before_the_exception() -> None
     start = system.mclk
     system.press_reset()
     elapsed = system.step()
-    # 42 clocks of reset exception (m68000-python's ``reset``) after the pulse, and the
-    # refresh its bus cycles take; the vector fetch comes after the pulse, 16 clocks on
-    # (docs/worklog.md, "The reset exception").
-    assert elapsed == (RESET_PULSE_CLOCKS + 42) * M68K_DIVIDER + system.board.stall
+    # 40 clocks of reset exception (m68000-python's ``reset``, UM Table 8-14) after the
+    # pulse, and the refresh its bus cycles take; the vector fetch comes after the
+    # pulse, 14 clocks on, as on Nuked-MD (docs/worklog.md, "The reset exception";
+    # m68000-python #3).
+    assert elapsed == (RESET_PULSE_CLOCKS + 40) * M68K_DIVIDER + system.board.stall
     pulse_end = start + RESET_PULSE_CLOCKS * M68K_DIVIDER
-    assert fetches[0] == pulse_end + 16 * M68K_DIVIDER
+    assert fetches[0] == pulse_end + 14 * M68K_DIVIDER
 
 
 def test_a_halted_68000_is_brought_back() -> None:

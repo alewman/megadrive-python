@@ -5330,3 +5330,18 @@ frame 25; the two differ by a constant to be measured before comparing).
 Also still open from before: the rotating boxes' black scanlines (~14,400-14,850), the
 B-masked debug-register scenes (8,150-9,125), and the arcade V-interrupt question (die
 bus trace over die frames 12,230-12,260).
+
+### m68000-python pinned at 38dbd0f (its #3 fixed)
+
+Issue #3 went to m68000-python and came back as its PR #4 (merged 38dbd0f): `reset()`
+reads the SSP vector after 14 clocks, 40 in all, as UM Table 8-14 and Nuked-MD have it.
+The pin moves there from 51ee1a5, which also brings the core's polish round (the halt on
+a double bus fault during the reset sequence, 1f43e0b) and lets the board read the
+public `step_clocks` instead of the private `_cycles` (docs/polish.md's item, done).
+
+Checks: both suites pass (145; the reset test now expects 40 clocks and the vector read
+14 clocks after the pulse); the MAME lockstep, six games, 0 unexplained; the mini sweep:
+one better, none worse -- Phantasy Star Fukkokuban (Japan) from an `error:` (a fault in
+its reset sequence) to `same`, the double-bus-fault halt; Overdrive 2's harness numbers
+unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchronise the
+68000 before the Z80 starts, so two clocks at the reset do not reach it).
