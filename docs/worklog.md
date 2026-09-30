@@ -5311,3 +5311,22 @@ the table's numbers exactly. B is not to be tuned further to recover the late-fr
 picture unless the discrepancy that causes it is found. The core's 40-clock reset is
 raised on m68000-python as issue #3 (a reproducer, the die's clocks beside the core's,
 and a proposed test), not compensated here; it arrives with the next pin bump.
+
+### Open: Aubrey's Overdrive 2 playthrough notes (2026-09-30)
+
+From watching a full run on the frontend, recorded to investigate later. Frame numbers
+are the frontend's title-bar counter: frames since power-on, **no reset pressed**, so
+they are not the die-aligned numbering of the referee comparisons (those press reset at
+frame 25; the two differ by a constant to be measured before comparing).
+
+| frames | what Aubrey saw | confidence | related, already on record |
+| --- | --- | --- | --- |
+| ~5,673 | the scene transition from the ship crash to the 3D ninja view: garbage on screen | seen | -- |
+| ~5,700-5,900 (from ~5,787) | the ninja's arm colours change to the wrong colour, wrong through the scene, right again by 5,900 | seen | a palette (CRAM) timing or a palette-index question; mid-line CRAM placement is die-measured (item 20) but only checked 9,175-9,725 |
+| ~7,000; 7,065-7,066 | a black flash just before 7,065 shows junk (white lines and dots) in the centre of the frame | unsure | the one-frame slip lies here (7,047-7,095; Sessions 13-14) -- a frame shown a frame early or late may be the cause, not the drawing |
+| ~10,100 | vertical-line garbage as the scene transition is set up | seen | -- |
+| ~12,500 | the robot "breaks the frame" and the picture should get wider: a width change (H32 to H40), or start at the widest | seen | the frontend reopening its window on a size change (the arcade section, Session 13) and letterboxing (the other agent's area); the board draws what the mode says, so first check whether the width is the board's or the window's |
+
+Also still open from before: the rotating boxes' black scanlines (~14,400-14,850), the
+B-masked debug-register scenes (8,150-9,125), and the arcade V-interrupt question (die
+bus trace over die frames 12,230-12,260).
