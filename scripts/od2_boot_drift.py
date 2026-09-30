@@ -48,6 +48,12 @@ def anchor_index(cycles: list[tuple], which: int = 1) -> int:
     return zeros[which]
 
 
+def reset_anchor(cycles: list[tuple], after: int) -> int:
+    """The 68000's first bus cycle after ``after`` MCLK: its reset vector fetch after
+    the console's reset button."""
+    return next(i for i, c in enumerate(cycles) if c[0] > after and c[1] == 0)
+
+
 def vblank_anchor(cycles: list[tuple], before: int, k: int) -> int:
     """The ``k``-th last vblank edge before index ``before``: a status read ($C00004)
     with bit 3 set after one with it clear -- where a vblank wait lets the 68000 go,
@@ -135,15 +141,22 @@ def main() -> int:
     parser.add_argument("--until", type=int, default=42_800_000, help="board run length")
     parser.add_argument("--changes", type=int, default=60, help="difference changes shown")
     parser.add_argument("--zero", type=int, default=1, help="which $A11100 release anchors")
+    parser.add_argument("--from-reset", type=int, nargs=2, metavar=("REFEREE", "BOARD"),
+                        help="anchor at the reset vector fetch after these clocks")  # fmt: skip
     parser.add_argument("--min-step", type=int, default=1, help="smallest change shown")
     parser.add_argument("--vblank", type=int, default=0,
                         help="anchor at the K-th vblank edge before the Z80's start")  # fmt: skip
     args = parser.parse_args()
     theirs = referee(args.trace)
     ours = board(args.rom, args.reset_mclk, args.until)
-    a_r, a_b = anchor_index(theirs, args.zero), anchor_index(ours, args.zero)
-    if args.vblank:
-        a_r, a_b = vblank_anchor(theirs, a_r, args.vblank), vblank_anchor(ours, a_b, args.vblank)
+    if args.from_reset:
+        a_r = reset_anchor(theirs, args.from_reset[0])
+        a_b = reset_anchor(ours, args.from_reset[1])
+    else:
+        a_r, a_b = anchor_index(theirs, args.zero), anchor_index(ours, args.zero)
+        if args.vblank:
+            a_r = vblank_anchor(theirs, a_r, args.vblank)
+            a_b = vblank_anchor(ours, a_b, args.vblank)
     t_r, t_b = theirs[a_r][0], ours[a_b][0]
     r = [c for c in theirs[a_r:] if c[0] - t_r <= args.span]
     b = [c for c in ours[a_b:] if c[0] - t_b <= args.span + 20_000]

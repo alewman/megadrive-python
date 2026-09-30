@@ -5093,3 +5093,41 @@ read slots to the die's measured windows (`tests/test_milestone5.py`); VDP item 
 Checks: both suites pass (143); MAME lockstep six games 0 unexplained; the mini sweep
 against the previous one: Gauntlet IV (USA, Europe) (En,Ja) from `differs` to `phase`,
 nothing worse.
+
+### The refresh after the reset (not adopted)
+
+With the read-ahead in, the Z80 comparison stops where the board holds the Z80 15-30
+MCLK longer at each bus request, and the drift tool shows refresh stalls one machine
+takes and the other does not. What the die says, from the whole power-on trace
+(`reference/z80-reset/t.bin`):
+
+- **Work RAM**: the next access falls due for its refresh 812 MCLK after the last one
+  that took it, not the board's 805 (gaps of 805 or less: never refreshed; 812: 9 of 14;
+  819 and more: all but two). It settles the 791-819 window of `RAM_REFRESH_AFTER_MCLK`.
+- **The cartridge refresh** is a rigid 896-MCLK grid, as the board has it, and a tick is
+  taken by the first 68000 access after it -- stretched only if that access is a
+  cartridge read (12,753 ticks; a VDP or work-RAM access after a tick takes it with no
+  stretch, 1,627 times). But on the die the grid **starts at the console reset**: no
+  cartridge read is stretched before the reset, and afterwards every stretched one lies
+  0-28 MCLK after a multiple of 896 from the reset pulse's start. The board keeps its
+  power-on grid through the reset, and its cartridge stalls coincide with the die's for
+  1 of ~13,400 refreshes after it.
+
+Restarting the board's grid at the reset button, the phase swept in 7-MCLK steps, the
+coincident stalls rise to 8,048 (at +21 MCLK, from 1). The metrics, against main
+(69b9e86), reset pressed at 26,601,687:
+
+| | boot offset | matching Z80 reads (best of 11 reset clocks) | frames 6,981-7,200 aligned | first frame late |
+| --- | ---: | ---: | ---: | ---: |
+| main | -57 | 4,738 | 111 / 220 | 7,094 |
+| work RAM at 812 | -- | 4,738 | not run | -- |
+| cartridge grid restarted at the reset (+21) | -46 | 1,150 | 94 / 220 | 7,075, then two late |
+
+So the change that makes the board's refresh agree with the die's makes the picture
+worse; neither is adopted, the work-RAM threshold because it moves nothing. The likely
+reason the Z80 reads and the slip resist: they also carry the YM2612's phase from
+before the reset, where the die froze on its first run and the board did not (Session
+13), and the slip itself is the two sound drivers drifting apart (Session 13, "the
+one-frame slip"). A 68000-side change that is right on the die can still land the
+sound driver on a worse phase. `scripts/od2_boot_drift.py` gains `--from-reset`, to
+compare the 68000s from the reset vector on.
