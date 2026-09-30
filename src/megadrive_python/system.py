@@ -221,13 +221,14 @@ class System:
             return
         start, let_go = self._z80_partial
         self._z80_partial = None
-        waiting = [start + o for o in self._z80_offsets() if start + o >= let_go]
-        if waiting:
-            board.z80_hold = (let_go, max(0, edge - waiting[0]))
-        else:
-            # Nothing left but internal T-states: the next fetch comes at the edge.
-            end = start + self.z80_machine_cycle_ends()[-1] * Z80_DIVIDER
-            board.z80_hold = (let_go, max(0, edge - Z80_DIVIDER - end))
+        # Everything after the machine cycle it let go at moves by the same amount, so
+        # the T-state that follows -- an access, or an internal one -- comes at the
+        # edge, and internal T-states between the two stay where the instruction puts
+        # them (the die: the fetch at $0621 of Overdrive 2's driver, its internal
+        # T-states after the release, its next read 122 MCLK after it; docs/worklog.md
+        # "The bus holds"). An access's time is its T1's start plus one T-state, the
+        # table's convention, hence the Z80_DIVIDER.
+        board.z80_hold = (let_go, max(0, edge - Z80_DIVIDER - let_go))
 
     def _z80_offsets(self) -> tuple[int, ...]:
         """Where each memory access of the Z80's next instruction falls, in master
