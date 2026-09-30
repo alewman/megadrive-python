@@ -68,10 +68,13 @@ def test_the_vdp_is_not_reset() -> None:
 def test_the_pulse_holds_the_68000_for_128_clocks_before_the_exception() -> None:
     system = _system()
     fetches = []
-    read_word = system.board.read_word
-    system.m68k.attach_bus(system.board.read_byte,
-                           lambda a: fetches.append(system.board.m68k_access_clock()) or read_word(a),
-                           system.board.write_byte, system.board.write_word)  # fmt: skip
+    board = system.board
+
+    def read_word(address):
+        fetches.append(board.m68k_access_clock())
+        return board.read_word(address)
+
+    system.m68k.attach_bus(board.read_byte, read_word, board.write_byte, board.write_word)
     start = system.mclk
     system.press_reset()
     elapsed = system.step()
