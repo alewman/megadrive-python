@@ -5131,3 +5131,41 @@ before the reset, where the die froze on its first run and the board did not (Se
 one-frame slip"). A 68000-side change that is right on the die can still land the
 sound driver on a worse phase. `scripts/od2_boot_drift.py` gains `--from-reset`, to
 compare the 68000s from the reset vector on.
+
+### Removing the sound phase as a variable (Aubrey: ROM-specific, not ideal, worth it)
+
+Aubrey agreed to align the YM2612 to the referee's measured state in the comparison
+harness only, knowing it ties the comparison to this ROM. What the measurements said
+about *where*:
+
+- **Not at the console reset.** Both machines' slot counters are *reset* there (the
+  referee's next marker comes 1,077 MCLK after /IC, the reset case; the board's goes
+  from cycle 9 to 0), so the phase after it depends only on when the button is pressed,
+  which is aligned. The history before the reset -- the die's first-run freeze -- does
+  not reach the sound chip. (This corrects the previous section's guess.)
+- **At the Z80's start.** From the final sound reset to the Z80's start the 68000 runs
+  1,208,224 MCLK on the referee, 1,208,242 on main and 1,208,251 with the refresh
+  restart. The Z80 reads flip from 4,738 to 1,150 on that 9-MCLK difference: the timer-A
+  poll after the start crosses its threshold at 10-15 MCLK. The count is a threshold
+  detector, not a measure of distance.
+
+`scripts/od2_compare.py` (new) is the harness for Session 14's numbers: the reset
+button pressed with ZRES at the exact clock, the boot offset and the matching Z80 reads
+reported, `--src` to run another board, and `--align-fm`, labelled ROM-specific, which
+sets the board's slot counter at the Z80's start to the referee's phase there (its
+slot-23 marker 41 MCLK after the start; the board's cycle 0 85 MCLK after the marker,
+calibrated on main, whose reads match). Results:
+
+| board | aligned | boot offset | matching Z80 reads |
+| --- | --- | ---: | ---: |
+| main | no | -57 | 4,738 |
+| main | yes | -57 | 4,738 (by construction) |
+| work RAM at 812 | yes | -57 | 4,738 |
+| cartridge grid restarted at the reset (+21) | yes | -46 | 1,150 |
+
+With the sound phase removed, the refresh restart still loses, and the per-read drift
+says why: it matches the referee better at the first bus hold (15 MCLK short where main
+is 30), but its Z80 starts 15 MCLK later against the 68000's release, and the sum of
+such 15-MCLK steps puts the timer-A poll on the other side. Each of those steps -- the
+Z80's resume after a bus hold, the 68000's cycles in the hold, the refresh within it --
+is a separate question at the 7-15 MCLK level, and the Z80 count cannot tell them apart.
