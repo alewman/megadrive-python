@@ -109,8 +109,9 @@ class System:
         #: and the clock from which its remaining accesses wait (:meth:`_z80_resume`).
         self._z80_partial: tuple[int, int] | None = None
         #: The reset button has been pressed and the 68000 not yet reset
-        #: (:meth:`press_reset`).
+        #: (:meth:`press_reset`), and the clock it was pressed at.
         self.reset_pressed = False
+        self.reset_at = 0
         # Power-on: the 68000 takes its reset vector; the Z80 is held in reset.
         self.mclk = self.m68k.reset() * M68K_DIVIDER
         self._z80_reset_line(True)
@@ -346,7 +347,7 @@ class System:
             z80.restore_state(state)
         return offsets, written, sorted({*(e for e in ends if e < total), total})
 
-    def press_reset(self) -> None:
+    def press_reset(self, at: int | None = None) -> None:
         """The console's reset button: not a power cycle.
 
         Measured on hardware (forum t=1262): the button pulses VRES#, which goes "to
@@ -361,8 +362,14 @@ class System:
         ZRES is asserted now; the 68000 is held and reset at its next step. The
         variable delay from the switch to the pulse -- "Minimum is 2.1ms" -- is not
         modelled: the pulse starts at the next instruction.
+
+        ``at``: the master clock the button is pressed at, if not now -- a time at or
+        after the 68000's (``mclk``), before its next step; the 68000 is held from
+        there. The referee comparisons press it at an exact clock (docs/worklog.md,
+        Session 14).
         """
-        self.board.set_z80_reset(True, self.mclk)
+        self.reset_at = self.mclk if at is None else max(at, self.mclk)
+        self.board.set_z80_reset(True, self.reset_at)
         self.reset_pressed = True
 
     def step(self) -> int:
@@ -371,11 +378,23 @@ class System:
         if self.reset_pressed:
             # The 68000 is held in reset for the pulse, the rest of the machine running
             # on, then takes the reset exception (which brings a halted one back too).
+            # Its bus cycles -- the vectors and the first prefetch -- come after the
+            # pulse, stamped at their own clocks, so the refresh and the arbiter see
+            # them where they are (Nuked-MD: the vector fetch 98 MCLK after the pulse
+            # ends, taking the cartridge refresh that falls due then; docs/worklog.md
+            # "The reset exception").
             self.reset_pressed = False
             start = self.mclk
             vdp.sync(start)
-            cpu.clock += RESET_PULSE_CLOCKS
-            elapsed = (RESET_PULSE_CLOCKS + cpu.reset()) * M68K_DIVIDER
+            # Held from the press, on the 68000's next clock edge at or after it.
+            held = -(-(self.reset_at - start) // M68K_DIVIDER) * M68K_DIVIDER
+            cpu.clock += RESET_PULSE_CLOCKS + held // M68K_DIVIDER
+            board.step_start = start + held + RESET_PULSE_CLOCKS * M68K_DIVIDER
+            board.stall = 0
+            if board.m68k_accesses:
+                board.m68k_accesses.clear()
+            clocks = cpu.reset()
+            elapsed = held + (RESET_PULSE_CLOCKS + clocks) * M68K_DIVIDER + board.stall
             self.mclk = start + elapsed
             self.catch_up_z80(self.mclk)
             return elapsed

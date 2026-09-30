@@ -67,10 +67,20 @@ def test_the_vdp_is_not_reset() -> None:
 
 def test_the_pulse_holds_the_68000_for_128_clocks_before_the_exception() -> None:
     system = _system()
+    fetches = []
+    read_word = system.board.read_word
+    system.m68k.attach_bus(system.board.read_byte,
+                           lambda a: fetches.append(system.board.m68k_access_clock()) or read_word(a),
+                           system.board.write_byte, system.board.write_word)  # fmt: skip
+    start = system.mclk
     system.press_reset()
     elapsed = system.step()
-    # 42 clocks of reset exception (m68000-python's ``reset``) after the pulse
-    assert elapsed == (RESET_PULSE_CLOCKS + 42) * M68K_DIVIDER
+    # 42 clocks of reset exception (m68000-python's ``reset``) after the pulse, and the
+    # refresh its bus cycles take; the vector fetch comes after the pulse, 16 clocks on
+    # (docs/worklog.md, "The reset exception").
+    assert elapsed == (RESET_PULSE_CLOCKS + 42) * M68K_DIVIDER + system.board.stall
+    pulse_end = start + RESET_PULSE_CLOCKS * M68K_DIVIDER
+    assert fetches[0] == pulse_end + 16 * M68K_DIVIDER
 
 
 def test_a_halted_68000_is_brought_back() -> None:

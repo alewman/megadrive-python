@@ -65,14 +65,21 @@ def referee_reads() -> list[int]:
     return reads
 
 
-def run_board(src: Path, rom: Path, reset_mclk: int, align_fm: bool, frames: int) -> dict:
+def run_board(
+    src: Path,
+    rom: Path,
+    reset_mclk: int,
+    align_fm: bool,
+    frames: int,
+    machine: str = "megadrive-tmss",
+) -> dict:
     sys.path.insert(0, str(src))
     from megadrive_python.cartridge import Cartridge, load_image
     from megadrive_python.machine import MACHINES
     from megadrive_python.system import System
 
     def make() -> System:
-        system = System(MACHINES["megadrive"], Cartridge.from_image(load_image(rom)))
+        system = System(MACHINES[machine], Cartridge.from_image(load_image(rom)))
         system.board.fm.enabled = True
         return system
 
@@ -127,8 +134,7 @@ def run_board(src: Path, rom: Path, reset_mclk: int, align_fm: bool, frames: int
         if not pressed and system.mclk + 1_000_000 >= reset_mclk:
             while system.mclk < stop:
                 system.step()
-            board.set_z80_reset(True, reset_mclk)
-            system.press_reset()
+            system.press_reset(at=reset_mclk)
             pressed = True
         system.run_frame()
         board.fm.take_samples()
@@ -145,14 +151,17 @@ def main() -> int:
     parser.add_argument("--reset-mclk", type=int, default=26_601_687)
     parser.add_argument("--align-fm", action="store_true", help="ROM-specific; see above")
     parser.add_argument("--frames", type=int, default=80)
+    parser.add_argument("--machine", default="megadrive-tmss", help="the referee is version 1")
     args = parser.parse_args()
     theirs = referee_reads()
-    ours = run_board(args.src.resolve(), args.rom, args.reset_mclk, args.align_fm, args.frames)
+    ours = run_board(
+        args.src.resolve(), args.rom, args.reset_mclk, args.align_fm, args.frames, args.machine
+    )
     offset = (REFEREE_VBLANK_AFTER - REFEREE_Z80_START) - (ours["vblank"] - ours["z80_start"])
     n = 0
     while n < min(len(theirs), len(ours["reads"])) and theirs[n] == ours["reads"][n]:
         n += 1
-    print(f"src {args.src}; reset {args.reset_mclk}; FM aligned: {args.align_fm}")
+    print(f"src {args.src}; {args.machine}; reset {args.reset_mclk}; FM aligned: {args.align_fm}")
     print(f"boot offset {offset:+d} MCLK; matching Z80 reads {n} "
           f"(of {len(ours['reads'])}; first difference at ${theirs[n]:04X} / "
           f"${ours['reads'][n]:04X})")  # fmt: skip

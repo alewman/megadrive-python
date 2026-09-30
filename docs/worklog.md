@@ -5257,3 +5257,46 @@ not, and adopting the die's restart moved the Overdrive 2 slip earlier (Session 
 That contradiction is the open question.
 
 Checks: both suites pass (144); MAME lockstep 0 unexplained.
+
+### The reset exception, the console model, and the refresh contradiction
+
+Following the 68000's bus cycles from the reset button on (`od2_boot_drift.py
+--from-reset`) found three things before any refresh question:
+
+- **The reset exception ran before the pulse.** The board fetched the reset vectors at
+  the start of the 128-clock pulse and added the pulse afterwards, with the fetches
+  stamped at a stale clock. On the die the 68000 is held for the pulse (896 MCLK) and
+  fetches its vectors after it, the first taking the cartridge refresh then due. The
+  board now holds it first (`System.step`), and `System.press_reset(at=...)` presses at
+  an exact clock (the 68000 held from its next clock edge) for the referee comparisons.
+- **The console model.** At +364 MCLK Overdrive 2 reads $A10001: the die answers $E1
+  (version 1, a TMSS Model 1, the VA7 its README names) and the board's `megadrive`
+  $E0 (version 0), so the program writes "SEGA" to $A14000 on one and skips it on the
+  other -- 210 MCLK in the first instructions. Every referee comparison so far ran the
+  board as the pre-TMSS model; `od2_compare.py` and `od2_boot_drift.py` now default to
+  `megadrive-tmss`, which matches the die cycle for cycle through that check.
+- **The core's reset is 42 clocks.** m68000-python's `reset` returns 42 clocks where
+  its docstring and the 68000 UM (Table 8-14) say 40; its bus cycles match the die's
+  except the first vector fetch, 16 clocks after the pulse where the die's is at 14.
+  A core question, to raise on m68000-python, not to work around here.
+
+The refresh, with those settled. The die's cartridge refresh grid restarts at the reset
+pulse's start; its work-RAM refresh is not the board's rule (after the reset the die's
+next refreshed RAM access is 2,700 MCLK after the first, with unrefreshed ones between)
+but no simple rule fits it -- a line-based grid, an 896 grid taken by RAM accesses, a
+count since the last all do worse than predicting "never" (492 of 544). What the reset
+does show is that the pending RAM refresh is cleared there.
+
+| board (megadrive-tmss) | 68000 timing steps (7+ MCLK) from the reset through the boot | after the Z80's start (290k MCLK) | matching Z80 reads, best press | frames 6,981-7,200 aligned |
+| --- | ---: | ---: | ---: | ---: |
+| reset fixed (A) | 30,924 | 527 | 4,738 | 111 / 220; late from 7,094 |
+| + cartridge grid restarted and RAM refresh cleared at the reset pulse (B) | 24,532 | 116 | 1,150 | 22 / 220; late from 6,981 |
+
+On the 68000's own bus cycles, which is what the refresh changes, B is the closer board
+by a factor of four to five after the Z80's start. On the measures further downstream
+-- the Z80-read threshold and the picture 7,000 frames on -- it is worse. Which the
+board should follow is Aubrey's call; B is not adopted yet. The reset-order fix and the
+exact-clock press are adopted (neither moves A's numbers).
+
+Checks: both suites pass (144; the reset test now checks the vector fetch comes after
+the pulse and counts the refresh it takes).
