@@ -5169,3 +5169,27 @@ is 30), but its Z80 starts 15 MCLK later against the 68000's release, and the su
 such 15-MCLK steps puts the timer-A poll on the other side. Each of those steps -- the
 Z80's resume after a bus hold, the 68000's cycles in the hold, the refresh within it --
 is a separate question at the 7-15 MCLK level, and the Z80 count cannot tell them apart.
+
+### BlastEm with the same reset (Aubrey's suggestion)
+
+Aubrey: reset BlastEm at frame 25 too, for a second view from the accurate camp -- the
+differences might not all be the board's. `scripts/blastem_frames.py` gains
+`--reset-frame` and `--seed`: BlastEm's soft reset lands at a random point of the next
+frame (`genesis.c` `soft_reset`, `rand()`), so the process's generator is seeded first
+and a run repeats exactly; the reset is placed to the frame, not to the clock. Its
+frames, cropped of its 8-line top border and mapped to the board's DAC levels, are
+scored against the referee's with `scripts/compare_referee.py` like the board's.
+
+Frames 6,981-7,200: every BlastEm frame is identical to one of the referee's, and
+BlastEm **slips one frame against the referee at 7,051** -- where the board slipped
+before the read-ahead (7,047-7,051; Session 13), and for all seven seeds tried, i.e.
+wherever in the frame its reset lands. The board, with the read-ahead, slips at 7,094.
+
+So two independent emulators part from the die model at 7,051 the same way. Session 13
+traced that slip to the die's 68000 being late into a V-counter wait because its Z80
+made 332 bank reads in the stretch before, against the board's 54: the two sound drivers
+were at different points of their playback. BlastEm is a detector and cannot overrule
+the die; but the die's Z80 is the part of Nuked-MD with a known fault (its README's
+Notes put Overdrive 2's first-run freeze down to a Z80 microcode issue), and its chip
+combination (NMOS 68000 and Z80 with the FC1004) matches no console Sega sold. Where the
+die and both emulators disagree about the Z80, the die is not an obviously better judge.
