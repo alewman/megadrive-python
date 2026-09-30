@@ -5300,3 +5300,13 @@ exact-clock press are adopted (neither moves A's numbers).
 
 Checks: both suites pass (144; the reset test now checks the vector fetch comes after
 the pulse and counts the refresh it takes).
+
+**Aubrey's decision: B.** "Go with B as the current implementation, but record the
+refresh behavior as a supported finding rather than a fully proven model. The deciding
+evidence is the direct 68000 bus-cycle comparison, since that is the subsystem the
+refresh change actually affects." So `system.RESET_RESTARTS_REFRESH` is on, documented
+as a supported finding (undocumented-behavior, the bus, item 11), and A stays
+reproducible: `od2_compare.py` and `od2_boot_drift.py --no-refresh-restart`, which give
+the table's numbers exactly. B is not to be tuned further to recover the late-frame
+picture unless the discrepancy that causes it is found. The core's 40-clock reset is
+raised on m68000-python, not compensated here.

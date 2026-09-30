@@ -78,9 +78,13 @@ def referee(trace: Path) -> list[tuple]:
             if e.type == nuked_md.EV_M68K and e.by_m68k]  # fmt: skip
 
 
-def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss") -> list[tuple]:
+def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss",
+          refresh_restart: bool = True) -> list[tuple]:  # fmt: skip
     """The same for the board, from power-on to ``until`` MCLK, reset pressed at
     ``reset_mclk`` as in docs/worklog.md Session 13's aligned run."""
+    import megadrive_python.system
+
+    megadrive_python.system.RESET_RESTARTS_REFRESH = refresh_restart  # A or B, Session 14
     log: list[list] = []
     bus_cycle = Board._bus_cycle
     writing = {"flag": False}
@@ -154,6 +158,8 @@ def main() -> int:
     parser.add_argument("--span", type=int, default=200_000, help="MCLK after the anchor")
     parser.add_argument("--until", type=int, default=42_800_000, help="board run length")
     parser.add_argument("--changes", type=int, default=60, help="difference changes shown")
+    parser.add_argument("--no-refresh-restart", action="store_true",
+                        help="the board without system.RESET_RESTARTS_REFRESH (A)")  # fmt: skip
     parser.add_argument("--zero", type=int, default=1, help="which $A11100 release anchors")
     parser.add_argument("--from-reset", type=int, nargs=2, metavar=("REFEREE", "BOARD"),
                         help="anchor at the reset vector fetch after these clocks")  # fmt: skip
@@ -162,7 +168,7 @@ def main() -> int:
                         help="anchor at the K-th vblank edge before the Z80's start")  # fmt: skip
     args = parser.parse_args()
     theirs = referee(args.trace)
-    ours = board(args.rom, args.reset_mclk, args.until, args.machine)
+    ours = board(args.rom, args.reset_mclk, args.until, args.machine, not args.no_refresh_restart)
     if args.from_reset:
         a_r = reset_anchor(theirs, args.from_reset[0])
         a_b = reset_anchor(ours, args.from_reset[1])

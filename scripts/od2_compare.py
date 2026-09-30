@@ -72,11 +72,17 @@ def run_board(
     align_fm: bool,
     frames: int,
     machine: str = "megadrive-tmss",
+    refresh_restart: bool = True,
 ) -> dict:
     sys.path.insert(0, str(src))
+    from megadrive_python import system as system_module
     from megadrive_python.cartridge import Cartridge, load_image
     from megadrive_python.machine import MACHINES
     from megadrive_python.system import System
+
+    # A and B of Session 14: the board with and without the refresh restart at the
+    # reset button (system.RESET_RESTARTS_REFRESH), kept reproducible.
+    system_module.RESET_RESTARTS_REFRESH = refresh_restart
 
     def make() -> System:
         system = System(MACHINES[machine], Cartridge.from_image(load_image(rom)))
@@ -152,16 +158,20 @@ def main() -> int:
     parser.add_argument("--align-fm", action="store_true", help="ROM-specific; see above")
     parser.add_argument("--frames", type=int, default=80)
     parser.add_argument("--machine", default="megadrive-tmss", help="the referee is version 1")
+    parser.add_argument("--no-refresh-restart", action="store_true",
+                        help="the board without system.RESET_RESTARTS_REFRESH (A)")  # fmt: skip
     args = parser.parse_args()
     theirs = referee_reads()
-    ours = run_board(
-        args.src.resolve(), args.rom, args.reset_mclk, args.align_fm, args.frames, args.machine
-    )
+    ours = run_board(args.src.resolve(), args.rom, args.reset_mclk, args.align_fm, args.frames,
+                     args.machine, not args.no_refresh_restart)  # fmt: skip
     offset = (REFEREE_VBLANK_AFTER - REFEREE_Z80_START) - (ours["vblank"] - ours["z80_start"])
     n = 0
     while n < min(len(theirs), len(ours["reads"])) and theirs[n] == ours["reads"][n]:
         n += 1
-    print(f"src {args.src}; {args.machine}; reset {args.reset_mclk}; FM aligned: {args.align_fm}")
+    print(
+        f"src {args.src}; {args.machine}; reset {args.reset_mclk}; FM aligned: {args.align_fm}; "
+        f"refresh restart: {not args.no_refresh_restart}"
+    )
     print(f"boot offset {offset:+d} MCLK; matching Z80 reads {n} "
           f"(of {len(ours['reads'])}; first difference at ${theirs[n]:04X} / "
           f"${ours['reads'][n]:04X})")  # fmt: skip

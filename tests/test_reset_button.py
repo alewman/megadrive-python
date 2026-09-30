@@ -94,3 +94,27 @@ def test_a_halted_68000_is_brought_back() -> None:
     assert not system.m68k.halted
     system.run_frame()
     assert _boots(system) == 2
+
+
+def test_the_reset_restarts_the_refresh(monkeypatch) -> None:
+    """The reset button restarts the cartridge refresh grid from the pulse's start and
+    clears a pending work-RAM refresh (a supported finding: docs/worklog.md, "The reset
+    exception, the console model, and the refresh contradiction"); with
+    ``RESET_RESTARTS_REFRESH`` off the board keeps its power-on grid."""
+    import megadrive_python.system as system_module
+    from megadrive_python.board import CART_REFRESH_MCLK
+
+    system = _system()
+    start = system.mclk
+    system.press_reset()
+    system.step()
+    assert start % CART_REFRESH_MCLK  # (a press off the power-on grid, or this proves nothing)
+    grid = system.board.cart_refresh_due - start
+    assert grid % CART_REFRESH_MCLK == 0  # the grid starts again at the pulse
+    assert system.board.stall == 14  # and the vector fetch after the pulse takes it
+
+    monkeypatch.setattr(system_module, "RESET_RESTARTS_REFRESH", False)
+    system = _system()
+    system.press_reset()
+    system.step()
+    assert system.board.cart_refresh_due % CART_REFRESH_MCLK == 0  # the power-on grid

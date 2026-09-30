@@ -70,6 +70,18 @@ source, the way sms-python does.
     first. Its accesses to the VDP go through the 68000's bus arbitration like those
     through the bank window (held 60, 75 or 90 MCLK). Die-derived ([worklog.md](worklog.md),
     "The Z80 after a hold").
+
+11. **The reset button restarts the 68000's refresh** -- *a supported finding, not a
+    proven model*. On Nuked-MD no cartridge read is refresh-stretched before the reset
+    and every one after it lies 0-28 MCLK past a multiple of 896 from the pulse's start;
+    a pending work-RAM refresh is cleared, the first refreshed RAM access coming
+    2,352-2,408 MCLK after the pulse's start. With both the board's 68000 bus cycles
+    match the die's four to five times more closely after a reset; the Overdrive 2
+    picture 7,000 frames on matches it less well, a downstream measure also moved by
+    the die's Z80 caveat. The work-RAM refresh's rule after the reset is not settled.
+    `system.RESET_RESTARTS_REFRESH` (Aubrey's decision, [worklog.md](worklog.md)
+    Session 14); the OD2 harnesses' `--no-refresh-restart` runs the board without it.
+
 ## The VDP
 
 1. **The sprite cache.** The Y position and size/link fields of each sprite are

@@ -40,7 +40,7 @@ from z80_python.timing import instruction_timing
 
 from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant
 from .audio import AudioPath
-from .board import Board
+from .board import CART_REFRESH_MCLK, Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
 
@@ -53,6 +53,21 @@ MAX_Z80_T = 23
 #: 68000 clocks the reset button holds the 68000 in reset: "68k RESET pulse is asserted
 #: for 128 VCLK" (Eke, forum t=1262; VCLK is the 68000's clock).
 RESET_PULSE_CLOCKS = 128
+
+#: The reset button restarts the 68000's refresh: the cartridge refresh grid starts
+#: again from the pulse's start, and a pending work-RAM refresh is cleared, the next
+#: falling due :data:`RESET_RAM_REFRESH_MCLK` after the pulse's start. A **supported
+#: finding, not a proven model**: on Nuked-MD (Overdrive 2 from power-on) no cartridge
+#: read is refresh-stretched before the reset and every one after it lies 0-28 MCLK past
+#: a multiple of 896 from the pulse's start, and the first refreshed work-RAM access
+#: comes 2,352-2,408 MCLK after it with unrefreshed ones before; with both, the board's
+#: 68000 bus cycles match the die's four to five times more closely after the reset
+#: (docs/worklog.md, "The reset exception, the console model, and the refresh
+#: contradiction"). The work-RAM refresh's rule after that is not settled. Aubrey
+#: adopted it knowing the Overdrive 2 picture 7,000 frames on matches the die less
+#: well with it; ``RESET_RESTARTS_REFRESH = False`` is the board without it.
+RESET_RESTARTS_REFRESH = True
+RESET_RAM_REFRESH_MCLK = 2380
 
 #: When the Z80 takes up its bus again, measured on the die model (Nuked-MD, the
 #: Overdrive 2 run from power-on; docs/worklog.md, "The Z80 after a hold"). Its clock
@@ -390,6 +405,9 @@ class System:
             held = -(-(self.reset_at - start) // M68K_DIVIDER) * M68K_DIVIDER
             cpu.clock += RESET_PULSE_CLOCKS + held // M68K_DIVIDER
             board.step_start = start + held + RESET_PULSE_CLOCKS * M68K_DIVIDER
+            if RESET_RESTARTS_REFRESH:
+                board.cart_refresh_due = start + held + CART_REFRESH_MCLK
+                board.ram_refresh_due = start + held + RESET_RAM_REFRESH_MCLK
             board.stall = 0
             if board.m68k_accesses:
                 board.m68k_accesses.clear()
