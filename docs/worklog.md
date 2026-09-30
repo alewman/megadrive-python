@@ -5193,3 +5193,32 @@ the die; but the die's Z80 is the part of Nuked-MD with a known fault (its READM
 Notes put Overdrive 2's first-run freeze down to a Z80 microcode issue), and its chip
 combination (NMOS 68000 and Z80 with the FC1004) matches no console Sega sold. Where the
 die and both emulators disagree about the Z80, the die is not an obviously better judge.
+
+### Three ways at the sound driver (A2)
+
+To use BlastEm as a tie-breaker at a finer grain than frames, `blastem_frames.py` gains
+`--event-log`: BlastEm's hardware event log (`event_log.c`, the standalone's `-e`),
+started through the libretro core before the cartridge loads, so it records every
+YM2612 register write with its clock. The same stream comes from the referee's bus
+trace (the Z80's writes to $4000-$4003) and from the board's YM2612. Two cautions from
+doing it: the referee's trace shows the driver's data-port writes but not all its
+address-port writes, so the streams are compared on the data-port values alone (the
+DAC samples and the timer-control $35s, in order); and BlastEm's timestamps swing by
+about 270 MCLK from write to write where the board's stay within the FM clock's 42 of
+the referee's, so BlastEm cannot referee questions at the 15-MCLK level.
+
+Identical data-port writes from the driver's first ($FF, $02, $15, ...) after the reset:
+
+| streams | identical writes |
+| --- | ---: |
+| referee vs board | 470 |
+| referee vs BlastEm | 435 |
+| board vs BlastEm | 435 |
+
+The referee and the board run together longest; BlastEm leaves both at the same write,
+the same way. Each departure is where the timer-control write falls among the DAC
+samples -- when timer A overflows against the Z80 -- the sensitivity every Z80
+comparison here has met. So at the driver's level BlastEm does not side with the
+referee against the board; its frame-level slip at 7,051 is its own driver's path, not
+evidence about the die's. The bus-hold steps (option A) are left to the referee alone,
+with the Z80 caution noted above.
