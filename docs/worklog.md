@@ -5345,3 +5345,30 @@ one better, none worse -- Phantasy Star Fukkokuban (Japan) from an `error:` (a f
 its reset sequence) to `same`, the double-bus-fault halt; Overdrive 2's harness numbers
 unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchronise the
 68000 before the Z80 starts, so two clocks at the reset do not reach it).
+
+### The ninja's arm colours (Aubrey's playthrough, ~5,775-5,900)
+
+- **What goes wrong.** In the aligned run (reset at frame 25, `megadrive-tmss`) the
+  board's pictures are identical to the referee's through frame 5,800 and part at
+  5,801: about 56,000 pixels for ten frames (the transition garbage Aubrey saw), then
+  about 8,500 from 5,811 (the arms). The frontend's numbering, with no reset, is about 26
+  lower. BlastEm and the die both draw the arms grey; the board draws them orange and
+  green. `scripts/vdp_streams.py` against BlastEm: the first VRAM write the two disagree
+  on is the sprite table's $F010 at the board's frame 5,775 (no-reset numbering) -- the
+  board writes $4545 (palette line 2, and a byte write's replicated value) where BlastEm
+  writes $0160 (the next Y). The board's 68000 writes the sprite table late, from line 3
+  of the picture instead of in the blank, and the demo's code takes another path when it
+  is late.
+- **Why the 68000 is late.** The die from its save at frame 5,750 (`reference/arms-die`,
+  `NMD_LOAD`), its 68000 traced over frames 5,790-5,804, against the board's aligned run
+  over the same frames: once lined up, the board falls behind steadily, 43,197 MCLK over
+  4.17 frames. Of that, about 20,800 is the work-RAM refresh (the board refreshes on RAM
+  writes the die does not refresh, +57,540, and the reverse, -36,708: the board refreshes
+  work RAM more often), about 3,400 comes after `MULS.W` (the core charges 2 clocks more
+  than the die's 68000 for some operands), 2 clocks at a `MOVEM.W` to memory (the core's
+  first write 2 idle clocks late), and the rest is the level-4 interrupt (the per-line
+  palette writes) entered at other instructions, which largely cancels.
+- **Next.** The work-RAM refresh is the largest measured term and the rule the boot
+  could not pin down (544 RAM accesses there); this 3D code makes tens of thousands of
+  RAM accesses in the die's trace, enough to find it. `MULS` and `MOVEM` are core timing
+  questions for m68000-python, with the die's cycles as evidence.
