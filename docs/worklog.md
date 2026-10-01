@@ -5623,3 +5623,31 @@ Overdrive 2: aligned frames 5,741-5,840 100 of 100; 6,981-7,200 219 identical, 1
 the expected frame (unchanged); matching Z80 reads 192 -> 331; boot offset -217.
 VDPFIFOTesting 122/122 on eight machines, 114 on genesis3; suites 147 pass; Overdrive 2
 runs at the same speed (9.3 frames a second from the frame-7,036 snapshot).
+
+### Kabuto's figures or the die's (Aubrey's option 3)
+
+Where the two disagree -- a transfer's start-up (Kabuto 5.6 cycles, the die 8.0) and
+the fast pace (2.4 against 2.47 a word) -- the board keeps Kabuto's by default, as the
+tier rule says, and `Machine.dma_figures = "die"` takes the die's: a start-up of 56
+MCLK and a read every 190/11 MCLK (3,420/198: an H40 line's worth of reads, the
+fraction carried so none drifts). The `nuked-md` machine is `megadrive-tmss` with the
+die's figures, for the comparisons against Nuked-MD; `run_nuked_md.py dma
+--dma-figures die` gives the probe's own machine the same.
+
+With the die's figures, against the die (cycles beyond the write, NTSC as the probe's
+referee runs): every regime within 2 cycles -- active display 1 to 512 words, VBlank and
+display off for CRAM -- but VRAM in a blank line, 4-8 short from 16 words on.
+
+| Overdrive 2 | `megadrive-tmss` | `nuked-md` |
+|---|---:|---:|
+| boot offset; matching Z80 reads | -217; 331 | -86; 192 |
+| 68000 bus cycles to the Z80's start, 60+ MCLK steps | 52 | 33 |
+| frames 6,981-7,200 identical (window 3); at the expected frame | 219; 182 | 219; 182 |
+| first frame off the expected | 7,053 | 7,053 |
+
+The slip does not move. Before the Z80's start one step is left, -60 MCLK after the
+64-word CRAM transfer at $39889E; and the die's cost for such a transfer depends on
+where along the line it starts -- 161 to 173 cycles over 16 starts 3 NOPs apart (a
+blank line), where the board's averaged pace gives 166.4 every time. Matching it
+transfer by transfer needs the die's own read times, which its bus trace does not
+show: the VDP's DMA reads do not appear among the cycles the harness logs.

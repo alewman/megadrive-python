@@ -378,6 +378,15 @@ def dma_hold(cycles, *, control_address: int = 0xC00004) -> int | None:
 
 
 def cmd_dma(args) -> int:
+    if args.dma_figures != "kabuto":
+        # The probe's own machine with the other DMA figures (``Machine.dma_figures``).
+        from dataclasses import replace
+
+        from megadrive_python.machine import MACHINES
+
+        name = f"{args.machine}+{args.dma_figures}"
+        MACHINES[name] = replace(MACHINES[args.machine], dma_figures=args.dma_figures)
+        args.machine = name
     words = [int(w) for w in args.words.split(",")]
     print("# the cost of a 68000-memory DMA beyond the write that starts it,")
     display = "display on" if args.display_on else "display off"
@@ -395,7 +404,9 @@ def cmd_dma(args) -> int:
             run = nmd.run(rom, stop=REFEREE_RESET + window + 5000,
                           trace=(REFEREE_RESET, REFEREE_RESET + window), trace_mask=1)  # fmt: skip
             ref = dma_hold(run.m68k(dma=False))
-            _, log = nmd.board_trace(rom, accesses=90_000 if args.when else 1500 + args.delay)
+            _, log = nmd.board_trace(
+                rom, machine=args.machine, accesses=90_000 if args.when else 1500 + args.delay
+            )
             board = dma_hold(log)
             if ref is None or board is None:
                 print(f"{target:7} {n:6}   no transfer seen")
@@ -953,6 +964,11 @@ def main() -> int:
     p.add_argument("--display-on", action="store_true", help="the display enabled")
     p.add_argument("--when", choices=("vblank", "active"), help="wait for this first")
     p.add_argument("--delay", type=int, default=0, help="NOPs after the wait")
+    p.add_argument(
+        "--machine", default="genesis", help="the board's machine (nuked-md: the die's DMA figures)"
+    )
+    p.add_argument("--dma-figures", default="kabuto", choices=("kabuto", "die"),
+                   help="Machine.dma_figures for the board")  # fmt: skip
     p.set_defaults(func=cmd_dma)
 
     p = sub.add_parser("arbiter", help="MoD's bank-window experiments")
