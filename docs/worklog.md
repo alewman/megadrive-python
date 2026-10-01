@@ -5418,6 +5418,79 @@ unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchro
   die's count. A running `System` pickles: a snapshot at frame 5,789 of the aligned run
   replays the window in seconds instead of 10 minutes (a fresh process must build one
   `System` first, which builds the core's dispatch table).
-- **Left.** The lag still grows 3-7k MCLK a frame, and the pictures match through
-  5,840 regardless. The work-RAM refresh and `MULS` (+4,914 / -1,484 MCLK after it,
-  net about +3,400 over the window) are next, then the other playthrough notes.
+- **Left.** The lag still grew 3-7k MCLK a frame: the work-RAM refresh, next. The
+  "+2 clocks after `MULS`" was the same misattribution as the rest -- the arbiter's
+  charge landing after a long instruction: m68000-python times `MULS` by the manual
+  (38 + 2n, n the 01/10 transitions; SST-certified), and the die's `muls.w d2,d0` with
+  d2 = $0AAA (read on the bus just before) takes 62 clocks, the manual's figure. No
+  core issue.
+
+### The work-RAM refresh
+
+The boot's 544 RAM accesses never settled it; the arms window's die trace has 135,937
+(Nuked-MD, frames 5,790-5,804; IACK cycles, which it logs as reads of $FFFFF8, set
+aside). 11,203 are stretched by exactly 21 MCLK, a few by 7, 14, 28 or 35.
+
+- **The board's rule fails outright.** It had the next work-RAM access always take a
+  refresh due 805 MCLK after the last; on the die, RAM accesses go unstretched 50,000
+  MCLK after the last stretched one. The refresh is hidden when the RAM is idle.
+- **The rule that fits.** It falls due 819 MCLK after the last one began. A work-RAM
+  access starting within 98 MCLK of that takes it and waits 21. If none does, it runs
+  by itself from +112 to +133, and an access starting from +98 waits for its end -- on
+  the 68000's next clock edge, which is why the partial waits are 35 (+98), 28 (+105),
+  14 (+119) and 7 (+126). The next falls due 819 after whichever began. Replayed over
+  the 135,937 accesses (resynchronised on the die's own refreshes), it predicts every
+  stall exactly but 172; 153 of those are a refresh one 68000 clock early, mostly where
+  the due time falls on an odd master clock (121 of 153, against 834 of 2,284 on
+  time) -- a clock-domain crossing the trace's half-MCLK resolution cannot settle.
+  Only P + window = 931 is fixed by the data for the run-by-itself case; 819 (not
+  812-818) is what the triggered case needs.
+- **On the board** (`RAM_REFRESH_HIDDEN`, False keeping the old rule): the arms
+  window's RAM stalls become 11,898 of 21, 402 of 35, 172 of 28, 129 of 14, 197 of 7
+  over 15 frames against the die's 11,203 / 338 / 169 / 116 / 179 over 14 (the old rule:
+  16,027 of 21). The steady lag behind the die is gone: the vblank milestones wander
+  -9k to +16k instead of climbing to +69k. `RESET_RAM_REFRESH_MCLK` re-swept under the
+  rule: 2,359-2,408 all give the best boot comparison, 2,380 stays.
+
+| | arbiter fix only | + refresh rule |
+|---|---:|---:|
+| boot, 68000 bus cycles 1.4M MCLK after reset: steps of 7+ / end | 1,355 / +12 | 931 / +17 |
+| same over 3.5M MCLK: steps of 60+ / end | 22 / +18 | 16 / +23 |
+| aligned frames 5,741-5,840 identical | 100 of 100 | 100 of 100 |
+| frames 6,981-7,200 identical (window 3) | 218 of 220 | 220 of 220 |
+| ... at the expected offset; first not | 110; 7,053 | 75; 7,053 |
+| boot offset; matching Z80 reads | -61; 1,150 | -217; 192 |
+
+The judge, the direct bus-cycle comparison, improves: over the first 850,000 MCLK
+after the reset the old rule drifted to +818 and the new one has no step at all. The
+boot offset is read at the Z80's start, inside a polling loop ($2EFAD2-$2F0246) where
+both runs take 60+ MCLK steps either way, so it moves with where a wait loop exits;
+the late-frame offset count is downstream of the same. Neither is tuned for.
+
+**Against the hardware.** Nemesis's HV/status captures (288 dumps from real consoles;
+the sampling loop writes work RAM twice every 20 clocks, with a 112-MCLK gap that the
+98-MCLK trigger window can miss) are the one hardware source that sees this. They do
+not tell the two rules apart, and they found a weakness in their harness instead:
+
+- `run_hv_captures.py` fits each dump's refresh phases with a fast model of the loop,
+  which now follows the board's rule (its RAM phase searched over 0-938, the new
+  rule's whole 931-MCLK cycle). It took the first way of anchoring that left any
+  survivor, and with the new rule a tolerant first-sample anchoring let a poor fit
+  through (NTSC-J intnorm H32V28 dumps 2 and 4, PAL intinv H32V30 dump 7 -- each a
+  third wrong) where the strict second-sample one had the right placement: run on the
+  board, the old placement (its RAM phase moved 14, the same phase under the new rule)
+  matches as well as before -- 39 differences, 13 on another dump. Both anchorings
+  are now tried strictly before either tolerates, and up to 32 placements within 20
+  long-score samples of the best (duplicates dropped) are run on the board, where
+  only exact ties, at most 8, were. 143 s for all 288 (91 before).
+- Same harness, both rules: 8,763,223 words equal under the old, 8,762,828 under the
+  new, of 8,847,360. Every capture is within 34 words but PAL intinv H40V28 (-445),
+  all in its dump 6, which no placement fits under either rule (its best long score
+  698 of ~2,400 even under the old; about 11,000 differences either way). That
+  capture's floors in `tests/hv_captures_baseline.json` are lowered to what the new
+  rule gives (264,783 equal, 6,876 away from a step), the only baseline change.
+
+The mini sweep against the arbiter fix's run: 6 better (Ultraman 4,817 -> 4,648, Sansan
+2,370 -> 1,868, Sunset Riders, Castlevania, Sonic 3, After Burner II), 3 worse (MUSHA
+28,736 -> 30,077, Gauntlet IV phase -> 1,091 differing, Fantasy Zone +42) -- against
+MAME, which has no refresh model; MUSHA and Gauntlet IV are worth a look.
