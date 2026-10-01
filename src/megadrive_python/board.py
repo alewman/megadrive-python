@@ -61,12 +61,24 @@ CART_REFRESH_STALL = 14
 #: one (docs/worklog.md, "The one-frame slip").
 Z80_REFRESH_STALL = 7
 Z80_REFRESH_LATE = 7
-#: The work-RAM refresh the VDP performs: once due, the next work-RAM access waits 3
-#: 68000 clocks; it falls due again 791-819 MCLK after that access started (Nuked-MD
-#: probes; Kabuto: "RAM accesses get their own further slowdowns"). The midpoint is
-#: used; which value in the window is right is not settled (docs/worklog.md).
+#: The work-RAM refresh (Kabuto: "RAM accesses get their own further slowdowns"). It
+#: falls due :data:`RAM_REFRESH_AFTER_MCLK` after the last one began. A work-RAM access
+#: starting within :data:`RAM_REFRESH_TRIGGER_MCLK` of that takes it, and waits 3
+#: 68000 clocks; if none does, the refresh runs by itself from
+#: :data:`RAM_REFRESH_SELF_MCLK` after it fell due, for the same 21 MCLK, and an
+#: access starting in the last 14 MCLK before that or while it runs waits for its end.
+#: So a 68000 that leaves the RAM alone pays nothing, and the next falls due 819 after
+#: whichever began. Die-derived: Nuked-MD's 68000 in Overdrive 2's 3D scene, 135,937
+#: work-RAM accesses, every stall predicted exactly but 172 (153 of them a refresh one
+#: 68000 clock early, mostly on an odd master clock); the old rule -- the next access
+#: always takes it, due again 805 after -- refreshed 20,800 MCLK too much over those
+#: four frames (docs/worklog.md "The work-RAM refresh"). ``RAM_REFRESH_HIDDEN`` False
+#: keeps the old rule, with the 805 the boot probes left it at.
 RAM_REFRESH_STALL = 21
-RAM_REFRESH_AFTER_MCLK = 805
+RAM_REFRESH_AFTER_MCLK = 819
+RAM_REFRESH_TRIGGER_MCLK = 98
+RAM_REFRESH_SELF_MCLK = 112
+RAM_REFRESH_HIDDEN = True
 #: Every 68000 access to the Z80's space costs one extra 68000 clock. Nothing hardware
 #: covers the question, so the tier rule lets a die-derived model answer it: Nuked-MD
 #: holds all 68 of the FM probe's $A0xxxx accesses 7 MCLK where the board held none
@@ -83,6 +95,40 @@ Z80_SPACE_STALL = M68K_DIVIDER
 #: (docs/worklog.md, "The Z80 after a hold"). Die-derived for reads; the run has no
 #: Z80 VDP writes, which take the same path because the VDP has no other bus.
 Z80_VDP_ARBITRATED = True
+#: A Z80 access over the 68000's bus delays the 68000 only from the bus cycle it next
+#: wants: one inside a long internal operation (a multiply, a divide, a shift) costs it
+#: what runs past that operation, not the whole grant. The board charged every access
+#: as if the 68000 wanted the bus four clocks after its last cycle, and in Overdrive
+#: 2's 3D scene (frames 5,790-5,804, the ninja's arms) that made 28 % of the Z80's
+#: 9,710 bank reads cost the 68000 13 clocks where the die charges 13 for 6 % of its
+#: reads, and the board's 68000 fell about 10,000 MCLK a frame behind the die's. Die-derived
+#: (Nuked-MD's 68000 trace from its frame-5,750 save; docs/worklog.md "The ninja's arm
+#: colours"); MoD's ``jmp (a0)`` loop, always on the bus, costs the same either way.
+Z80_GRANT_OVERLAPS_IDLE = True
+
+
+def ram_refresh(due: int, t: int) -> tuple[int, int]:
+    """The work-RAM refresh for a work-RAM access starting at ``t`` with the next
+    refresh due at ``due``: the MCLK the access waits, and when the next falls due
+    (:data:`RAM_REFRESH_HIDDEN`'s rule, or the old one). The board and the harnesses
+    that model its refresh (``run_hv_captures``, ``run_nuked_md``) share it."""
+    if t < due:
+        return 0, due
+    if not RAM_REFRESH_HIDDEN:
+        return RAM_REFRESH_STALL, t + 805
+    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+    if t >= due + ran:
+        # Nobody took the ones that fell due since: each ran by itself.
+        period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+        due += ((t - due - ran) // period + 1) * period
+        if t < due:
+            return 0, due
+    if t < due + RAM_REFRESH_TRIGGER_MCLK:
+        return RAM_REFRESH_STALL, t + RAM_REFRESH_AFTER_MCLK
+    began = due + RAM_REFRESH_SELF_MCLK
+    # Until its end, on the 68000's next clock edge (the die's waits are 7, 14, 28, 35).
+    wait = -(-(began + RAM_REFRESH_STALL - t) // M68K_DIVIDER) * M68K_DIVIDER
+    return wait, began + RAM_REFRESH_AFTER_MCLK
 
 
 class Lockup(Exception):
@@ -172,6 +218,8 @@ class Board:
         #: inside has already been executed -- ``System.step``).
         self.z80_stall = 0
         self.m68k_pending_stall = 0
+        #: The master clock the 68000's last instruction ended at (``System.step``).
+        self.m68k_step_end = 0
         #: Totals for ``scripts/run_bus_arbiter.py``: bank accesses and the cycles they
         #: cost each CPU.
         self.bank_accesses = 0
@@ -319,11 +367,12 @@ class Board:
                 t += stretch
                 if grid is not None:
                     grid[-1][1] += stretch
-        if address >= 0xE00000 and t >= self.ram_refresh_due:
-            self.stall += RAM_REFRESH_STALL
-            self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
-            if grid is not None:
-                grid[-1][1] += RAM_REFRESH_STALL
+        if address >= 0xE00000:
+            wait, self.ram_refresh_due = ram_refresh(self.ram_refresh_due, t)
+            if wait:
+                self.stall += wait
+                if grid is not None:
+                    grid[-1][1] += wait
 
     # -- the arbiter ---------------------------------------------------------
 
@@ -379,10 +428,18 @@ class Board:
         if not taken and tick <= own:
             self.z80_refresh_taken = tick
         wanted = t + CUTOFF_MCLK + 1
+        nxt = None
         for begin, _span in self.m68k_accesses:
             if begin > t + CUTOFF_MCLK:
+                nxt = begin
                 break
             wanted = max(wanted, begin + 4 * M68K_DIVIDER)  # its next, four clocks on
+        if Z80_GRANT_OVERLAPS_IDLE:
+            # The 68000 waits only from when it wants the bus again: its next bus cycle
+            # in this instruction, or else where its next instruction starts.
+            if nxt is None:
+                nxt = self.m68k_step_end + self.m68k_pending_stall
+            wanted = max(wanted, nxt)
         resume += -(resume - wanted) % M68K_DIVIDER
         m68k_cycles = max(0, resume - wanted) // M68K_DIVIDER
         if m68k_cycles:

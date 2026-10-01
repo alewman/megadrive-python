@@ -39,7 +39,8 @@ source, the way sms-python does.
 6. **TAS**: the Genesis bus drops the write half of `TAS` (m68000-python's
    `docs/undocumented-behavior.md`; it exposes a `tas_write` hook for this).
 7. **Refresh slow-down**: 2 of every 128 68000 cycles, not while writing to the
-   VDP; work RAM has an extra slow-down Kabuto did not measure ([timing.md](timing.md)).
+   VDP; work RAM has an extra slow-down Kabuto did not measure ([timing.md](timing.md)),
+   now measured on the die (item 13).
    Separately, **every 68000 access to $A00000-$A0FFFF is one 68000 clock longer**:
    nothing hardware says so, but Nuked-MD holds every such bus cycle 7 MCLK and MAME
    charges the same clock (`before_delay(1)`, "TODO: unverified"). The board charges it
@@ -81,6 +82,22 @@ source, the way sms-python does.
     the die's Z80 caveat. The work-RAM refresh's rule after the reset is not settled.
     `system.RESET_RESTARTS_REFRESH` (Aubrey's decision, [worklog.md](worklog.md)
     Session 14); the OD2 harnesses' `--no-refresh-restart` runs the board without it.
+12. **A Z80 bank read costs the 68000 only the bus time it wanted.** Kabuto's "average
+    68k delay is around 11 68k cycles" and MoD's measurements are of a 68000 always on
+    the bus. Inside a multiply or another long internal operation it is not, and on
+    Nuked-MD a read granted then costs it only what runs past the operation: in
+    Overdrive 2's 3D scene 13-clock charges are 6 % of the Z80's reads on the die, where
+    charging from four clocks after the 68000's last cycle gave 28 % and put its 68000
+    about 10,000 MCLK a frame behind. Die-derived; `board.Z80_GRANT_OVERLAPS_IDLE`
+    ([worklog.md](worklog.md), "The ninja's arm colours").
+13. **The work-RAM refresh is hidden when the RAM is idle.** It falls due 819 MCLK after
+    the last one began; a work-RAM access within 98 MCLK of that takes it and waits 3
+    68000 clocks, and if none comes it runs by itself 112-133 MCLK after, an access
+    then waiting for its end (7-35 MCLK, on a 68000 clock edge). A 68000 that leaves
+    the RAM alone pays nothing. Nuked-MD, 135,937 work-RAM accesses in Overdrive 2's 3D
+    scene, every stall predicted exactly but 172 (153 a refresh one clock early, an
+    unsettled clock-domain effect). Die-derived; `board.RAM_REFRESH_HIDDEN`
+    ([worklog.md](worklog.md), "The work-RAM refresh").
 
 ## The VDP
 

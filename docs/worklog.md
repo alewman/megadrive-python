@@ -5345,3 +5345,180 @@ one better, none worse -- Phantasy Star Fukkokuban (Japan) from an `error:` (a f
 its reset sequence) to `same`, the double-bus-fault halt; Overdrive 2's harness numbers
 unchanged (B 1,150 and A 4,738 at their best presses: the vblank waits resynchronise the
 68000 before the Z80 starts, so two clocks at the reset do not reach it).
+
+### The ninja's arm colours (Aubrey's playthrough, ~5,775-5,900)
+
+- **What goes wrong.** In the aligned run (reset at frame 25, `megadrive-tmss`) the
+  board's pictures are identical to the referee's through frame 5,800 and part at
+  5,801: about 56,000 pixels for ten frames (the transition garbage Aubrey saw), then
+  about 8,500 from 5,811 (the arms). The frontend's numbering, with no reset, is about 26
+  lower. BlastEm and the die both draw the arms grey; the board draws them orange and
+  green. `scripts/vdp_streams.py` against BlastEm: the first VRAM write the two disagree
+  on is the sprite table's $F010 at the board's frame 5,775 (no-reset numbering) -- the
+  board writes $4545 (palette line 2, and a byte write's replicated value) where BlastEm
+  writes $0160 (the next Y). The board's 68000 writes the sprite table late, from line 3
+  of the picture instead of in the blank, and the demo's code takes another path when it
+  is late.
+- **Why the 68000 is late.** The die from its save at frame 5,750 (`reference/arms-die`,
+  `NMD_LOAD`), its 68000 traced over frames 5,790-5,804, against the board's aligned run
+  over the same frames: once lined up, the board falls behind steadily, 43,197 MCLK over
+  4.17 frames. Of that, about 20,800 is the work-RAM refresh (the board refreshes on RAM
+  writes the die does not refresh, +57,540, and the reverse, -36,708: the board refreshes
+  work RAM more often), about 3,400 comes after `MULS.W` (the core charges 2 clocks more
+  than the die's 68000 for some operands), 2 clocks at a `MOVEM.W` to memory (the core's
+  first write 2 idle clocks late), and about +17,500 in steps the alignment could
+  not name. The biggest of those, 1,100-1,600 MCLK each, are only the level-4 interrupt
+  (the per-line palette writes) arriving at other instructions: both sides take 225
+  per frame, one a line, and the board's entry is no slower (217 MCLK on average
+  against the die's 228).
+- **What it really was: the Z80's bank reads.** That breakdown named steps by where
+  the alignment put them, and the arbiter's charge lands at the start of the 68000's
+  next instruction (`m68k_pending_stall`), so it was filed under whatever came next.
+  Two measures without an alignment found it. Ranked by each address's mean cost
+  (board minus die, times the die's count), the main loop's fetches ($3BAC6E-$3BACE0)
+  cost 7-14 MCLK more on the board, in gaps of 70-130 MCLK with no stall logged.
+  Across the whole window the board's 68000 has 9,234 such gaps against the die's 7,381,
+  and longer ones. The die's trace logs the Z80's
+  bank reads on the 68000's bus (cycles the 68000 did not drive): 8,597, 540-810 a
+  frame, against the board's 9,710. What each cost the 68000, in its clocks:
+
+  | | 9 | 10 | 11 | 12 | 13 |
+  |---|---:|---:|---:|---:|---:|
+  | die (68000 interval round the read) | 431 | 2,804 | 3,719 | 476 | 565 |
+  | board | 103 | 3,569 | 2,345 | 778 | 2,681 |
+
+  On the die 12-13 come with the cartridge refresh (a read 0-84 MCLK after a tick);
+  on the board 13 comes at every refresh phase. It is the arbiter's arithmetic at 3 wait
+  states when the 68000 is taken to want the bus four clocks after its last cycle
+  (`_bank_delay`'s `wanted`) -- and in this code it often does not: the loop is
+  multiplies and long register operations, and a Z80 read granted inside one costs the
+  68000 only what runs past it. `Z80_GRANT_OVERLAPS_IDLE` charges from the 68000's next
+  bus cycle in the instruction, or where its next instruction starts:
+
+  | | board, before | board, after | die |
+  |---|---:|---:|---:|
+  | 13-clock reads | 2,681 | 241 | 565 |
+  | 10 / 11-clock reads | 3,569 / 2,345 | 2,903 / 3,469 | 2,804 / 3,719 |
+  | lag behind the die, per frame (vblank milestones) | ~10,000 | 3,000-7,000 | |
+  | aligned frames 5,741-5,840 identical | 57 of 100 | **100 of 100** | |
+  | frames 6,981-7,200 at the expected offset | 22 of 220 | 110 of 220 | |
+  | first of those only at another offset | 6,981 | 7,053 | |
+  | boot, 68000 bus cycles 1.4M MCLK after reset: steps / end | 1,402 / +18 | 1,355 / +12 | |
+  | boot offset; matching Z80 reads | -67; 187 | -61; 1,150 | |
+
+  MoD's `jmp (a0)` loop, always on the bus, costs the 68000 10.86 cycles a read before
+  and 10.78 after (Kabuto's "around 11"); a `mulu.w d0,d0` / `bra.s` loop 11.01 before,
+  3.09 after (`test_a_z80_access_costs_a_busy_68000_only_what_it_overlaps`).
+  Die-derived; no hardware source measures the 68000's side with it off the bus.
+  Suites 146 pass on both interpreters; the mini sweep against `mini-pin.csv`: 2 better
+  (Sansan 3,134 -> 2,370 pixels, Windjammers 2,244 -> 2,243), 1 worse (Sonic 3, 831 ->
+  862 against MAME, a detector that has no arbiter), 112 unchanged.
+- **Tooling.** The measure that found it, without an alignment: for each (address,
+  kind), the mean time to the next cycle on each side, the difference times the
+  die's count. A running `System` pickles: a snapshot at frame 5,789 of the aligned run
+  replays the window in seconds instead of 10 minutes (a fresh process must build one
+  `System` first, which builds the core's dispatch table).
+- **Left.** The lag still grew 3-7k MCLK a frame: the work-RAM refresh, next. The
+  "+2 clocks after `MULS`" was the same misattribution as the rest -- the arbiter's
+  charge landing after a long instruction: m68000-python times `MULS` by the manual
+  (38 + 2n, n the 01/10 transitions; SST-certified), and the die's `muls.w d2,d0` with
+  d2 = $0AAA (read on the bus just before) takes 62 clocks, the manual's figure. No
+  core issue.
+
+### The work-RAM refresh
+
+The boot's 544 RAM accesses never settled it; the arms window's die trace has 135,937
+(Nuked-MD, frames 5,790-5,804; IACK cycles, which it logs as reads of $FFFFF8, set
+aside). 11,203 are stretched by exactly 21 MCLK, a few by 7, 14, 28 or 35.
+
+- **The board's rule fails outright.** It had the next work-RAM access always take a
+  refresh due 805 MCLK after the last; on the die, RAM accesses go unstretched 50,000
+  MCLK after the last stretched one. The refresh is hidden when the RAM is idle.
+- **The rule that fits.** It falls due 819 MCLK after the last one began. A work-RAM
+  access starting within 98 MCLK of that takes it and waits 21. If none does, it runs
+  by itself from +112 to +133, and an access starting from +98 waits for its end -- on
+  the 68000's next clock edge, which is why the partial waits are 35 (+98), 28 (+105),
+  14 (+119) and 7 (+126). The next falls due 819 after whichever began. Replayed over
+  the 135,937 accesses (resynchronised on the die's own refreshes), it predicts every
+  stall exactly but 172; 153 of those are a refresh one 68000 clock early, mostly where
+  the due time falls on an odd master clock (121 of 153, against 834 of 2,284 on
+  time) -- a clock-domain crossing the trace's half-MCLK resolution cannot settle.
+  Only P + window = 931 is fixed by the data for the run-by-itself case; 819 (not
+  812-818) is what the triggered case needs.
+- **On the board** (`RAM_REFRESH_HIDDEN`, False keeping the old rule): the arms
+  window's RAM stalls become 11,898 of 21, 402 of 35, 172 of 28, 129 of 14, 197 of 7
+  over 15 frames against the die's 11,203 / 338 / 169 / 116 / 179 over 14 (the old rule:
+  16,027 of 21). The steady lag behind the die is gone: the vblank milestones wander
+  -9k to +16k instead of climbing to +69k. `RESET_RAM_REFRESH_MCLK` re-swept under the
+  rule: 2,359-2,408 all give the best boot comparison, 2,380 stays.
+
+| | arbiter fix only | + refresh rule |
+|---|---:|---:|
+| boot, 68000 bus cycles 1.4M MCLK after reset: steps of 7+ / end | 1,355 / +12 | 931 / +17 |
+| same over 3.5M MCLK: steps of 60+ / end | 22 / +18 | 16 / +23 |
+| aligned frames 5,741-5,840 identical | 100 of 100 | 100 of 100 |
+| frames 6,981-7,200 identical (window 3) | 218 of 220 | 220 of 220 |
+| ... at the expected offset; first not | 110; 7,053 | 75; 7,053 |
+| boot offset; matching Z80 reads | -61; 1,150 | -217; 192 |
+
+The judge, the direct bus-cycle comparison, improves: over the first 850,000 MCLK
+after the reset the old rule drifted to +818 and the new one has no step at all. The
+boot offset is read at the Z80's start, inside a polling loop ($2EFAD2-$2F0246) where
+both runs take 60+ MCLK steps either way, so it moves with where a wait loop exits;
+the late-frame offset count is downstream of the same. Neither is tuned for.
+
+**Against the hardware.** Nemesis's HV/status captures (288 dumps from real consoles;
+the sampling loop writes work RAM twice every 20 clocks, with a 112-MCLK gap that the
+98-MCLK trigger window can miss) are the one hardware source that sees this. They do
+not tell the two rules apart, and they found a weakness in their harness instead:
+
+- `run_hv_captures.py` fits each dump's refresh phases with a fast model of the loop,
+  which now follows the board's rule (its RAM phase searched over 0-938, the new
+  rule's whole 931-MCLK cycle). It took the first way of anchoring that left any
+  survivor, and with the new rule a tolerant first-sample anchoring let a poor fit
+  through (NTSC-J intnorm H32V28 dumps 2 and 4, PAL intinv H32V30 dump 7 -- each a
+  third wrong) where the strict second-sample one had the right placement: run on the
+  board, the old placement (its RAM phase moved 14, the same phase under the new rule)
+  matches as well as before -- 39 differences, 13 on another dump. Both anchorings
+  are now tried strictly before either tolerates, and up to 32 placements within 20
+  long-score samples of the best (duplicates dropped) are run on the board, where
+  only exact ties, at most 8, were. 143 s for all 288 (91 before).
+- Same harness, both rules: 8,763,223 words equal under the old, 8,762,828 under the
+  new, of 8,847,360. Every capture is within 34 words but PAL intinv H40V28 (-445),
+  all in its dump 6, which no placement fits under either rule (its best long score
+  698 of ~2,400 even under the old; about 11,000 differences either way). That
+  capture's floors in `tests/hv_captures_baseline.json` are lowered to what the new
+  rule gives (264,783 equal, 6,876 away from a step), the only baseline change.
+
+The mini sweep against the arbiter fix's run: 6 better (Ultraman 4,817 -> 4,648, Sansan
+2,370 -> 1,868, Sunset Riders, Castlevania, Sonic 3, After Burner II), 3 worse (MUSHA
+28,736 -> 30,077, Gauntlet IV phase -> 1,091 differing, Fantasy Zone +42) -- against
+MAME, which has no refresh model; MUSHA and Gauntlet IV are worth a look.
+
+### The test cartridges, before and after (Aubrey: "how are we doing on all of the other test carts?")
+
+Every quick harness run on main (82ddf49) and on this branch, side by side:
+
+| | main | this branch |
+|---|---|---|
+| VDPFIFOTesting, nine machines | 122/122 on five, **121/122** on megadrive, megadrive-tmss, megadrive2 (an intermittent-on-hardware test); genesis3 114 (as a Genesis 3) | **122/122 on eight**; genesis3 114 |
+| Nemesis's sprite masking ROM vs his MD1600 | 0 of 18 cells differ | 0 of 18 |
+| MoD's `gen_test_z80_bus` | 12 results, 0 FAIL | the same |
+| MD Soft Checker, five machines | 17 of 17 verdicts each | the same |
+| r57shell's VDP tests, the pads, `joy_speed`, TMSS | as certified | the same |
+| MoD's experiments: Z80 waits stopped / `jmp (a0)` / `pop` (hardware 2-3 / 2.93 / 3.5) | 2.32 / 2.92 / 2.80 | 2.32 / 2.97 / **3.37** |
+| the 68000's delay a Z80 read (Kabuto "around 11") | 10.97-11.05 | 10.71-10.82 |
+| Nuked-MD probe loops, 68000 bus cycles agreeing | 2,921 of 3,546 | **3,155** (the three work-RAM loops 312/311/325 -> **394/394/394**) |
+| Nuked-MD, the test ROMs' first 394 cycles | HV capture 315, r57shell 328, VDPFIFOTesting 317, the other seven unchanged | **382, 393, 382**, the other seven unchanged |
+| Nuked-MD, the `pop`'s second read (referee 3.60) | 3.34 | 3.47 |
+| Nuked-MD, the FM probe's first difference | cycle 197 | cycle 337 |
+| Nemesis's HV/status captures | 8,762,415 words (old harness) | 8,762,828 (old rule, same harness: 8,763,223) |
+
+The probe loops needed `run_nuked_md.py` to seed the board's work-RAM phase by the
+board's rule: it fitted the old one, with its own copy of 805. The rule is now one
+function, `board.ram_refresh`, that the board and both harnesses call. Under the old
+rule no phase made the work-RAM loops agree; under the new one the first phase does.
+Not rerun here, being untouched by bus timing or slow: the MAME frame comparisons of the
+milestone-3 test ROMs, MDFourier, the SSG-EG recording, the battery, the mapper, the
+region register.
+

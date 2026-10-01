@@ -201,3 +201,31 @@ def test_an_interrupted_z80_instruction_resumes_as_a_whole():
     system._z80_resume(t, False)
     edge = t + Z80_RESUME_MCLK + (Z80_CLOCK_PHASE - t - Z80_RESUME_MCLK) % Z80_DIVIDER
     assert system.board.z80_hold == (let_go, edge - Z80_DIVIDER - let_go)
+
+
+def test_the_work_ram_refresh_is_hidden_when_the_ram_is_idle():
+    """Nuked-MD (docs/worklog.md "The work-RAM refresh"): a work-RAM access within 98
+    MCLK of the refresh falling due takes it and waits 21; otherwise it runs by itself
+    112-133 MCLK after, an access then waiting for its end, and an idle RAM pays
+    nothing. The next falls due 819 after whichever began."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    board = System(MACHINES["genesis"], Cartridge(bytes(0x10000))).board
+    board.arbiter_enabled = False
+    board.cart_refresh_due = 1 << 62
+
+    def stall_at(t: int, due: int, address: int = 0xFF0000) -> tuple[int, int]:
+        board.ram_refresh_due, board.stall = due, 0
+        board.m68k_access_clock = lambda: t
+        board._bus_cycle(address)
+        return board.stall, board.ram_refresh_due
+
+    assert stall_at(999, 1000) == (0, 1000)  # not yet due
+    assert stall_at(1000, 1000) == (21, 1819)  # takes it
+    assert stall_at(1091, 1000) == (21, 1910)  # still takes it, 91 after
+    assert stall_at(1098, 1000) == (35, 1931)  # too late: waits for the one at 1,112
+    assert stall_at(1126, 1000) == (7, 1931)  # one under way: waits for its end
+    assert stall_at(1133, 1000) == (0, 1931)  # it ran by itself, unseen
+    assert stall_at(1931 + 931 * 3, 1000) == (21, 1931 + 931 * 3 + 819)
+    assert stall_at(1000, 1000, address=0xC00000) == (0, 1000)  # not the RAM
