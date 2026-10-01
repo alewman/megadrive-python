@@ -41,11 +41,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from megadrive_python import board as board_module  # noqa: E402
 from megadrive_python.board import (  # noqa: E402
     CART_REFRESH_MCLK,
     CART_REFRESH_STALL,
     RAM_REFRESH_AFTER_MCLK,
+    RAM_REFRESH_SELF_MCLK,
     RAM_REFRESH_STALL,
+    RAM_REFRESH_TRIGGER_MCLK,
 )
 from megadrive_python.cartridge import Cartridge  # noqa: E402
 from megadrive_python.io import C  # noqa: E402
@@ -150,8 +153,22 @@ def sample_times(start: int, count: int, cart_due: int, ram_due: int) -> list[in
                 if kind == 4:
                     t += CART_REFRESH_STALL
             if kind in (2, 3) and t >= ram_due:
-                t += RAM_REFRESH_STALL
-                ram_due = t + RAM_REFRESH_AFTER_MCLK
+                if not board_module.RAM_REFRESH_HIDDEN:
+                    t += RAM_REFRESH_STALL
+                    ram_due = t + 805
+                else:  # Board._bus_cycle's rule
+                    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+                    period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+                    if t >= ram_due + ran:
+                        ram_due += ((t - ram_due - ran) // period + 1) * period
+                    if t >= ram_due:
+                        if t < ram_due + RAM_REFRESH_TRIGGER_MCLK:
+                            began, wait = t, RAM_REFRESH_STALL
+                        else:
+                            began = ram_due + RAM_REFRESH_SELF_MCLK
+                            wait = -(-(began + RAM_REFRESH_STALL - t) // 7) * 7
+                        t += wait
+                        ram_due = began + RAM_REFRESH_AFTER_MCLK
             if kind < 2:
                 times.append(t)
             t += 28
@@ -272,6 +289,11 @@ _STAGES = ((40, 3), (300, 8))
 #: Survivors of the stages scored in full (H and V, every V mode) over this many
 #: instructions; the best is the fit.
 _FINALISTS, _FULL = 12, 2400
+#: How far below the best long score a placement may be and still be run on the whole
+#: board: the long score uses a model of the counters, the board decides.
+_NEAR = 20
+#: How many placements at most are run on the whole board.
+_PLACED = 32
 
 
 def fit(capture: str, dump: bytes, system: System, loop: Loop) -> list[dict]:
@@ -352,29 +374,35 @@ def fit(capture: str, dump: bytes, system: System, loop: Loop) -> list[dict]:
                 results.append((ram, cart, close, low))
         return [item for item in results if item[3] <= best + slack]
 
-    # Anchored on the first sample, strictly; if nothing survives (a first read caught
-    # mid-change, or a dump whose reads catch the counters changing far more often
-    # than the unit's rules say), tolerating such reads, then anchored on the second.
-    kept = []
-    for anchor, spread in ((0, 1), (1, 3)):
-        plans = candidates(anchor, spread)
-        for tolerant in (False, True):
-            kept = [(ram, cart, plans, 0) for ram in range(0, 875, 7)
+    # Strictly, anchored on the first sample and then on the second; only if neither
+    # leaves a survivor, tolerating reads caught mid-change (a first read caught so, or
+    # a dump whose reads catch the counters changing far more often than the unit's
+    # rules say). Tolerating before the second anchor had been tried let a poor fit
+    # through where that anchoring had a good one (the work-RAM refresh rule's run,
+    # docs/worklog.md "The work-RAM refresh").
+    pooled = []
+    finalists = []
+    for tolerant in (False, True):
+        for anchor, spread in ((0, 1), (1, 3)):
+            plans = candidates(anchor, spread)
+            kept = [(ram, cart, plans, 0) for ram in range(0, 945, 7)
                     for cart in range(0, CART_REFRESH_MCLK, 7)]  # fmt: skip
             for n, slack in _STAGES:
                 kept = survivors([(r, c, p) for r, c, p, _ in kept], n, slack, tolerant)
                 if not kept:
                     break
             if kept:
+                pooled = kept
+                finalists = sorted(
+                    ((bad, ram, cart, plan) for ram, cart, plans, bad in kept for plan in plans),
+                    key=lambda item: item[0],
+                )[:_FINALISTS]  # fmt: skip
                 break
-        if kept:
+        if pooled:
             break
-    else:
+    kept = pooled
+    if not kept:
         raise RuntimeError(f"{capture}: no refresh phases and position fit the dump")
-    finalists = sorted(
-        ((bad, ram, cart, plan) for ram, cart, plans, bad in kept for plan in plans),
-        key=lambda item: item[0],
-    )[:_FINALISTS]  # fmt: skip
 
     lsm_now = (vdp.interlace, vdp.interlace_double)
     lsm_new = (bool(vdp.registers[12] & 0x02), (vdp.registers[12] >> 1) & 3 == 3)
@@ -406,10 +434,14 @@ def fit(capture: str, dump: bytes, system: System, loop: Loop) -> list[dict]:
             for v9 in v9s]  # fmt: skip
     fits.sort(key=lambda item: -item[0])
     results = []
+    seen = set()
     for long_score, ram, cart, plan, vmode, v9, odd in fits:
-        if long_score < fits[0][0] or len(results) == 8:
+        if long_score < fits[0][0] - _NEAR or len(results) == _PLACED:
             break
         (old, _, pending), pos, _ = plan
+        if (ram, cart, old.name, pending, pos, id(vmode), v9, odd) in seen:
+            continue  # the same placement from another anchoring
+        seen.add((ram, cart, old.name, pending, pos, id(vmode), v9, odd))
         results.append({"hmode": old.name, "pending": pending, "vmode": vmode, "v9": v9,
                         "odd": odd,
                         "pos": pos, "ram_step": ram, "cart_step": cart,

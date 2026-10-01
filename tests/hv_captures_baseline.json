@@ -71,8 +71,8 @@
  },
  "HV noint intinv PAL H40V28": {
   "dumps": 9,
-  "equal": 265228,
-  "not_at_a_step": 6575
+  "equal": 264783,
+  "not_at_a_step": 6876
  },
  "HV noint intinv PAL H40V30": {
   "dumps": 9,

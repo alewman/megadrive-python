@@ -61,12 +61,24 @@ CART_REFRESH_STALL = 14
 #: one (docs/worklog.md, "The one-frame slip").
 Z80_REFRESH_STALL = 7
 Z80_REFRESH_LATE = 7
-#: The work-RAM refresh the VDP performs: once due, the next work-RAM access waits 3
-#: 68000 clocks; it falls due again 791-819 MCLK after that access started (Nuked-MD
-#: probes; Kabuto: "RAM accesses get their own further slowdowns"). The midpoint is
-#: used; which value in the window is right is not settled (docs/worklog.md).
+#: The work-RAM refresh (Kabuto: "RAM accesses get their own further slowdowns"). It
+#: falls due :data:`RAM_REFRESH_AFTER_MCLK` after the last one began. A work-RAM access
+#: starting within :data:`RAM_REFRESH_TRIGGER_MCLK` of that takes it, and waits 3
+#: 68000 clocks; if none does, the refresh runs by itself from
+#: :data:`RAM_REFRESH_SELF_MCLK` after it fell due, for the same 21 MCLK, and an
+#: access starting in the last 14 MCLK before that or while it runs waits for its end.
+#: So a 68000 that leaves the RAM alone pays nothing, and the next falls due 819 after
+#: whichever began. Die-derived: Nuked-MD's 68000 in Overdrive 2's 3D scene, 135,937
+#: work-RAM accesses, every stall predicted exactly but 172 (153 of them a refresh one
+#: 68000 clock early, mostly on an odd master clock); the old rule -- the next access
+#: always takes it, due again 805 after -- refreshed 20,800 MCLK too much over those
+#: four frames (docs/worklog.md "The work-RAM refresh"). ``RAM_REFRESH_HIDDEN`` False
+#: keeps the old rule, with the 805 the boot probes left it at.
 RAM_REFRESH_STALL = 21
-RAM_REFRESH_AFTER_MCLK = 805
+RAM_REFRESH_AFTER_MCLK = 819
+RAM_REFRESH_TRIGGER_MCLK = 98
+RAM_REFRESH_SELF_MCLK = 112
+RAM_REFRESH_HIDDEN = True
 #: Every 68000 access to the Z80's space costs one extra 68000 clock. Nothing hardware
 #: covers the question, so the tier rule lets a die-derived model answer it: Nuked-MD
 #: holds all 68 of the FM probe's $A0xxxx accesses 7 MCLK where the board held none
@@ -332,10 +344,32 @@ class Board:
                 if grid is not None:
                     grid[-1][1] += stretch
         if address >= 0xE00000 and t >= self.ram_refresh_due:
-            self.stall += RAM_REFRESH_STALL
-            self.ram_refresh_due = t + RAM_REFRESH_AFTER_MCLK
-            if grid is not None:
-                grid[-1][1] += RAM_REFRESH_STALL
+            if not RAM_REFRESH_HIDDEN:
+                self.stall += RAM_REFRESH_STALL
+                self.ram_refresh_due = t + 805
+                if grid is not None:
+                    grid[-1][1] += RAM_REFRESH_STALL
+                return
+            due = self.ram_refresh_due
+            ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+            if t >= due + ran:
+                # Nobody took the ones that fell due since: each ran by itself.
+                due += ((t - due - ran) // (RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK) + 1) * (
+                    RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+                )
+            if t >= due:
+                if t < due + RAM_REFRESH_TRIGGER_MCLK:
+                    began, wait = t, RAM_REFRESH_STALL
+                else:
+                    began = due + RAM_REFRESH_SELF_MCLK
+                    # Until its end, on the 68000's next clock edge (the die's waits
+                    # are 7, 14, 28 and 35).
+                    wait = -(-(began + RAM_REFRESH_STALL - t) // M68K_DIVIDER) * M68K_DIVIDER
+                self.stall += wait
+                due = began + RAM_REFRESH_AFTER_MCLK
+                if grid is not None:
+                    grid[-1][1] += wait
+            self.ram_refresh_due = due
 
     # -- the arbiter ---------------------------------------------------------
 
