@@ -57,7 +57,7 @@ Z80_DIVIDER = 15
 AS_LOW = 18
 
 EVENT = struct.Struct("<QIIHHBBH")
-EV_M68K, EV_Z80, EV_SIGNAL = 1, 2, 3
+EV_M68K, EV_Z80, EV_SIGNAL, EV_MEM = 1, 2, 3, 4
 
 #: ``validation/nuked_md_headless.c``'s signal numbers.
 SIG_BUSREQ, SIG_BUSACK, SIG_ZRESET, SIG_BGACK = 0, 1, 2, 3
@@ -114,6 +114,17 @@ class Event:
     def kind(self) -> str:
         """``rw``/``rb``/``ww``/``wb``, the board's own log's key."""
         return ("r" if self.read else "w") + self.size
+
+    # -- type 4, a work-RAM or cartridge select ------------------------------------
+    @property
+    def work_ram(self) -> bool:
+        """Type 4: /RAS0 (work RAM) rather than /CE0 (the cartridge)."""
+        return bool(self.flags & 1)
+
+    @property
+    def bus_granted(self) -> bool:
+        """Type 4: /BGACK was asserted -- the VDP (or the Z80's arbiter) had the bus."""
+        return bool(self.flags & 2)
 
     # -- type 2, the Z80's bus --------------------------------------------------
     @property
@@ -268,6 +279,11 @@ def m68k_cycles(events: Iterable[Event], *, dma: bool | None = None) -> list[Eve
 
 def z80_cycles(events: Iterable[Event]) -> list[Event]:
     return [e for e in events if e.type == EV_Z80]
+
+
+def memory_cycles(events: Iterable[Event]) -> list[Event]:
+    """The work-RAM and cartridge selects (``NMD_TRACE_MASK`` bit 3)."""
+    return [e for e in events if e.type == EV_MEM]
 
 
 def signals(events: Iterable[Event], which: int | None = None) -> list[Event]:

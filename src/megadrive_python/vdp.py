@@ -203,6 +203,8 @@ class HMode:
         self.slots_active: list[int] = []
         self.no_read_fill: frozenset[int] = frozenset()
         self.slots_idle: list[int] = []
+        #: When a transfer can read with the die's DMA figures (``_dma_ticks``).
+        self.dma_ticks: list[int] = []
         #: Where display pixel 0 falls in ``hvals``, so that ``position(offset) -
         #: display_at`` is the screen X a master clock lands on.  The active display is
         #: external H $00-$9F in H40 and $00-$7F in H32 -- internal H $000 onwards,
@@ -299,6 +301,31 @@ def _idle_slots(mode: HMode) -> list[int]:
     return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in refresh)
 
 
+#: Where the DMA reads' refresh gaps fall against the board's own H counter: 8 earlier
+#: in H40, fitted to the die's 64-word CRAM transfer from 16 starting points 84 MCLK
+#: apart (1.66 cycles RMS, shifts of 8 to 14 alike; Exodus's positions give 2.3). H32 is
+#: not measured.
+DMA_REFRESH_SHIFT_H = {"H40": -8}
+
+
+def _dma_ticks(mode: HMode) -> list[int]:
+    """When a 68000-to-VDP transfer can read, with the die's figures
+    (``Machine.dma_figures`` "die"): every slot tick (two pixels) of the line but each
+    refresh's and the one after it. Nuked-MD's DMA reads of work RAM fall 16 MCLK apart
+    on a blank H40 line, 18-20 across the horizontal sync's slower pixels, and 48 at
+    six places 512 MCLK apart (860 across the blank): two ticks lost to each refresh,
+    as Exodus has it, where the VRAM write slots lose one (``_idle_slots``)."""
+    parity = 1 if mode.name == "H32" else 0
+    ticks = [h for h in mode.hvals if h % 2 == parity]
+    refresh = {h + DMA_REFRESH_SHIFT_H.get(mode.name, 0) for h in _REFRESH[mode.name]}
+    skip = set()
+    for i, h in enumerate(ticks):
+        if h in refresh:
+            skip.add(h)
+            skip.add(ticks[(i + 1) % len(ticks)])
+    return sorted(mode.offset_of[h] for h in ticks if h not in skip)
+
+
 #: Where in a line the full-screen vertical scroll is latched, by internal H counter,
 #: planes A and B: the last pixels before the V counter increments (Nuked-MD's
 #: ``l184``/``l185``, measured with a test cartridge on the referee; docs/worklog.md,
@@ -338,6 +365,7 @@ _DISPLAY_START = {"H32": 0x000, "H40": 0x000}
 for _mode in (H32, H40, H40_VSYNC, H40_LONG, H40_SHORT):
     _mode.slots_active = sorted(_mode.offset_of[h] for h in _ACTIVE_SLOTS[_mode.name])
     _mode.slots_idle = _idle_slots(_mode)
+    _mode.dma_ticks = _dma_ticks(_mode)
     _mode.no_read_fill = frozenset(_mode.offset_of[h] for h in _NO_READ_FILL.get(_mode.name, ()))
     _mode.display_at = _mode.hvals.index(_DISPLAY_START[_mode.name])
 
@@ -452,12 +480,16 @@ WRITE_CYCLE_MCLK = 28
 #: master clocks), and the referee's remaining 2.4 cycles are named rather than fitted
 #: away (docs/worklog.md, the timing session).
 DMA_STARTUP_MCLK = 39
-#: The die's figures (``Machine.dma_figures`` "die"): Nuked-MD's start-up, 8.0 cycles
-#: (+17 MCLK on Kabuto's), and its fast pace, 2.47 cycles a word -- 3,420/198 MCLK, a
-#: read every slot of an H40 blank line with two slots to each of its six refreshes
-#: (the board's idle line, after the Manual, has one), kept exact as 190/11.
-DMA_STARTUP_DIE_MCLK = 56
-DMA_READ_DIE = (190, 11)
+#: The die's figures (``Machine.dma_figures`` "die"), read off Nuked-MD's memory selects
+#: (``NMD_TRACE_MASK`` bit 3; docs/worklog.md "The DMA's reads on the die"): the reads
+#: on the line's DMA ticks (``_dma_ticks``), which give its fast pace, 2.47 cycles a
+#: word, where Kabuto measured 2.4; the first read on the first tick this long after
+#: the trigger write is over, from work RAM or from the cartridge (74 and 50-59 MCLK
+#: from the write's start on the die); and the 68000's next cycle this long after the
+#: last read (32 and 35-55 on the die; 21 for work RAM is fitted to the DMA probe, 3
+#: cycles RMS over its 16 transfers, the rounding to ticks and 68000 clocks taken up).
+DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": 4}
+DMA_RESUME_DIE_MCLK = {"ram": 21, "rom": 45}
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
 #: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
 #: (all 119 of them in the Overdrive 2 boot and logo traces; docs/worklog.md "The DMA
@@ -534,11 +566,8 @@ class VDP:
         self.transfer_cached = False
         self.transfer_value = 0
         self.transfer_next_read = 0
-        die = machine.dma_figures == "die"
-        self._dma_startup = DMA_STARTUP_DIE_MCLK if die else DMA_STARTUP_MCLK
-        self._read_num, self._read_den = DMA_READ_DIE if die else (DMA_READ_MCLK, 1)
-        self._read_frac = 0
-        self._read_inc = self._read_num // self._read_den
+        self._dma_die = machine.dma_figures == "die"
+        self._read_inc = DMA_READ_MCLK
         # Interrupts and flags.
         self.vint_pending = False
         self.hint_pending = False
@@ -959,11 +988,23 @@ class VDP:
         return None
 
     def _next_read(self) -> None:
-        """The transfer's read pace: whole master clocks, the fraction carried."""
+        """The transfer's read pace: every :data:`DMA_READ_MCLK`, or with the die's
+        figures at the line's next DMA tick (``_dma_ticks``)."""
         self.transfer_next_read += self._read_inc
-        carried = self._read_frac + self._read_num % self._read_den
-        self._read_inc = self._read_num // self._read_den + carried // self._read_den
-        self._read_frac = carried % self._read_den
+        if self._dma_die:
+            self._read_inc = self._dma_tick_after(self.transfer_next_read) - self.transfer_next_read
+
+    def _dma_tick_after(self, t: int) -> int:
+        """The first DMA tick after ``t`` (the current line's, else the next's)."""
+        mode = self.hmode
+        start = self.line_start
+        while t - start >= mode.length:
+            start += mode.length
+        while True:
+            i = bisect_right(mode.dma_ticks, t - start)
+            if i < len(mode.dma_ticks):
+                return start + mode.dma_ticks[i]
+            start += mode.length
 
     def _fifo_full(self) -> bool:
         fifo = self.fifo
@@ -1096,6 +1137,8 @@ class VDP:
                 self.fill_running = True
             if self.code & 0x20 and dmd < 2 and self.transfer_cached:
                 self.transfer_next_read = self.mclk
+                if self._dma_die:
+                    self._read_inc = self._dma_tick_after(self.mclk) - self.mclk
 
     def _vsram_store(self, index: int, value: int) -> None:
         """Store one VSRAM word, keeping what the vertical scroll latches took if the
@@ -1397,15 +1440,22 @@ class VDP:
         # not from where it began ("the VDP takes the bus once the write ... is over"),
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
         written = mclk + WRITE_CYCLE_MCLK + DMA_TRIGGER_HOLD_MCLK  # the write is over
-        self._read_frac = 0
-        self._read_inc = self._read_num // self._read_den
-        self.transfer_next_read = written + self._dma_startup - self._read_inc
+        self._read_inc = DMA_READ_MCLK
+        source = "ram" if self.registers[23] & 0x40 else "rom"  # $E00000 up: work RAM
+        if self._dma_die:
+            first = self._dma_tick_after(written + DMA_FIRST_READ_DIE_MCLK[source] - 1)
+        else:
+            first = written + DMA_STARTUP_MCLK
+        self.transfer_next_read = first - self._read_inc
         self._advance(mclk, lambda: not self.transfer_active)
         board = self.board
         if DMA_TAKES_REFRESH and board.cart_refresh_due <= self.mclk:
             from .board import CART_REFRESH_MCLK as period  # board imports this module
 
             board.cart_refresh_due += ((self.mclk - board.cart_refresh_due) // period + 1) * period
+        if self._dma_die:
+            back = max(written, self.mclk + DMA_RESUME_DIE_MCLK[source]) - (mclk + WRITE_CYCLE_MCLK)
+            return -(-back // 7) * 7  # on the 68000's clock
         return DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------
