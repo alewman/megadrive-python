@@ -5494,3 +5494,31 @@ The mini sweep against the arbiter fix's run: 6 better (Ultraman 4,817 -> 4,648,
 2,370 -> 1,868, Sunset Riders, Castlevania, Sonic 3, After Burner II), 3 worse (MUSHA
 28,736 -> 30,077, Gauntlet IV phase -> 1,091 differing, Fantasy Zone +42) -- against
 MAME, which has no refresh model; MUSHA and Gauntlet IV are worth a look.
+
+### The test cartridges, before and after (Aubrey: "how are we doing on all of the other test carts?")
+
+Every quick harness run on main (82ddf49) and on this branch, side by side:
+
+| | main | this branch |
+|---|---|---|
+| VDPFIFOTesting, nine machines | 122/122 on five, **121/122** on megadrive, megadrive-tmss, megadrive2 (an intermittent-on-hardware test); genesis3 114 (as a Genesis 3) | **122/122 on eight**; genesis3 114 |
+| Nemesis's sprite masking ROM vs his MD1600 | 0 of 18 cells differ | 0 of 18 |
+| MoD's `gen_test_z80_bus` | 12 results, 0 FAIL | the same |
+| MD Soft Checker, five machines | 17 of 17 verdicts each | the same |
+| r57shell's VDP tests, the pads, `joy_speed`, TMSS | as certified | the same |
+| MoD's experiments: Z80 waits stopped / `jmp (a0)` / `pop` (hardware 2-3 / 2.93 / 3.5) | 2.32 / 2.92 / 2.80 | 2.32 / 2.97 / **3.37** |
+| the 68000's delay a Z80 read (Kabuto "around 11") | 10.97-11.05 | 10.71-10.82 |
+| Nuked-MD probe loops, 68000 bus cycles agreeing | 2,921 of 3,546 | **3,155** (the three work-RAM loops 312/311/325 -> **394/394/394**) |
+| Nuked-MD, the test ROMs' first 394 cycles | HV capture 315, r57shell 328, VDPFIFOTesting 317, the other seven unchanged | **382, 393, 382**, the other seven unchanged |
+| Nuked-MD, the `pop`'s second read (referee 3.60) | 3.34 | 3.47 |
+| Nuked-MD, the FM probe's first difference | cycle 197 | cycle 337 |
+| Nemesis's HV/status captures | 8,762,415 words (old harness) | 8,762,828 (old rule, same harness: 8,763,223) |
+
+The probe loops needed `run_nuked_md.py` to seed the board's work-RAM phase by the
+board's rule: it fitted the old one, with its own copy of 805. The rule is now one
+function, `board.ram_refresh`, that the board and both harnesses call. Under the old
+rule no phase made the work-RAM loops agree; under the new one the first phase does.
+Not rerun here, being untouched by bus timing or slow: the MAME frame comparisons of the
+milestone-3 test ROMs, MDFourier, the SSG-EG recording, the battery, the mapper, the
+region register.
+

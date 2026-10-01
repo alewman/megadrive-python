@@ -107,6 +107,30 @@ Z80_VDP_ARBITRATED = True
 Z80_GRANT_OVERLAPS_IDLE = True
 
 
+def ram_refresh(due: int, t: int) -> tuple[int, int]:
+    """The work-RAM refresh for a work-RAM access starting at ``t`` with the next
+    refresh due at ``due``: the MCLK the access waits, and when the next falls due
+    (:data:`RAM_REFRESH_HIDDEN`'s rule, or the old one). The board and the harnesses
+    that model its refresh (``run_hv_captures``, ``run_nuked_md``) share it."""
+    if t < due:
+        return 0, due
+    if not RAM_REFRESH_HIDDEN:
+        return RAM_REFRESH_STALL, t + 805
+    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+    if t >= due + ran:
+        # Nobody took the ones that fell due since: each ran by itself.
+        period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+        due += ((t - due - ran) // period + 1) * period
+        if t < due:
+            return 0, due
+    if t < due + RAM_REFRESH_TRIGGER_MCLK:
+        return RAM_REFRESH_STALL, t + RAM_REFRESH_AFTER_MCLK
+    began = due + RAM_REFRESH_SELF_MCLK
+    # Until its end, on the 68000's next clock edge (the die's waits are 7, 14, 28, 35).
+    wait = -(-(began + RAM_REFRESH_STALL - t) // M68K_DIVIDER) * M68K_DIVIDER
+    return wait, began + RAM_REFRESH_AFTER_MCLK
+
+
 class Lockup(Exception):
     """An access that locks up a real console (CMD ``gen-hw.txt`` section 1).
 
@@ -343,33 +367,12 @@ class Board:
                 t += stretch
                 if grid is not None:
                     grid[-1][1] += stretch
-        if address >= 0xE00000 and t >= self.ram_refresh_due:
-            if not RAM_REFRESH_HIDDEN:
-                self.stall += RAM_REFRESH_STALL
-                self.ram_refresh_due = t + 805
-                if grid is not None:
-                    grid[-1][1] += RAM_REFRESH_STALL
-                return
-            due = self.ram_refresh_due
-            ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
-            if t >= due + ran:
-                # Nobody took the ones that fell due since: each ran by itself.
-                due += ((t - due - ran) // (RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK) + 1) * (
-                    RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
-                )
-            if t >= due:
-                if t < due + RAM_REFRESH_TRIGGER_MCLK:
-                    began, wait = t, RAM_REFRESH_STALL
-                else:
-                    began = due + RAM_REFRESH_SELF_MCLK
-                    # Until its end, on the 68000's next clock edge (the die's waits
-                    # are 7, 14, 28 and 35).
-                    wait = -(-(began + RAM_REFRESH_STALL - t) // M68K_DIVIDER) * M68K_DIVIDER
+        if address >= 0xE00000:
+            wait, self.ram_refresh_due = ram_refresh(self.ram_refresh_due, t)
+            if wait:
                 self.stall += wait
-                due = began + RAM_REFRESH_AFTER_MCLK
                 if grid is not None:
                     grid[-1][1] += wait
-            self.ram_refresh_due = due
 
     # -- the arbiter ---------------------------------------------------------
 

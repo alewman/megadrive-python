@@ -41,14 +41,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from megadrive_python import board as board_module  # noqa: E402
 from megadrive_python.board import (  # noqa: E402
     CART_REFRESH_MCLK,
     CART_REFRESH_STALL,
-    RAM_REFRESH_AFTER_MCLK,
-    RAM_REFRESH_SELF_MCLK,
-    RAM_REFRESH_STALL,
-    RAM_REFRESH_TRIGGER_MCLK,
+    ram_refresh,
 )
 from megadrive_python.cartridge import Cartridge  # noqa: E402
 from megadrive_python.io import C  # noqa: E402
@@ -152,23 +148,9 @@ def sample_times(start: int, count: int, cart_due: int, ram_due: int) -> list[in
                 cart_due += ((t - cart_due) // CART_REFRESH_MCLK + 1) * CART_REFRESH_MCLK
                 if kind == 4:
                     t += CART_REFRESH_STALL
-            if kind in (2, 3) and t >= ram_due:
-                if not board_module.RAM_REFRESH_HIDDEN:
-                    t += RAM_REFRESH_STALL
-                    ram_due = t + 805
-                else:  # Board._bus_cycle's rule
-                    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
-                    period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
-                    if t >= ram_due + ran:
-                        ram_due += ((t - ram_due - ran) // period + 1) * period
-                    if t >= ram_due:
-                        if t < ram_due + RAM_REFRESH_TRIGGER_MCLK:
-                            began, wait = t, RAM_REFRESH_STALL
-                        else:
-                            began = ram_due + RAM_REFRESH_SELF_MCLK
-                            wait = -(-(began + RAM_REFRESH_STALL - t) // 7) * 7
-                        t += wait
-                        ram_due = began + RAM_REFRESH_AFTER_MCLK
+            if kind in (2, 3):
+                wait, ram_due = ram_refresh(ram_due, t)
+                t += wait
             if kind < 2:
                 times.append(t)
             t += 28

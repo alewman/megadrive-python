@@ -50,6 +50,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import nuked_md as nmd  # noqa: E402
 
+from megadrive_python.board import (  # noqa: E402
+    RAM_REFRESH_AFTER_MCLK,
+    RAM_REFRESH_SELF_MCLK,
+    ram_refresh,
+)
 from megadrive_python.machine import M68K_DIVIDER  # noqa: E402
 
 TEST_ROMS = ROOT / "tests" / "test_roms"
@@ -61,9 +66,9 @@ TEST_ROMS = ROOT / "tests" / "test_roms"
 #: README calls one no retail console shipped.
 REFEREE_VERSION = 0xA1
 
-#: The board's two refresh rules, as ``megadrive_python.board`` has them.
+#: The board's cartridge refresh, as ``megadrive_python.board`` has it; the work RAM's
+#: is ``board.ram_refresh`` itself.
 CART_PERIOD, CART_STALL = 896, 14
-RAM_PERIOD, RAM_STALL = 805, 21
 
 
 # -- cartridges built here ------------------------------------------------------------
@@ -105,9 +110,9 @@ NOP = bytes.fromhex("4e71")
 # Both refreshes are free-running grids whose phase at power-on nothing models: the
 # board's ``cart_refresh_due``/``ram_refresh_due`` start at one arbitrary point and
 # the referee's counters at another.  Every comparison below therefore fits the two
-# phases -- and *only* the phases; the periods (896 and 805 MCLK) and the stretches
-# (14 and 21) stay as milestone 2 measured them, and a wrong period would show as
-# drift no single phase could hide.
+# phases -- and *only* the phases; the rules (the cartridge's 896-MCLK grid and 14,
+# the work RAM's ``board.ram_refresh``) stay the board's own, and a wrong period
+# would show as drift no single phase could hide.
 
 
 def referee_refresh(reference) -> tuple[int, int, int, int]:
@@ -124,7 +129,6 @@ def referee_refresh(reference) -> tuple[int, int, int, int]:
     """
     cycles = [(e.t, e.address, e.length) for e in reference]
     cart = {t for t, a, n in cycles if n == nmd.AS_LOW + CART_STALL and a < 0x800000}
-    ram = {t for t, a, n in cycles if n == nmd.AS_LOW + RAM_STALL and a >= 0xE00000}
     ram_accesses = [t for t, a, _ in cycles if a >= 0xE00000]
 
     best = None
@@ -143,18 +147,20 @@ def referee_refresh(reference) -> tuple[int, int, int, int]:
             break
     cart_miss, cart_due = best
 
+    # The work RAM's by the board's own rule (``board.ram_refresh``), every access's
+    # wait against the referee's, the partial ones included.
     best = None
     if ram_accesses:
-        for phase in range(RAM_PERIOD):
-            due = ram_accesses[0] + phase - RAM_PERIOD
-            hit = set()
-            for t in ram_accesses:
-                if t >= due:
-                    hit.add(t)
-                    due = t + RAM_PERIOD
-            miss = len(hit ^ ram)
+        waits = [(t, n - nmd.AS_LOW) for t, a, n in cycles if a >= 0xE00000]
+        span = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+        for phase in range(span):
+            due = ram_accesses[0] + phase - span
+            start, miss = due, 0
+            for t, observed in waits:
+                wait, due = ram_refresh(due, t)
+                miss += wait != observed
             if best is None or miss < best[0]:
-                best = (miss, ram_accesses[0] + phase - RAM_PERIOD)
+                best = (miss, start)
             if not miss:
                 break
     ram_miss, ram_due = best if best else (0, cycles[0][0])
@@ -208,8 +214,8 @@ def dues_at(reference, index: int, cart_due: int, ram_due: int) -> tuple[int, in
     for e in reference[:index]:
         if e.t >= cart_due:
             cart_due += ((e.t - cart_due) // CART_PERIOD + 1) * CART_PERIOD
-        if e.address >= 0xE00000 and e.t >= ram_due:
-            ram_due = e.t + RAM_PERIOD
+        if e.address >= 0xE00000:
+            ram_due = ram_refresh(ram_due, e.t)[1]
     return cart_due, ram_due
 
 
