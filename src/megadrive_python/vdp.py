@@ -465,6 +465,12 @@ DMA_TRIGGER_HOLD_MCLK = 21
 #: is not, 114 times of 118 (the boot and logo traces), where the board stretched it
 #: every time. Die-derived. False leaves the ticks to the 68000.
 DMA_TAKES_REFRESH = True
+#: A 68000-to-VDP transfer reads the 68000's memory at its own pace, into the FIFO
+#: while it has room, not only at an access slot: on Nuked-MD a 1-word transfer in the
+#: active display costs 11 cycles beyond its write (the hold, the start-up and one read)
+#: where waiting for slots cost the board 56 (``run_nuked_md.py dma --display-on --when
+#: active``). Die-derived. False reads only at slots.
+DMA_READS_BETWEEN_SLOTS = True
 #: A read of the HV counter (or the status register) sees the counters as they stand at
 #: the first pixel-clock edge at or after this many MCLK into the 68000's bus cycle.
 #: Fitted to Nemesis's logic-analyser captures (docs/timing.md, "HV counter
@@ -658,7 +664,7 @@ class VDP:
             return
         while True:
             next_event = self.line_end
-            kind = 0  # 0 line, 1 hblank, 2 vint, 3 odd, 4 slot, 5 render
+            kind = 0  # 0 line, 1 hblank, 2 vint, 3 odd, 4 slot, 5 render, 6 DMA read
             if self.mclk <= self.hblank_at < next_event:
                 next_event, kind = self.hblank_at, 1
             if not self._vint_done and self.mclk <= self.vint_at < next_event:
@@ -667,6 +673,9 @@ class VDP:
                 next_event, kind = self.odd_at, 3
             if self.mclk <= self.render_at < next_event:
                 next_event, kind = self.render_at, 5
+            read_at = self._transfer_read_due()
+            if read_at is not None and read_at < next_event:
+                next_event, kind = max(read_at, self.mclk), 6
             if self._work_pending() and self.slot_index < len(self.slots):
                 slot_at = self.line_start + self.slots[self.slot_index]
                 if slot_at < self.mclk:
@@ -699,6 +708,12 @@ class VDP:
             elif kind == 5:
                 self.render_at = -1
                 self.renderer.begin_line(self.v)
+            elif kind == 6:
+                self._transfer_reads()
+                if until is not None and until():
+                    if self.mclk < target:
+                        self._advance(target, None)
+                    return
             else:
                 self._odd_done = True
                 if self.interlace:
@@ -909,6 +924,29 @@ class VDP:
 
     # -- the FIFO and the work at a slot -----------------------------------------------------
 
+    def _transfer_reads(self) -> None:
+        """A 68000-to-VDP transfer's reads due by now, each into the FIFO if it has room."""
+        while (
+            self.code & 0x20 and self.registers[23] >> 6 < 2 and self.transfer_active
+            and (not self.transfer_cached or not self._fifo_full())
+            and self.transfer_next_read + DMA_READ_MCLK <= self.mclk
+        ):  # fmt: skip
+            if not self.transfer_cached:
+                self._transfer_read()
+            self.transfer_next_read += DMA_READ_MCLK
+            if not self._fifo_full():
+                self._transfer_push()
+                self._dma_step()
+
+    def _transfer_read_due(self) -> int | None:
+        """When the transfer's next read can happen between slots, if one can."""
+        if (
+            DMA_READS_BETWEEN_SLOTS and self.transfer_active and self.code & 0x20
+            and self.registers[23] >> 6 < 2 and not self._fifo_full()
+        ):  # fmt: skip
+            return self.transfer_next_read + DMA_READ_MCLK
+        return None
+
     def _fifo_full(self) -> bool:
         fifo = self.fifo
         return fifo[self.fifo_read][4] and fifo[(self.fifo_read + 3) & 3][4]
@@ -933,17 +971,7 @@ class VDP:
                 limit=self._column_limit(code, address),
             )
         dmd = self.registers[23] >> 6
-        while (
-            self.code & 0x20 and dmd < 2 and self.transfer_active
-            and (not self.transfer_cached or not self._fifo_full())
-            and self.transfer_next_read + DMA_READ_MCLK <= self.mclk
-        ):  # fmt: skip
-            if not self.transfer_cached:
-                self._transfer_read()
-            self.transfer_next_read += DMA_READ_MCLK
-            if not self._fifo_full():
-                self._transfer_push()
-                self._dma_step()
+        self._transfer_reads()
         if self.code & 0x20 and dmd == 2 and self.fill_running and not fifo[self.fifo_read][4]:
             self._fill()
             self._dma_step()
