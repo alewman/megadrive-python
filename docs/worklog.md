@@ -5522,3 +5522,59 @@ Not rerun here, being untouched by bus timing or slow: the MAME frame comparison
 milestone-3 test ROMs, MDFourier, the SSG-EG recording, the battery, the mapper, the
 region register.
 
+
+### The DMA trigger (Aubrey's option A), and the slip at 7,053
+
+**The whole demo against the die.** The board rendered every frame from 26 to 24,400
+of the aligned run (the die's own pictures cover the whole demo): frames 27-7,052 match
+it at the expected frame, 6,821 of 7,025 (the others are TV static, whose noise
+differs, and the frames just after the reset). At 7,053 the board goes a frame ahead,
+at about 10,304 a second: Aubrey's "junk between scenes", growing towards the end.
+
+**Why 7,053.** The logo scene's main loop does a frame's work, then syncs (reads the HV
+counter to line ~215, writes register 5, waits for VBlank to end and begin, at $31C826).
+In frame 7,050 the die's work ends at line 224.2, just after VBlank began, and it waits
+a whole frame; the board's at line 220.3, in time. Its 68000 is 4 lines faster that
+frame because the Z80's sample reads (150 of them in one stretch on the die, none on
+the board) fall elsewhere in the frame: the sound driver is out of phase. It parts
+from the die at its very first timer wait ($011C: `or (hl)` / `jp po`, polling the
+YM2612 at $4080), the board's timer A overflowing one poll sooner -- and the FM's phase
+is set at the console reset, so it follows the boot's length. The boot's 68000 is early
+by up to 275 MCLK at the Z80's start, built up DMA by DMA: every 68000-to-VDP transfer
+froze it 70-115 MCLK shorter than the die's, whatever its length (32 to 7,952 words).
+
+**What was adopted (branch `dma-trigger-hold`):**
+
+- `vdp.DMA_TRIGGER_HOLD_MCLK` = 21: the write that starts a transfer is held 3 clocks
+  longer -- 39 MCLK on the die for every one of 119 trigger writes (boot and logo
+  traces), and /BGACK falls 40 MCLK after the write began, just as it ends. Fitted over
+  4-128 words, the board's start-up moves from 4.9 cycles (below Kabuto's 5.6 and the
+  die's 8.0) to 7.2, between them, its slope 2.355 (Kabuto 2.4).
+  `test_a_dma_transfer_pays_kabutos_start_up` now checks that fit instead of one word
+  alone (one and two words fall on the same slot and cost 12.0).
+- `vdp.DMA_TAKES_REFRESH`: the transfer's own bus cycles take the cartridge refresh
+  ticks due while it runs; the die's first 68000 cycle after a transfer is unstretched
+  114 times of 118, where the board stretched it every time.
+
+| | main | + option A | + both |
+|---|---:|---:|---:|
+| boot DMAs, board minus die (MCLK, typical) | -73 to -136 | -33 to -107 | -41 to -86 |
+| Nuked-MD DMA probe, display off, 1-16 words (cycles) | -5.0 to -3.4 | -2.1 to -0.6 | |
+| 68000 bus cycles to the Z80's start, 60+ MCLK steps / end | 48 / -37 | | 52 / -5 |
+| boot offset; matching Z80 reads | -217; 192 | -217; 192 | -215; 192 |
+| aligned frames 5,741-5,840 identical | 100 | 100 | 100 |
+| frames 6,981-7,200 identical (window 3); at the expected frame | 220; 75 | 220; 75 | 219; **182** |
+| first frame off the expected | 7,053 | 7,053 | 7,053 |
+
+**What was tried and taken out.** On the die /BGACK rises 26-54 MCLK after the board's
+last read, and the 68000's next cycle comes 19-25 MCLK after it (three logo DMAs). A
+fixed 35-MCLK release and 19-MCLK resume brought the boot's display-on DMAs within a
+clock of the die and the boot offset to -81, but put the display-off probe 6-8 cycles
+over the die, Kabuto's fit over 8.0, and the arms window from 100 to 63 frames: not a
+rule. Releasing when the FIFO drains overshot by 90-112 MCLK. What differs between the
+display-on boot DMAs and the display-off probe is the open question.
+
+**The Z80, separately.** Shifting the FM's phase at the Z80's start (the harness's
+`--align-fm`, its lag swept over the 24 internal cycles of a sample) gets the driver
+past its first timer wait at one phase only (lag 126: 1,150 reads match), and it parts
+from the die again after that -- the Z80's own timing, the long-open caveat.
