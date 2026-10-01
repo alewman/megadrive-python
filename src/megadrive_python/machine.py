@@ -12,7 +12,7 @@ with the Manual's CPU clocks (docs/start-here.md, "Clocks").
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 MCLK_NTSC = 53_693_175
 MCLK_PAL = 53_203_424
@@ -98,6 +98,12 @@ class Machine:
     audio_path: str
     expansion: bool = False
     hv_unit: str = ""
+    #: Where Kabuto's hardware-measured DMA figures and Nuked-MD's disagree -- a
+    #: transfer's start-up (5.6 against 8.0 68000 cycles) and the fast pace (2.4 against
+    #: 2.47 cycles a word) -- whose the board uses: "kabuto", the tier rule's choice, or
+    #: "die", for comparisons against Nuked-MD (Aubrey's option 3; docs/worklog.md,
+    #: "Kabuto's figures or the die's").
+    dma_figures: str = "kabuto"
 
     @property
     def hv_reads(self) -> str:
@@ -160,6 +166,13 @@ MACHINES: dict[str, Machine] = {
     ),
     "megadrive2-japan": _model("Mega Drive 2 (Japan)", pal=False, overseas=False, **_MODEL2),
 }  # fmt: skip
+#: The die model's console -- a PAL Model 1 with TMSS (its version register reads 1) --
+#: with its DMA figures where they and Kabuto's disagree (``Machine.dma_figures``).
+MACHINES["nuked-md"] = replace(
+    MACHINES["megadrive-tmss"],
+    name="Nuked-MD (Model 1 VA6+, PAL, the die's DMA figures)",
+    dma_figures="die",
+)
 
 #: The machine each MAME 0.285 driver emulates (sega/mdconsole.cpp; version nibbles
 #: from megadriv.cpp ``init_megadriv``, ``init_megadrij``, ``init_megadrie``).

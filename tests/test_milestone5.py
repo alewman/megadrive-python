@@ -157,6 +157,25 @@ def test_a_dma_transfer_pays_kabutos_start_up() -> None:
     assert 5.6 <= start_up <= 8.0
 
 
+def test_the_die_figures_are_a_machine_option() -> None:
+    """Kabuto's DMA figures are the default (the tier rule); the ``nuked-md`` machine
+    takes Nuked-MD's where the two disagree, for comparisons against the die
+    (``Machine.dma_figures``; Aubrey's option 3): its fast pace is the die's 2.47
+    cycles a word, the default's Kabuto's 2.4."""
+    import run_dma_cost as harness
+
+    assert MACHINES["megadrive-tmss"].dma_figures == "kabuto"
+    assert MACHINES["nuked-md"].dma_figures == "die"
+    for name, pace in (("megadrive-tmss", 2.4), ("nuked-md", 2.47)):
+        costs = {}
+        for words in (64, 512):
+            system = System(MACHINES[name], Cartridge(bytes(0x10000)))
+            system.vdp.rendering = False
+            costs[words] = harness.transfer_cost(system, 0x23, words, 0x00, False, 0x81)
+        slope = (costs[512] - costs[64]) / 448 / M68K_DIVIDER
+        assert abs(slope - pace) <= 0.02 * pace, (name, slope)
+
+
 def _display_machine() -> System:
     """A board with the VDP in mode 5, H40, the display on and a plain palette."""
     system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))

@@ -452,6 +452,12 @@ WRITE_CYCLE_MCLK = 28
 #: master clocks), and the referee's remaining 2.4 cycles are named rather than fitted
 #: away (docs/worklog.md, the timing session).
 DMA_STARTUP_MCLK = 39
+#: The die's figures (``Machine.dma_figures`` "die"): Nuked-MD's start-up, 8.0 cycles
+#: (+17 MCLK on Kabuto's), and its fast pace, 2.47 cycles a word -- 3,420/198 MCLK, a
+#: read every slot of an H40 blank line with two slots to each of its six refreshes
+#: (the board's idle line, after the Manual, has one), kept exact as 190/11.
+DMA_STARTUP_DIE_MCLK = 56
+DMA_READ_DIE = (190, 11)
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
 #: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
 #: (all 119 of them in the Overdrive 2 boot and logo traces; docs/worklog.md "The DMA
@@ -528,6 +534,11 @@ class VDP:
         self.transfer_cached = False
         self.transfer_value = 0
         self.transfer_next_read = 0
+        die = machine.dma_figures == "die"
+        self._dma_startup = DMA_STARTUP_DIE_MCLK if die else DMA_STARTUP_MCLK
+        self._read_num, self._read_den = DMA_READ_DIE if die else (DMA_READ_MCLK, 1)
+        self._read_frac = 0
+        self._read_inc = self._read_num // self._read_den
         # Interrupts and flags.
         self.vint_pending = False
         self.hint_pending = False
@@ -929,11 +940,11 @@ class VDP:
         while (
             self.code & 0x20 and self.registers[23] >> 6 < 2 and self.transfer_active
             and (not self.transfer_cached or not self._fifo_full())
-            and self.transfer_next_read + DMA_READ_MCLK <= self.mclk
+            and self.transfer_next_read + self._read_inc <= self.mclk
         ):  # fmt: skip
             if not self.transfer_cached:
                 self._transfer_read()
-            self.transfer_next_read += DMA_READ_MCLK
+            self._next_read()
             if not self._fifo_full():
                 self._transfer_push()
                 self._dma_step()
@@ -944,8 +955,15 @@ class VDP:
             DMA_READS_BETWEEN_SLOTS and self.transfer_active and self.code & 0x20
             and self.registers[23] >> 6 < 2 and not self._fifo_full()
         ):  # fmt: skip
-            return self.transfer_next_read + DMA_READ_MCLK
+            return self.transfer_next_read + self._read_inc
         return None
+
+    def _next_read(self) -> None:
+        """The transfer's read pace: whole master clocks, the fraction carried."""
+        self.transfer_next_read += self._read_inc
+        carried = self._read_frac + self._read_num % self._read_den
+        self._read_inc = self._read_num // self._read_den + carried // self._read_den
+        self._read_frac = carried % self._read_den
 
     def _fifo_full(self) -> bool:
         fifo = self.fifo
@@ -1379,7 +1397,9 @@ class VDP:
         # not from where it began ("the VDP takes the bus once the write ... is over"),
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
         written = mclk + WRITE_CYCLE_MCLK + DMA_TRIGGER_HOLD_MCLK  # the write is over
-        self.transfer_next_read = written + DMA_STARTUP_MCLK - DMA_READ_MCLK
+        self._read_frac = 0
+        self._read_inc = self._read_num // self._read_den
+        self.transfer_next_read = written + self._dma_startup - self._read_inc
         self._advance(mclk, lambda: not self.transfer_active)
         board = self.board
         if DMA_TAKES_REFRESH and board.cart_refresh_due <= self.mclk:
