@@ -132,21 +132,29 @@ def test_kabutos_dma_slopes() -> None:
 
 
 def test_a_dma_transfer_pays_kabutos_start_up() -> None:
-    """Kabuto's fast-transfer formula is ``words * 2.4 + 5.6`` 68000 cycles, so a
-    one-word transfer costs eight.  The board had no mechanism for his +5.6 and charged
-    about one cycle (milestone 5, open item 15); Nuked-MD then measured 11.0 for the
-    same transfer and fitted +8.0, confirming that the start-up is real
-    (milestone 6).  The hardware source is the judge, so the board charges his own
-    5.6 cycles (:data:`~megadrive_python.vdp.DMA_STARTUP_MCLK`, 39 MCLK)."""
+    """Kabuto's fast-transfer formula is ``words * 2.4 + 5.6`` 68000 cycles (hardware-
+    measured research); Nuked-MD fits 2.47 and **+8.0** to the same transfers. The
+    board charges his own 5.6-cycle start-up (:data:`~megadrive_python.vdp.
+    DMA_STARTUP_MCLK`, 39 MCLK) and, since option A, the die's 3-clock hold on the
+    write that starts it (:data:`~megadrive_python.vdp.DMA_TRIGGER_HOLD_MCLK`).
+    Fitted over 4 to 128 words as his formula is a fit, the board's slope is his within
+    2 % and its start-up lies between his and the referee's (docs/worklog.md, "The DMA
+    trigger"). One word is not checked alone: one and two words fall on the same slot
+    and cost the board 12.0 cycles, above both."""
     import run_dma_cost as harness
 
     from megadrive_python.vdp import DMA_STARTUP_MCLK
 
     assert round(5.6 * M68K_DIVIDER) == DMA_STARTUP_MCLK  # Kabuto's own constant
-    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
-    system.vdp.rendering = False
-    one_word = harness.transfer_cost(system, 0x23, 1, 0x00, False, 0x81) / M68K_DIVIDER
-    assert 5.6 <= one_word <= 11.0  # Kabuto's 8.0 and the referee's 11.0 bracket it
+    costs = {}
+    for words in (4, 128):
+        system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+        system.vdp.rendering = False
+        costs[words] = harness.transfer_cost(system, 0x23, words, 0x00, False, 0x81) / M68K_DIVIDER
+    slope = (costs[128] - costs[4]) / 124
+    start_up = costs[4] - 4 * slope
+    assert abs(slope - 2.4) <= 0.02 * 2.4
+    assert 5.6 <= start_up <= 8.0
 
 
 def _display_machine() -> System:

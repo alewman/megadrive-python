@@ -452,6 +452,19 @@ WRITE_CYCLE_MCLK = 28
 #: master clocks), and the referee's remaining 2.4 cycles are named rather than fitted
 #: away (docs/worklog.md, the timing session).
 DMA_STARTUP_MCLK = 39
+#: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
+#: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
+#: (all 119 of them in the Overdrive 2 boot and logo traces; docs/worklog.md "The DMA
+#: trigger"). The transfer begins once that longer write is over. Die-derived, and on
+#: top of Kabuto's start-up above, which a hardware-measured total of his would already
+#: contain: Aubrey's option A, measured before the rest of the gap is questioned. 0
+#: leaves it out.
+DMA_TRIGGER_HOLD_MCLK = 21
+#: The transfer's own bus cycles take the cartridge refresh ticks that fall due while it
+#: runs, so the 68000's first cycle after it is not stretched for them: on Nuked-MD it
+#: is not, 114 times of 118 (the boot and logo traces), where the board stretched it
+#: every time. Die-derived. False leaves the ticks to the 68000.
+DMA_TAKES_REFRESH = True
 #: A read of the HV counter (or the status register) sees the counters as they stand at
 #: the first pixel-clock edge at or after this many MCLK into the 68000's bus cycle.
 #: Fitted to Nemesis's logic-analyser captures (docs/timing.md, "HV counter
@@ -1337,9 +1350,15 @@ class VDP:
         # The first word is fetched once the write that started the transfer is over,
         # not from where it began ("the VDP takes the bus once the write ... is over"),
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
-        self.transfer_next_read = mclk + WRITE_CYCLE_MCLK + DMA_STARTUP_MCLK - DMA_READ_MCLK
+        written = mclk + WRITE_CYCLE_MCLK + DMA_TRIGGER_HOLD_MCLK  # the write is over
+        self.transfer_next_read = written + DMA_STARTUP_MCLK - DMA_READ_MCLK
         self._advance(mclk, lambda: not self.transfer_active)
-        return max(0, self.mclk - (mclk + WRITE_CYCLE_MCLK))
+        board = self.board
+        if DMA_TAKES_REFRESH and board.cart_refresh_due <= self.mclk:
+            from .board import CART_REFRESH_MCLK as period  # board imports this module
+
+            board.cart_refresh_due += ((self.mclk - board.cart_refresh_due) // period + 1) * period
+        return DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------
 
