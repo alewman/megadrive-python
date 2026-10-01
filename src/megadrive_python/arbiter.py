@@ -120,9 +120,11 @@ RELEASE_MCLK = 37
 RESUME_MCLK = 25
 MIN_WAIT = 2
 REFRESH_MCLK = 14
-#: The 68000's clock edges fall 6 MCLK past a multiple of 7, where its cycles begin, on
-#: the die and on the board alike (``system.Z80_CLOCK_PHASE``).
-M68K_EDGE_PHASE = 6
+#: Where the 68000's clock edges fall, mod 7 MCLK: where its cycles begin. The board's
+#: 68000 starts at 0 at power-on and keeps that phase (its holds are whole clocks,
+#: ``board.HOLD_ON_68K_EDGE``); the die's edges are at 6 in its own time, which is 0 in
+#: the board's once the two are lined up (``system.Z80_CLOCK_PHASE``).
+M68K_EDGE_PHASE = 0
 
 
 def z80_access_wait(request: int, m68k_cycles: list[list[int]],

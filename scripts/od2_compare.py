@@ -13,8 +13,10 @@ board's are compared on:
   referee's addresses, in order, before the first that does not.
 
 The board's reset button is pressed with ZRES at ``--reset-mclk`` exactly (the
-referee's pulse, 26,841,996 half-MCLK/2, less the two VDPs' offset; 26,601,687 is the
-clock stepping found best, Session 14).
+referee's pulse, 26,841,996 half-MCLK/2, less the two VDPs' offset; 26,601,694 is the
+clock stepping found best: Session 14 found 26,601,687, and once the 68000's holds were
+whole clocks the first interrupt after the reset matched the die 7 MCLK later; docs/worklog.md
+"Handover by handover").
 
 ``--align-fm`` is **specific to this ROM and this referee run**: at the Z80's start the
 YM2612's slot counter is set to the phase the referee's has there (its slot-23 marker
@@ -154,7 +156,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("rom", type=Path)
     parser.add_argument("--src", type=Path, default=ROOT / "src", help="the board to run")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_687)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_694)
     parser.add_argument("--align-fm", action="store_true", help="ROM-specific; see above")
     parser.add_argument("--frames", type=int, default=80)
     parser.add_argument("--machine", default="megadrive-tmss", help="the referee is version 1")

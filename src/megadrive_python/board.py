@@ -131,6 +131,29 @@ def ram_refresh(due: int, t: int) -> tuple[int, int]:
     return wait, began + RAM_REFRESH_AFTER_MCLK
 
 
+#: A held 68000 bus cycle lasts whole 68000 clocks: /DTACK is sampled on a clock edge,
+#: so the cycle ends on the first edge after the device lets it go. The board added the
+#: VDP's (and the bus grant's) hold as it came, in master clocks, and every one that was
+#: not a multiple of 7 moved all the 68000's later clock edges -- 4,000 times in Overdrive
+#: 2's first 12 frames -- where the die's edges keep one phase from power-on
+#: (docs/worklog.md, "Handover by handover"). False keeps the master clocks.
+HOLD_ON_68K_EDGE = True
+#: A write to $A11200 reaches the YM2612's /IC 18 MCLK after it begins: on Nuked-MD the
+#: line moves 18 MCLK after each of Overdrive 2's four writes at the Z80's start, as
+#: /BUSREQ does after a write to $A11100 (``system.Z80_BUSREQ_LAG_MCLK``). Where the
+#: assertion falls in the FM's slot decides whether its counter restarts or pauses
+#: (``ym2612.IC_PAUSE_POSITIONS``). The Z80's side is fitted from the write itself
+#: (``system.Z80_RESET_RESUME_MCLK``). Die-derived.
+ZRES_PIN_MCLK = 18
+
+
+def _on_edge(held: int) -> int:
+    """A hold of ``held`` MCLK as the 68000 sees it: rounded up to its clock."""
+    if HOLD_ON_68K_EDGE and held % M68K_DIVIDER:
+        return held + M68K_DIVIDER - held % M68K_DIVIDER
+    return held
+
+
 class Lockup(Exception):
     """An access that locks up a real console (CMD ``gen-hw.txt`` section 1).
 
@@ -268,14 +291,16 @@ class Board:
             return self.tmss_cartridge
         return self.cartridge
 
-    def set_z80_reset(self, held: bool, t: int) -> None:
+    def set_z80_reset(self, held: bool, t: int, fm_t: int | None = None) -> None:
         """Drive ZRES, the Z80's and YM2612's shared reset line, at MCLK ``t``: from a
-        write to $A11200, or from the console's reset button (``System.press_reset``)."""
+        write to $A11200, or from the console's reset button (``System.press_reset``).
+        ``fm_t``: when the YM2612's /IC sees it, if not at ``t``."""
         self.catch_up_z80(t, stopping=held and self.z80_running)
         if held != self.z80_reset:
             self.z80_reset = held
-            self.sound_sync(t)
-            self.fm.reset_line(held, t)
+            fm_t = t if fm_t is None else fm_t
+            self.sound_sync(fm_t)
+            self.fm.reset_line(held, fm_t)
             self.on_z80_reset(held)
             if not held:
                 self.on_z80_resume(t, True)
@@ -322,7 +347,7 @@ class Board:
         if not self.z80_bus_requested or self.z80_reset:
             return False
         if self.arbiter_enabled and t is not None and t < self.busack_at:
-            self.stall += self.busack_at - t
+            self.stall += _on_edge(self.busack_at - t)
         return True
 
     def _z80_space_cost(self) -> None:
@@ -518,7 +543,7 @@ class Board:
         if top >= 0xC0:
             vdp = self._vdp_access(address)
             value = vdp.read_word(address & 0x1F, self.m68k_access_clock())
-            self.stall += vdp.hold
+            self.stall += _on_edge(vdp.hold)
             return value
         if top == 0xA0:
             value = self._z80_area_read(address)
@@ -541,7 +566,7 @@ class Board:
         if top >= 0xC0:
             vdp = self._vdp_access(address)
             value = vdp.read_byte(address & 0x1F, self.m68k_access_clock())
-            self.stall += vdp.hold
+            self.stall += _on_edge(vdp.hold)
             return value
         if top == 0xA0:
             value = self._z80_area_read(address)
@@ -567,8 +592,10 @@ class Board:
         elif top < 0x40:
             self.cartridge.write_word(address, value)
         elif top >= 0xC0:
-            self.stall += self._vdp_access(address).write_word(
-                address & 0x1F, value, self.m68k_access_clock()
+            self.stall += _on_edge(
+                self._vdp_access(address).write_word(
+                    address & 0x1F, value, self.m68k_access_clock()
+                )
             )
         elif top == 0xA0:
             # "When doing word-wide writes to Z80 RAM, only the MSB is written"
@@ -591,8 +618,10 @@ class Board:
         elif top >= 0xC0:
             # "Writing to the VDP control or data ports is interpreted as a 16-bit
             # write, with the LSB duplicated in the MSB" (CMD 1.2).
-            self.stall += self._vdp_access(address).write_byte(
-                address & 0x1F, value, self.m68k_access_clock()
+            self.stall += _on_edge(
+                self._vdp_access(address).write_byte(
+                    address & 0x1F, value, self.m68k_access_clock()
+                )
             )
         elif top == 0xA0:
             self._z80_area_write(address, value)
@@ -742,7 +771,8 @@ class Board:
             if released:
                 self.on_z80_resume(t, False)
         elif offset & 0xFF00 == 0x1200:
-            self.set_z80_reset(not high & 1, self.m68k_access_clock())
+            t = self.m68k_access_clock()
+            self.set_z80_reset(not high & 1, t, t + ZRES_PIN_MCLK)
         elif offset & 0xFF00 == 0x3000:
             self.cartridge.write_time(address | 1, low)
         elif offset & 0xFF00 == 0x4100:

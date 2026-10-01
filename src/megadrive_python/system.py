@@ -72,15 +72,20 @@ RESET_RAM_REFRESH_MCLK = 2380
 #: When the Z80 takes up its bus again, measured on the die model (Nuked-MD, the
 #: Overdrive 2 run from power-on; docs/worklog.md, "The Z80 after a hold"). Its clock
 #: runs on through a bus hold and a reset: every one of its accesses falls on the same
-#: phase of the 15-MCLK clock, which on the die and the board alike meets the 68000's
-#: 7-MCLK clock at 6 MCLK past every multiple of 105. After the 68000's write that
+#: phase of the 15-MCLK clock, which meets the 68000's 7-MCLK clock at a fixed point of
+#: every 105 (the die's relation, :data:`Z80_CLOCK_PHASE` below). After the 68000's write that
 #: releases the bus, its next access comes on the first such edge 42 MCLK or more after
 #: the write began (83 of 83 releases, 42 to 56 MCLK); after the write that releases
 #: its reset, 57 or more (both releases in the run). And when the reset is released
 #: with the bus already requested, it makes that first opcode fetch before it lets go
 #: -- BUSREQ is sampled only at the end of a machine cycle (Zilog UM0080) -- and the
 #: rest of the instruction waits for the bus. Die-derived.
-Z80_CLOCK_PHASE = 6
+#: The phase was 6 in the die's own time; what is physical is the two clocks' relation,
+#: the die's 68000 edges at 6 mod 7 and Z80 edges at 6 mod 15 -- with the board's
+#: 68000 at 0, as it is from power-on, the Z80's at 13 (the two lined up as the Overdrive
+#: 2 comparisons line them, 240,323 MCLK apart; docs/worklog.md "Handover by handover").
+#: A real console's relation is whatever its power-on gives; this is the die's.
+Z80_CLOCK_PHASE = 13
 #: How far past the 68000's write to $A11100 the Z80 takes a bus request: it lets go at
 #: the end of the first machine cycle ending this long or more after the write. /BUSREQ
 #: falls 18 MCLK after the write begins (Nuked-MD, every write in the logo trace) and
