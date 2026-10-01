@@ -38,7 +38,7 @@ from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
 from z80_python.timing import instruction_timing
 
-from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant
+from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant, z80_access_wait
 from .audio import AudioPath
 from .board import CART_REFRESH_MCLK, Board
 from .cartridge import Cartridge
@@ -81,15 +81,27 @@ RESET_RAM_REFRESH_MCLK = 2380
 #: -- BUSREQ is sampled only at the end of a machine cycle (Zilog UM0080) -- and the
 #: rest of the instruction waits for the bus. Die-derived.
 Z80_CLOCK_PHASE = 6
-#: How far past the 68000's write to $A11100 the Z80 takes a bus request: /BUSREQ
-#: falls 18 MCLK after the write begins (Nuked-MD, all of its writes in the logo
-#: trace), and the Z80 samples it "with the rising edge of the last clock period of
-#: any machine cycle" (Zilog UM0080), 15 MCLK before the cycle ends -- so it lets go
-#: at the end of the first machine cycle ending 33 MCLK or more after the write. In
-#: Overdrive 2's sound driver the request lands in the M1 of `ld iy,$0000`'s second
-#: opcode byte and the die's Z80 still reads the next byte (docs/worklog.md, "The
-#: Z80's bus request"). Die-derived for the 18; 0 gives the board's old rule.
-Z80_BUSREQ_LAG_MCLK = 33
+#: How far past the 68000's write to $A11100 the Z80 takes a bus request: it lets go at
+#: the end of the first machine cycle ending this long or more after the write. /BUSREQ
+#: falls 18 MCLK after the write begins (Nuked-MD, every write in the logo trace) and
+#: the Z80 samples it on a cycle's last clock (Zilog UM0080), which alone gives 33; the
+#: die's grants say more -- write to /BUSAK 69-75 or 97-104 MCLK, never under 69 (142
+#: grants, ``run_nuked_md.py busack``) -- and 48 fits them best (12.5 cycles on average
+#: against the die's 12.55). In Overdrive 2's sound driver the request lands in the M1
+#: of ``ld iy,$0000``'s second byte and the Z80, here and on the die, still reads the
+#: next byte (docs/worklog.md, "The Z80's bus request"). Die-derived and fitted; 0
+#: gives the board's old rule.
+Z80_BUSREQ_LAG_MCLK = 48
+#: /BUSAK falls this long after the Z80's last machine cycle ends, its wait states
+#: included: 7 MCLK after the die's last memory cycle releases /MREQ (all 29 grants of
+#: the probe), which is part way through the cycle's last T-state; 3 fits with the lag.
+#: The board placed it :data:`~megadrive_python.arbiter.BUSACK_PROPAGATION_MCLK` (57)
+#: after the probe's estimate of the cycle's end, which leaves the wait states out --
+#: right on average for the probe's bank reads, 50 MCLK late for a Z80 running from
+#: its own RAM, as Overdrive 2's driver does. False keeps the 57 (and the lag's 33-era
+#: rule for the grant).
+Z80_BUSACK_AT_CYCLE_END = True
+Z80_BUSACK_AFTER_MCLK = 3
 Z80_RESUME_MCLK = 42
 Z80_RESET_RESUME_MCLK = 57
 
@@ -293,12 +305,29 @@ class System:
         comes back, as before.
         """
         self.catch_up_z80(mclk, stopping=True)
-        if self.z80_mclk >= mclk or not self.board.z80_running:
-            return max(mclk, self.z80_mclk) + BUSACK_PROPAGATION_MCLK
-        return busack_grant(
-            mclk + Z80_BUSREQ_LAG_MCLK,
-            [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()],
-        )
+        sampled = mclk + Z80_BUSREQ_LAG_MCLK
+        if not self.board.z80_running or not Z80_BUSACK_AT_CYCLE_END:
+            if self.z80_mclk >= mclk or not self.board.z80_running:
+                return max(mclk, self.z80_mclk) + BUSACK_PROPAGATION_MCLK
+            ends = [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()]
+            return busack_grant(sampled, ends)
+        if self.z80_mclk >= sampled and self._z80_partial is None:
+            # The instruction the request fell in has run to its end, its last machine
+            # cycle the one that took the request.
+            return self.z80_mclk + Z80_BUSACK_AFTER_MCLK
+        if self._z80_partial is not None:
+            return self._z80_partial[1] + Z80_BUSACK_AFTER_MCLK
+        ends = [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()]
+        # A machine cycle over the 68000's bus is as long as the arbiter makes it: its
+        # wait states push it and every later one back (the probe places 3 T-states).
+        board, start = self.board, self.z80_mclk
+        for end_t, at_t in self._probe_bus_ends:
+            wait, _, _ = z80_access_wait(start + at_t * Z80_DIVIDER, board.m68k_accesses)
+            extra = wait * Z80_DIVIDER
+            cut = start + end_t * Z80_DIVIDER
+            ends = [e + extra if e >= cut else e for e in ends]
+        let_go = next((e for e in ends if e >= sampled), sampled)
+        return let_go + Z80_BUSACK_AFTER_MCLK
 
     def z80_machine_cycle_ends(self) -> list[int]:
         """Where the next Z80 step's machine cycles end, in T-states from its start.
@@ -331,6 +360,7 @@ class System:
         read, write = z80.read_byte, z80.write_byte
         offsets: list[int] = []
         ends: list[int] = []
+        self._probe_bus_ends = bus_ends = []  # machine cycles over the 68000's bus
         written: dict[int, int] = {}
         clock = 0
         fetching = True
@@ -355,6 +385,8 @@ class System:
                 fetching = False
                 offsets.append(clock)
                 clock += 3
+                if address >= 0x8000 or 0x7F00 <= address < 0x7F20:
+                    bus_ends.append((clock, offsets[-1]))
             ends.append(clock)
             return value
 
@@ -364,6 +396,8 @@ class System:
             written[address] = value
             offsets.append(clock)
             clock += 3
+            if address >= 0x8000 or 0x7F00 <= address < 0x7F20:
+                bus_ends.append((clock, offsets[-1]))
             ends.append(clock)
 
         z80.read_byte, z80.write_byte = probe_read, probe_write

@@ -5704,3 +5704,43 @@ every machine, MoD's Z80 bus test and arbiter experiments, the arms window (100 
 100). Still open: the board's /BUSACK grant averages 18.2 68000 cycles from the write
 where the die's averages 12.1 (`run_nuked_md.py busack`) -- already so before this
 work, and the likely home of the last 14 MCLK.
+
+### The Z80's bus grant
+
+**What the die does.** `run_nuked_md.py busack`'s loop (the Z80 reading the bank window,
+the 68000 asking for its bus, holding it, giving it back): /BUSREQ falls 18 MCLK after
+the $A11100 write, and /BUSAK falls **7 MCLK after the Z80's last memory cycle releases
+/MREQ**, in all 29 grants of one window -- that cycle a bank read, wait states and all
+(60-90 MCLK long). Over 142 grants the write to /BUSAK is 69-75 or 97-104 MCLK (a few
+117), never under 69: mean 12.55 68000 cycles.
+
+**What the board did.** /BUSAK at the probe's estimate of the machine cycle's end plus a
+fixed 57 MCLK (`arbiter.BUSACK_PROPAGATION_MCLK`, fitted to this probe's means in the
+timing session). The probe gives every memory cycle 3 T-states, so the 57 stood in for
+the bank reads' wait states as much as for the propagation: 50 MCLK late for a Z80
+running from its own RAM, as Overdrive 2's driver does. And where the Z80 had already run
+the instruction the request fell in to its end, it added the 57 to that end.
+
+**Now** (`Z80_BUSACK_AT_CYCLE_END`): /BUSAK falls `Z80_BUSACK_AFTER_MCLK` (3) after the
+end of the machine cycle that takes the request -- the instruction's end if the Z80 has
+run it, the deferred instruction's let-go if not, else the next instruction's cycle ends
+with each bank or VDP access's wait states (from the arbiter) added. The lag before the
+Z80 takes a request, 33 from /BUSREQ and the last-clock sampling, is refitted to the
+grants as 48: the board's grants mean 12.5 cycles (12.55 on the die; 17.9 before), the
+shape still not the die's two clean clusters (the largest gap between the two
+cumulative distributions 0.30). Overdrive 2's driver: the first pause is now exact, the
+second (at +1,647) one Z80 clock late, and the driver still parts at its first timer
+wait.
+
+| | before | now |
+|---|---:|---:|
+| `busack`: write to /BUSAK, mean (die 12.55) | 17.9 | 12.5 |
+| `nuked-md` boot offset; matching Z80 reads | +14; 192 | -4; 187 |
+| frames 6,981-7,200 identical (window), `nuked-md` / `megadrive-tmss` | 219 / 218 | 220 / 220 |
+| ... at the expected frame | 182 / 111 | 75 / 75 |
+
+The boot offset and the late frames move by whole wait-loop passes with a few MCLK of
+change anywhere (an after of 2 gives -88, of 3 gives -4): threshold quantities, not
+measures of how close the model is. Unchanged: suites (148), VDPFIFOTesting, MoD's Z80
+bus test, the arbiter's experiments and the die's (the board's waits 2.49 against the
+die's 2.25).
