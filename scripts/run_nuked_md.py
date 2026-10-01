@@ -319,7 +319,14 @@ DMA_TARGETS = {
 }
 
 
-def dma_rom(words: int, target: str, *, display_off: bool = True, h40: bool = True) -> bytes:
+#: ``btst #3,$C00005`` then ``bne``/``beq`` back to it: wait while VBlank is set / until
+#: it is.
+WAIT_VBLANK_CLEAR = bytes.fromhex("0839000300c0000566f6")
+WAIT_VBLANK_SET = bytes.fromhex("0839000300c0000567f6")
+
+
+def dma_rom(words: int, target: str, *, display_off: bool = True, h40: bool = True,
+            when: str | None = None, delay: int = 0) -> bytes:  # fmt: skip
     """A cartridge that sets the VDP up, starts one 68000-memory DMA of ``words``
     words from $FF0000, and then runs a long NOP chain.
 
@@ -343,7 +350,15 @@ def dma_rom(words: int, target: str, *, display_off: bool = True, h40: bool = Tr
         regs += bytes.fromhex("33fc") + bytes([0x80 | reg, value]) + b"\x00\xc0\x00\x04"
     start = bytes.fromhex("33fc") + first.to_bytes(2, "big") + b"\x00\xc0\x00\x04"
     start += bytes.fromhex("33fc") + second.to_bytes(2, "big") + b"\x00\xc0\x00\x04"
-    body = UNLOCK + bytes(regs) + NOP * 4 + start
+    # With the display on, where the transfer runs decides its cost: ``when`` starts it
+    # just after VBlank begins ("vblank") or just after it ends ("active"), and
+    # ``delay`` NOPs move it along the line.
+    wait = b""
+    if when == "vblank":
+        wait = WAIT_VBLANK_CLEAR + WAIT_VBLANK_SET
+    elif when == "active":
+        wait = WAIT_VBLANK_SET + WAIT_VBLANK_CLEAR
+    body = UNLOCK + bytes(regs) + NOP * 4 + wait + NOP * delay + start
     return cartridge(loop(body, NOP * 16))
 
 
@@ -365,19 +380,22 @@ def dma_hold(cycles, *, control_address: int = 0xC00004) -> int | None:
 def cmd_dma(args) -> int:
     words = [int(w) for w in args.words.split(",")]
     print("# the cost of a 68000-memory DMA beyond the write that starts it,")
-    print("# display off, H40, in 68000 cycles")
+    display = "display on" if args.display_on else "display off"
+    where = f", started at {args.when} + {args.delay} NOPs" if args.when else ""
+    print(f"# {display}, H40{where}, in 68000 cycles")
     print(f"# referee: Nuked-MD @ {referee_revision()}")
     print(f"\n{'target':7} {'words':>6} {'referee':>9} {'board':>9} {'board-ref':>10}")
     fits: dict[str, tuple[list[int], list[float], list[float]]] = {}
     for target in args.targets.split(","):
         used, ref_costs, board_costs = [], [], []
         for n in words:
-            rom = dma_rom(n, target)
-            window = 20_000 + n * 40
+            rom = dma_rom(n, target, display_off=not args.display_on, when=args.when,
+                          delay=args.delay)  # fmt: skip
+            window = 20_000 + n * 40 + (2_400_000 if args.when else 0) + args.delay * 28
             run = nmd.run(rom, stop=REFEREE_RESET + window + 5000,
                           trace=(REFEREE_RESET, REFEREE_RESET + window), trace_mask=1)  # fmt: skip
             ref = dma_hold(run.m68k(dma=False))
-            _, log = nmd.board_trace(rom, accesses=1500)
+            _, log = nmd.board_trace(rom, accesses=90_000 if args.when else 1500 + args.delay)
             board = dma_hold(log)
             if ref is None or board is None:
                 print(f"{target:7} {n:6}   no transfer seen")
@@ -932,6 +950,9 @@ def main() -> int:
     p = sub.add_parser("dma", help="the cost of a DMA transfer")
     p.add_argument("--words", default="1,2,4,8,16,32,64,128")
     p.add_argument("--targets", default="VRAM,CRAM,VSRAM")
+    p.add_argument("--display-on", action="store_true", help="the display enabled")
+    p.add_argument("--when", choices=("vblank", "active"), help="wait for this first")
+    p.add_argument("--delay", type=int, default=0, help="NOPs after the wait")
     p.set_defaults(func=cmd_dma)
 
     p = sub.add_parser("arbiter", help="MoD's bank-window experiments")

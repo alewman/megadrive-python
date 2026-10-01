@@ -5578,3 +5578,48 @@ display-on boot DMAs and the display-off probe is the open question.
 `--align-fm`, its lag swept over the 24 internal cycles of a sample) gets the driver
 past its first timer wait at one phase only (lag 126: 1,150 reads match), and it parts
 from the die again after that -- the Z80's own timing, the long-open caveat.
+
+### The Z80's phase, and DMA with the display on
+
+**The Z80 is not the cause.** With the FM's phase set to the die's at the Z80's start
+(`--align-fm`, lag 112-133), the board's and the die's Z80 accesses agree in time for
+all 1,148 reads that match, with no drift; every FM timer wait has the same load-to-
+flag time and polls until the 15th, which neither a fixed FM phase nor the Z80 explains.
+What sets it is earlier: in `ld iy,$0000` at $00E4 the 68000 takes the Z80's bus to
+write $05A2. On the die the Z80 lets go after the instruction's third read ($00E6), on
+the board one machine cycle sooner, because the board's 68000 asks 80-215 MCLK
+earlier: its boot runs early. From there the board's Z80 is 4 T-states (60 MCLK)
+behind, which the FM alignment had been hiding. (A logging slip first put the board's
+`or (hl)` status read 1 T after its fetch; read after the access, as the board does,
+it is 4 T, as on the die.)
+
+**DMA with the display on** (`run_nuked_md.py dma --display-on --when vblank|active
+--delay N`, new; the transfer started just after VBlank begins or ends):
+
+| 68000 cycles beyond the write | die | board before | board now |
+|---|---|---|---|
+| active display, 1 / 2 / 4 words | 11 / 14 / 19 | 56 / 56 / 56 | 8.6 / 10.9 / 15.4 |
+| active display, 8 / 16 / 64 words (VRAM) | 219 / 653 / 3,242 | | 220.6 / 654.3 / 3,243.4 |
+| VBlank, VRAM, slope / 512 words | 4.78 / 2,448 | 4.79 / 2,440 | the same |
+| VBlank, CRAM, slope / 512 words | 2.47 / 1,270 | 2.39 / 1,224.6 | the same |
+| display off (200 NOPs later), CRAM 512 | 1,267 | 1,225.1 | the same |
+
+- **Fixed:** the board read the 68000's memory for a transfer only at an access slot,
+  so in the active display a short transfer waited for slots the die does not wait
+  for. `vdp.DMA_READS_BETWEEN_SLOTS`: the reads are events of their own, into the FIFO
+  while it has room. Die-derived.
+- **The display-off case is the same as VBlank** on the die and now on the board too,
+  once the transfer starts a few lines after the probe's register writes; started at
+  once, the board pays ~240 MCLK more, from the H40 switch written just before, which
+  the board latches at the next line. A mid-line mode change; left.
+- **What remains is the hardware-versus-die pair already on record:** every transfer
+  2.4-3.6 cycles short (the die's start-up 8.0 against Kabuto's 5.6, which the board
+  charges) and the fast pace 2.40 (Kabuto's 2.4) against the die's 2.47 -- 12 cycles
+  over a 64-word CRAM transfer, the boot's commonest. Those, not the board's own
+  mechanism, are what keeps its 68000 early at the Z80's start. Changing either is a
+  tier decision (Aubrey's).
+
+Overdrive 2: aligned frames 5,741-5,840 100 of 100; 6,981-7,200 219 identical, 182 at
+the expected frame (unchanged); matching Z80 reads 192 -> 331; boot offset -217.
+VDPFIFOTesting 122/122 on eight machines, 114 on genesis3; suites 147 pass; Overdrive 2
+runs at the same speed (9.3 frames a second from the frame-7,036 snapshot).
