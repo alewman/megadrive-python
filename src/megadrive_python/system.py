@@ -81,6 +81,15 @@ RESET_RAM_REFRESH_MCLK = 2380
 #: -- BUSREQ is sampled only at the end of a machine cycle (Zilog UM0080) -- and the
 #: rest of the instruction waits for the bus. Die-derived.
 Z80_CLOCK_PHASE = 6
+#: How far past the 68000's write to $A11100 the Z80 takes a bus request: /BUSREQ
+#: falls 18 MCLK after the write begins (Nuked-MD, all of its writes in the logo
+#: trace), and the Z80 samples it "with the rising edge of the last clock period of
+#: any machine cycle" (Zilog UM0080), 15 MCLK before the cycle ends -- so it lets go
+#: at the end of the first machine cycle ending 33 MCLK or more after the write. In
+#: Overdrive 2's sound driver the request lands in the M1 of `ld iy,$0000`'s second
+#: opcode byte and the die's Z80 still reads the next byte (docs/worklog.md, "The
+#: Z80's bus request"). Die-derived for the 18; 0 gives the board's old rule.
+Z80_BUSREQ_LAG_MCLK = 33
 Z80_RESUME_MCLK = 42
 Z80_RESET_RESUME_MCLK = 57
 
@@ -180,14 +189,16 @@ class System:
                     if self._z80_partial is None:
                         self.z80_mclk = mclk
                     break
-                if stopping and self.z80_mclk + MAX_Z80_T * Z80_DIVIDER >= mclk:
+                sampled = mclk + Z80_BUSREQ_LAG_MCLK if stopping else mclk
+                if stopping and self.z80_mclk + MAX_Z80_T * Z80_DIVIDER >= sampled:
                     offsets = self._z80_offsets()  # the table's, as the horizon below
-                    if any(self.z80_mclk + t >= mclk for t in offsets):
-                        # The machine cycle under way at the request finishes; the
-                        # accesses after it wait for the bus (:meth:`_z80_resume`).
+                    if any(self.z80_mclk + t >= sampled for t in offsets):
+                        # The machine cycle under way when the request is sampled
+                        # finishes; the accesses after it wait for the bus
+                        # (:meth:`_z80_resume`).
                         ends = [self.z80_mclk + t * Z80_DIVIDER
                                 for t in self.z80_machine_cycle_ends()]  # fmt: skip
-                        let_go = next((end for end in ends if end >= mclk), mclk)
+                        let_go = next((end for end in ends if end >= sampled), sampled)
                         self._z80_partial = (self.z80_mclk, let_go)
                         self.z80_deferred += 1
                         break
@@ -285,7 +296,8 @@ class System:
         if self.z80_mclk >= mclk or not self.board.z80_running:
             return max(mclk, self.z80_mclk) + BUSACK_PROPAGATION_MCLK
         return busack_grant(
-            mclk, [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()]
+            mclk + Z80_BUSREQ_LAG_MCLK,
+            [self.z80_mclk + t * Z80_DIVIDER for t in self.z80_machine_cycle_ends()],
         )
 
     def z80_machine_cycle_ends(self) -> list[int]:

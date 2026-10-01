@@ -5651,3 +5651,56 @@ where along the line it starts -- 161 to 173 cycles over 16 starts 3 NOPs apart 
 blank line), where the board's averaged pace gives 166.4 every time. Matching it
 transfer by transfer needs the die's own read times, which its bus trace does not
 show: the VDP's DMA reads do not appear among the cycles the harness logs.
+
+### The DMA's reads on the die, and the Z80's bus request
+
+**The harness sees the DMA now.** `validation/nuked_md_headless.c` gains
+`NMD_TRACE_MASK` bit 3: the work-RAM (/RAS0) and cartridge (/CE0) selects as type-4
+records, one per new address while a select is held (the cartridge's stays low across
+a transfer), flagged with /BGACK and whether the 68000 drove /AS. The VDP's DMA reads
+drive neither /AS nor the 68000's strobes, which is why no trace had shown them;
+`nuked_md.memory_cycles` reads them.
+
+**What they show** (a 512-word CRAM transfer from work RAM in VBlank; the Overdrive 2
+boot's 64 transfers, almost all from the cartridge):
+
+- The reads fall on the VDP's slot clock, 16 MCLK apart (18-20 across the H40 sync's
+  slower pixels), with a 48-MCLK gap at six places a line -- 512 MCLK apart, 860 across
+  the blank: each refresh costs the reads **two** ticks, as Exodus has it, where the VRAM
+  write slots lose one (the Manual's 205 bytes a line). That is the die's fast pace,
+  2.47 cycles a word, against Kabuto's 2.4.
+- First read 74 MCLK after the trigger write's start from work RAM, 50-59 from the
+  cartridge; the 68000's next cycle 32 MCLK after the last read from work RAM, 35-55
+  from the cartridge.
+
+`Machine.dma_figures = "die"` now uses that, not an averaged pace: reads on
+`_dma_ticks` (the refresh positions 8 H earlier than Exodus's against the board's own
+counter, fitted: 1.66 cycles RMS over 16 starting points), the first read on the first
+tick 25 (work RAM) or 4 (cartridge) MCLK after the write is over, the 68000 back 21
+(fitted) or 45 MCLK after the last read. Against the probe, 3 cycles RMS over its 16
+transfers -- active-display transfers of 16 words or more stay 4-5 long. Kabuto's figures
+(the default) are untouched.
+
+**The Z80's bus request.** As `nuked-md` the boot lined up (boot offset -4 MCLK), and
+the Z80 still parted at its first timer wait. On the die the 68000's request ($A11100 =
+$0100) lands in the M1 of `ld iy,$0000`'s second byte, and the Z80 still reads $00E6
+before letting go: /BUSREQ falls 18 MCLK after the write begins (all six writes in the
+logo trace), and the Z80 samples it on the last clock of a machine cycle, 15 before its
+end. The board let go at the first machine-cycle end after the write itself.
+`system.Z80_BUSREQ_LAG_MCLK` = 33: the first end 33 or more after the write. The pause
+now falls where the die's does; the board's Z80 then resumes one T-state late, its
+68000 14 MCLK late at the release.
+
+| | `megadrive-tmss` before | after | `nuked-md` before | after |
+|---|---:|---:|---:|---:|
+| boot offset | -217 | -211 | -86 | +14 |
+| matching Z80 reads | 331 | 264 | 192 | 192 |
+| Z80 timing from the driver's start | +60 after the pause | | +60 | **+15** |
+| frames 6,981-7,200 identical (window); at the expected frame | 219; 182 | 218; 111 | 219; 182 | 219; 182 |
+
+The default machine's late-frame count falls with the lag; it is the downstream
+measure, and the lag is what the die does. Unchanged: suites (148), VDPFIFOTesting on
+every machine, MoD's Z80 bus test and arbiter experiments, the arms window (100 of
+100). Still open: the board's /BUSACK grant averages 18.2 68000 cycles from the write
+where the die's averages 12.1 (`run_nuked_md.py busack`) -- already so before this
+work, and the likely home of the last 14 MCLK.

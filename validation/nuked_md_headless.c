@@ -44,7 +44,8 @@
  *   NMD_TRACE_FROM=<t>    first half-MCLK traced (default 0).
  *   NMD_TRACE_TO=<t>      one past the last (default NMD_STOP).
  *   NMD_TRACE_MASK=<n>    bit 0: 68000/VDP bus cycles.  bit 1: Z80 bus cycles.
- *                         bit 2: the signal changes below.  Default 7.
+ *                         bit 2: the signal changes below.  bit 3: work-RAM and
+ *                         cartridge selects (type 4).  Default 7.
  *   NMD_DUMP_RAM=<path>   68000 work RAM (64 KB) at the stop.
  *   NMD_DUMP_ZRAM=<path>  Z80 RAM (8 KB) at the stop.
  *   NMD_DUMP_VRAM=<path>  Nuked-MD's own vram_save() blob at the stop.
@@ -64,6 +65,13 @@
  *                 asserted during the cycle.
  *                 type 2: bit 0 /RD, 1 /WR, 2 /MREQ, 3 /IORQ, 4 /M1 (all "was
  *                 asserted at some point in the cycle").
+ *                 type 4: a work-RAM (/RAS0) or cartridge (/CE0) select, low to
+ *                 high -- the memory cycles of the VDP's DMA, which do not drive
+ *                 /AS, as well as the 68000's own: bit 0 work RAM (else the
+ *                 cartridge), 1 /BGACK was asserted, 2 the 68000 drove /AS, 3 R/W
+ *                 read (all "at some point in the cycle"), 4 the select stayed low
+ *                 and the address changed (a new read under the same select); addr
+ *                 and data are the 68000 bus's.
  *   uint16 pad
  *
  * A "bus cycle" on the 68000's bus is /AS low to /AS high; on the Z80's bus it is
@@ -244,7 +252,7 @@ typedef struct {
 } nmd_event;
 #pragma pack(pop)
 
-enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3 };
+enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4 };
 
 /* Signal numbers for EV_SIGNAL records.  These are the board-level lines milestone 5
    models and has no hardware judge for: the Z80's bus handover, its reset, the
@@ -289,6 +297,11 @@ static uint8_t m68k_flags;
 
 /* the Z80's bus cycle under way */
 static int prev_zact;
+/* The memory selects, [0] the cartridge's /CE0 and [1] work RAM's /RAS0. */
+static int prev_sel[2] = {1, 1};
+static uint64_t mem_start[2];
+static uint32_t mem_start_zt[2], mem_addr[2];
+static uint8_t mem_flags[2];
 static uint64_t z80_start;
 static uint32_t z80_start_zt;
 static uint32_t z80_addr;
@@ -739,6 +752,43 @@ void Audio_Update(void)
                  (uint16_t)(mcycles - z80_start), z80_flags);
     }
     prev_zact = zact;
+
+    /* --- the memory selects (the VDP's DMA reads among them) ------------------- */
+    if (trace_mask & 8) {
+        int sel[2];
+        sel[0] = ym.o_ce0 == state_z ? 1 : (ym.o_ce0 & 1);  /* cartridge */
+        sel[1] = ym.vdp.o_ras0 & 1;                         /* work RAM */
+        for (i = 0; i < 2; i++) {
+            if (prev_sel[i] && !sel[i]) {
+                mem_start[i] = mcycles;
+                mem_start_zt[i] = zclk_edges;
+                mem_flags[i] = i ? 1 : 0;
+            }
+            if (!sel[i]) {
+                uint32_t a = (uint32_t)(md.vaddress * 2) & 0xffffff;
+                /* A select can stay low across reads (the cartridge's /CE0 does through
+                 * a DMA): each new address on the bus while it is low is a new read. */
+                if (!prev_sel[i] && a != mem_addr[i]) {
+                    if (tracing)
+                        emit(EV_MEM, mem_start[i], mem_start_zt[i], mem_addr[i],
+                             (uint16_t)(md.vdata & 0xffff),
+                             (uint16_t)(mcycles - mem_start[i]), mem_flags[i] | 16);
+                    mem_start[i] = mcycles;
+                    mem_start_zt[i] = zclk_edges;
+                    mem_flags[i] = i ? 1 : 0;
+                }
+                if (ym.o_bgack != state_z) mem_flags[i] |= 2;
+                if (m68k.o_as != state_z) mem_flags[i] |= 4;
+                if (md.rw & 1) mem_flags[i] |= 8;
+                mem_addr[i] = a;
+            }
+            if (!prev_sel[i] && sel[i] && tracing)
+                emit(EV_MEM, mem_start[i], mem_start_zt[i], mem_addr[i],
+                     (uint16_t)(md.vdata & 0xffff), (uint16_t)(mcycles - mem_start[i]),
+                     mem_flags[i]);
+            prev_sel[i] = sel[i];
+        }
+    }
 
     /* --- board signals ------------------------------------------------------ */
     if (trace_mask & 4) {
