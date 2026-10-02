@@ -184,28 +184,29 @@ MCLK_PER_CYCLE = 42
 
 #: Internal cycles the chip stands still after /IC is asserted. Nuked-MD's FM (``fm.c``
 #: ``FM_Prescaler``) stops its prescaler while ``ic_check`` holds -- /IC high now but
-#: low 12 FM clocks ago, i.e. for 12 clocks (2 internal cycles) after the assertion --
-#: and then restarts it from the assertion, /IC still low: the slot-23 marker keeps its
-#: 1,008-MCLK period through a long reset (docs/worklog.md, "The Z80 from the reset").
-#: Die-derived; the board used to freeze the counter until /IC was released. **3**, one
-#: more than ``ic_check``'s 12 FM clocks give: with the clocks lined up as the die's
-#: (``system.M68K_POWER_ON_PHASE``) the FM's phase after both of the Overdrive 2 boot's
-#: later assertions comes out one cycle early with 2, and timer A's flag lands where the
-#: die's does with 3 (docs/worklog.md, "The VDPs' offset"); fitted, not read off the
-#: netlist.
+#: low 12 FM clocks ago, i.e. for 12 clocks after the assertion -- and then restarts it
+#: from the assertion, /IC still low: the slot-23 marker keeps its 1,008-MCLK period
+#: through a long reset (docs/worklog.md, "The Z80 from the reset"). The die's prescaler
+#: and slot counter clocked alone (the way ``fc1004.c`` drives them) take their next slot
+#: 15 FM clocks after the clock that first samples /IC, at every phase; with /IC sampled
+#: about 3 FM clocks after the write that drives it, that is 18 FM clocks, 3 internal
+#: cycles, after the assertion. Die-derived: the FM's slot-23 marker after both of the
+#: Overdrive 2 boot's later assertions, a reset and a pause, lands within 0.5 MCLK of the
+#: die's (docs/worklog.md, "The FM's restart").
 IC_FSM_HOLD = 3
 #: Whether the slot counter is also reset depends on where in its slot the assertion
 #: falls: ``i_fsm_reset`` (``fc1004.c``, ``ic_check`` three clocks late) resets it only
 #: if a phase-1 clock still comes while it holds. Measured by clocking Nuked-MD's own
-#: ``fm.c`` the way ``fc1004.c`` does through every position, and matching all three
-#: assertions of its Overdrive 2 run (a reset, two pauses): sampled 1-3 FM clocks into
+#: ``fm.c`` the way ``fc1004.c`` does through every position: sampled 1-3 FM clocks into
 #: a slot, the counter restarts at slot 0; sampled 0, 4 or 5 clocks in, it keeps its
-#: count and goes on from the slot under way two clocks later (docs/worklog.md, "The
-#: one-frame slip"). /IC is sampled 3 FM clocks after the bus cycle that drives it
-#: begins, and the die's slots begin 24 MCLK after this model's cycles.
+#: count, and the slot it would have gone on to next (:data:`IC_PAUSE_CARRY`) is the one
+#: it takes up at the restart (docs/worklog.md, "The one-frame slip", "The FM's
+#: restart"). /IC is sampled 3 FM clocks after the bus cycle that drives it begins, and
+#: the die's slots begin 24 MCLK after this model's cycles.
 IC_PAUSE_POSITIONS = (0, 4, 5)
 IC_SLOT_LAG = 3
 IC_RESUME_LOOKAHEAD = 11
+IC_PAUSE_CARRY = 1
 CYCLES_PER_SAMPLE = 24
 
 #: How long a status read holds its value before the chip stops driving the bus:
@@ -419,7 +420,7 @@ class YM2612:
             phase = start - self.mclk  # into the cycle under way (the caller synced)
             self.reset()
             if ((phase - IC_SLOT_LAG) // 7) % 6 in IC_PAUSE_POSITIONS:
-                ahead = (phase + IC_RESUME_LOOKAHEAD) // MCLK_PER_CYCLE
+                ahead = (phase + IC_RESUME_LOOKAHEAD) // MCLK_PER_CYCLE + IC_PAUSE_CARRY
                 self.cycles = (cycles + ahead) % CYCLES_PER_SAMPLE
             self.mclk, self.cycles_run, self.writes = start, cycles_run, writes
             self._ic_hold = IC_FSM_HOLD
