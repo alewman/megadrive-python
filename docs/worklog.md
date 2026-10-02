@@ -5951,3 +5951,87 @@ window (5,741-5,840) one pixel moved: frame 5,783 at (0, 32) is white where the 
 main have grey, a colour-RAM write's dot at the line's start. The Z80 has parted from the
 die's 190 reads after handover 2, long before this frame, so its handovers there are not
 the die's on either board; the dot rides on that.
+
+### The DMA's read into room (the 68000's drift)
+
+The judge (`od2_boot_drift --from-reset`) parted from the die at +850,199 MCLK after the
+reset, 21 early: the end of the boot's first long transfer, 280 words from the cartridge
+into VRAM across the end of the picture. Compared read by read (the die's memory selects,
+`NMD_TRACE_MASK` bit 3, against the board's reads), the board read each word about 405
+MCLK before the die, all but the first four, and let the 68000 go 401 MCLK after its last
+read where the die lets it go 33 after. The two errors nearly cancelled.
+
+- **No read ahead.** With the FIFO full the board read the next word into a latch and
+  pushed it when an entry emptied. The die does not: its next select comes 2 MCLK after
+  the VRAM write strobe (`NMD_TRACE_MASK` bit 4) of the second byte that empties an
+  entry, in the picture and in the blank alike. On a blank line that strobe is 1 MCLK
+  after the board's slot. On an active line it is 49 MCLK after, so the transfer's read
+  waits for it there (`vdp.DMA_ACTIVE_WRITE_LAG_MCLK` = 48). Moving the active slots
+  themselves instead shifts a VDPFIFOTesting result and breaks the boot, so only the
+  transfer waits; the 68000's own FIFO is left as it was. Every read of the board's now
+  comes 3 MCLK before the die's select (its tick against the select).
+- **The first line of the border.** A transfer running from the picture into vblank
+  writes nothing on the die until H $152, four slots into the line, where lines inside
+  the border show no such gap (`vdp.FIRST_IDLE_SLOT_H`).
+- **The refresh.** On a blank line the die's writes lose the slot at $1F8, $038, $078 and
+  its reads the ticks at $1F6 and $1F8: Exodus's $1F2, $032, $072 plus 6 and plus 4.
+  The board had the reads 8 *before* Exodus's, fitted to the display-off probe, and the
+  writes at Exodus's own. That probe is not lined up: its two 68000s meet their VDPs
+  only through a status-poll loop, and the board's VDP sat 20 MCLK into a slow-pixel run
+  when the die's did not. The vblank and active probes, which wait on the VDP first, are
+  good to about a poll loop, ±20 MCLK. The boot, lined up by the VDPs' offset, is the
+  judge (`DMA_REFRESH_SHIFT_H` = +4, `IDLE_REFRESH_SLOT_SHIFT_H` = +6).
+- **The resume.** The die's 68000 takes the bus back on its first clock edge 30-33 MCLK
+  after the last select (33 and 36 to the edge in the boot, 33 in the work-RAM probe),
+  whatever the source. One figure for both, `DMA_RESUME_DIE_MCLK` = 34 from the board's
+  read: 33-36 fit the first two transfers, 33-34 all four. The 21 (RAM) and 45 (ROM)
+  were fitted while the board read ahead.
+- **The FIFO's delay.** The die passes up a write slot 30 MCLK after its read and takes
+  the one 46 after, so a DMA entry needs more than 32 MCLK from the board's read; 33-48
+  give the same boot (`FIFO_COMMIT_DELAY_MCLK` = 40, from 32). At 32 the board wrote the
+  third transfer's first byte one slot early, and from there its bytes paired one slot
+  ahead of the die's.
+- **The first read from the cartridge**, on the first tick 8 MCLK after the write is over
+  (from 4): 5-12 put every blank-line transfer's first read where the die's is. The first
+  transfer's first read, on an active line, wants 16 or more, which makes the blank ones
+  late; it does not reach the 68000, the FIFO being full by then.
+- **The press time.** With these, no single resume fits both of the first two transfers
+  at the press the harnesses used (26,601,705), and 31-36 fit both at the die's own
+  (26,601,719, its pulse less the VDPs' offset): the 14 MCLK the earlier calibration
+  called the board's pulse start against the die's was a 68000-against-VDP error,
+  absorbed. At 719 one more thing moved, the first interrupt's autovectored acknowledge,
+  14 MCLK short: the E clock runs from power-on, so moving the press two clocks moves the
+  program against it, and `system.M68K_E_CLOCK_POWER_ON` = 7 (from 9) puts it back. The
+  harnesses default to 719 now.
+
+| | main | after |
+|---|---:|---:|
+| the judge's first difference | +850,199 (-21) | **+933,737** (-21) |
+| the boot's transfers in the strobe window (27.69-28.19M) exact at the 68000's resume | | **4 of 4** |
+| die DMA probe, active line, 8+ words, mean \|board-die\| (68000 cycles) | 8.80 | **0.13** |
+| die DMA probe, active line, all rows | 6.50 | **1.08** |
+| die DMA probe, vblank / display off, all rows | 1.83 / 15.08 | 2.79 / 16.42 |
+| matching Z80 reads | 3,301 | 187 |
+| handovers 0 and 1 | exact | +22, +8 |
+
+The Z80's numbers fall because by the Z80's start, 15.7M MCLK after the reset, the
+board's 68000 is about 100 MCLK out, where main's happened to be in step there
+(threshold measures, as before). What moves it on the way is the next item: the judge's
+first difference now is a work-RAM write the die holds 21 MCLK and the board does not,
+after the longest stretch of the boot without a work-RAM access (+747,628 to +931,469,
+all four transfers from the cartridge). The refresh rule (`board.ram_refresh`) fitted on
+the 3D scene, where the RAM is never left alone long, mispredicts 313 of the boot's
+3,935 work-RAM accesses, both ways, after long idle stretches and in some dense ones; its
+self-run (`RAM_REFRESH_SELF_MCLK`) is the suspect. The die's refresh does not show on
+/RAS0 when nothing accesses the RAM (four work-RAM selects in 500,000 MCLK), and its holds
+fall nowhere in particular in the line.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures (8,762,828 words),
+VDPFIFOTesting on every machine, sprite masking, MoD's tests, the soft checker,
+r57shell's tests, the pads, TMSS and Nuked-MD's probes; `run_dma_cost`'s VRAM 128 KB
+blanking figure moves 406.5 to 405.7 bytes a line (the refresh slot's place). The arms
+window is identical (100 of 100). Frames 6,981-7,200: 183 at the expected frame (main
+75). The board is back on the die's frame from 7,090, where main stayed one behind from
+the slip at 7,053 to the window's end, but it catches up through one junk frame: 7,089
+is black with a pale block and a patch of tiles, between the die's fading pattern and
+its white flash, the one frame of the window not found within three of the die's.

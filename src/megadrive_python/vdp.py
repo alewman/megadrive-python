@@ -203,6 +203,8 @@ class HMode:
         self.slots_active: list[int] = []
         self.no_read_fill: frozenset[int] = frozenset()
         self.slots_idle: list[int] = []
+        #: The first blanked line's (:data:`FIRST_IDLE_SLOT_H`).
+        self.slots_first_idle: list[int] = []
         #: When a transfer can read with the die's DMA figures (``_dma_ticks``).
         self.dma_ticks: list[int] = []
         #: Where display pixel 0 falls in ``hvals``, so that ``position(offset) -
@@ -271,6 +273,12 @@ _ACTIVE_SLOTS = {
     "H40": (0x002, 0x012, 0x022, 0x042, 0x052, 0x062, 0x082, 0x092, 0x0A2, 0x0C2, 0x0D2,
             0x0E2, 0x102, 0x112, 0x122, 0x140, 0x142, 0x1CE),
 }  # fmt: skip
+#: Where the first line of the vertical border begins its idle access slots: on
+#: Nuked-MD a transfer that runs from the picture into the border writes nothing on that
+#: line until H $152 in H40, four slots after the line begins at $14A, where lines inside
+#: the border show no such gap (docs/worklog.md, "The DMA's read into room"). H32 is not
+#: measured. Die-derived.
+FIRST_IDLE_SLOT_H = {"H40": 0x152}
 #: Active-line slots that fill no data-port read (:data:`READ_RELEASE_MCLK`).
 _NO_READ_FILL = {"H40": (0x142,)}
 #: The refresh slots of an idle line, by H counter, from Exodus's own tables
@@ -297,15 +305,22 @@ def _idle_slots(mode: HMode) -> list[int]:
     blanking refresh Exodus measured, which Sega's table does not account for.
     """
     parity = 1 if mode.name == "H32" else 0
-    refresh = set(_REFRESH[mode.name])
+    shift = IDLE_REFRESH_SLOT_SHIFT_H.get(mode.name, 0)
+    refresh = {h + shift for h in _REFRESH[mode.name]}
     return sorted(mode.offset_of[h] for h in mode.hvals if h % 2 == parity and h not in refresh)
 
 
-#: Where the DMA reads' refresh gaps fall against the board's own H counter: 8 earlier
-#: in H40, fitted to the die's 64-word CRAM transfer from 16 starting points 84 MCLK
-#: apart (1.66 cycles RMS, shifts of 8 to 14 alike; Exodus's positions give 2.3). H32 is
-#: not measured.
-DMA_REFRESH_SHIFT_H = {"H40": -8}
+#: Where the DMA reads' refresh gaps fall against the board's own H counter: 4 after
+#: Exodus's positions in H40. On Nuked-MD, lined up by the VDPs' offset in the
+#: Overdrive 2 boot, a CRAM transfer across a blank line loses the ticks at $1F6 and
+#: $1F8 (Exodus's refresh $1F2), and a VRAM transfer's write strobes skip $1F8, $038 and
+#: $078 (Exodus's $1F2, $032, $072). The 8 *before* that this replaced was fitted to a
+#: display-off probe whose two 68000s are not lined up with their VDPs (docs/worklog.md,
+#: "The DMA's read into room"). H32 is not measured. Die-derived.
+DMA_REFRESH_SHIFT_H = {"H40": 4}
+#: An idle line's write slots lose the slot two H after that: the second of the two
+#: ticks the reads lose (the same measurement). Die-derived.
+IDLE_REFRESH_SLOT_SHIFT_H = {"H40": 6}
 
 
 def _dma_ticks(mode: HMode) -> list[int]:
@@ -365,6 +380,10 @@ _DISPLAY_START = {"H32": 0x000, "H40": 0x000}
 for _mode in (H32, H40, H40_VSYNC, H40_LONG, H40_SHORT):
     _mode.slots_active = sorted(_mode.offset_of[h] for h in _ACTIVE_SLOTS[_mode.name])
     _mode.slots_idle = _idle_slots(_mode)
+    _first = FIRST_IDLE_SLOT_H.get(_mode.name)
+    _mode.slots_first_idle = (
+        [o for o in _mode.slots_idle if o >= _mode.offset_of[_first]] if _first is not None else []
+    )
     _mode.dma_ticks = _dma_ticks(_mode)
     _mode.no_read_fill = frozenset(_mode.offset_of[h] for h in _NO_READ_FILL.get(_mode.name, ()))
     _mode.display_at = _mode.hvals.index(_DISPLAY_START[_mode.name])
@@ -485,11 +504,15 @@ DMA_STARTUP_MCLK = 39
 #: on the line's DMA ticks (``_dma_ticks``), which give its fast pace, 2.47 cycles a
 #: word, where Kabuto measured 2.4; the first read on the first tick this long after
 #: the trigger write is over, from work RAM or from the cartridge (74 and 50-59 MCLK
-#: from the write's start on the die); and the 68000's next cycle this long after the
-#: last read (32 and 35-55 on the die; 21 for work RAM is fitted to the DMA probe, 3
-#: cycles RMS over its 16 transfers, the rounding to ticks and 68000 clocks taken up).
-DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": 4}
-DMA_RESUME_DIE_MCLK = {"ram": 21, "rom": 45}
+#: from the write's start on the die); and the 68000's next cycle on its first clock
+#: edge this long after the last read, from either source. On the die that edge comes
+#: 30-33 MCLK after the read (both of the Overdrive 2 boot's long transfers, 33 and 36
+#: to the edge; the probe's work-RAM transfers, 33); the board's reads come 3 MCLK
+#: before the die's, so 33-36 here, and the boot's third transfer narrows it to 33-34
+#: (docs/worklog.md, "The DMA's read into room"). The 21 and 45 this replaced were
+#: fitted while the board still read a word ahead.
+DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": 8}
+DMA_RESUME_DIE_MCLK = 34
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
 #: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
 #: (all 119 of them in the Overdrive 2 boot and logo traces; docs/worklog.md "The DMA
@@ -498,6 +521,18 @@ DMA_RESUME_DIE_MCLK = {"ram": 21, "rom": 45}
 #: contain: Aubrey's option A, measured before the rest of the gap is questioned. 0
 #: leaves it out.
 DMA_TRIGGER_HOLD_MCLK = 21
+#: With the die's figures, a transfer reads only into room in the FIFO, where the board
+#: read the next word ahead into a latch: on Nuked-MD a full FIFO's next memory select
+#: comes 2 MCLK after the VRAM write strobe that empties an entry (its second byte's),
+#: and the strobe 1 MCLK after the board's slot on a blank line (docs/worklog.md, "The
+#: DMA's read into room"). So the read is on the slot's own tick, 3 MCLK before the
+#: die's, as every other read of the board's is. Die-derived.
+DMA_READS_INTO_ROOM = True
+#: On an active line the die's strobe comes this long after the board's external slot
+#: (49 MCLK, its select 51), so the read waits for it. Only the transfer's reads wait:
+#: the 68000's own FIFO is left as it is (moving the active slots instead shifts a
+#: VDPFIFOTesting result and parts the boot). Die-derived.
+DMA_ACTIVE_WRITE_LAG_MCLK = 48
 #: The transfer's own bus cycles take the cartridge refresh ticks that fall due while it
 #: runs, so the 68000's first cycle after it is not stretched for them: on Nuked-MD it
 #: is not, 114 times of 118 (the boot and logo traces), where the board stretched it
@@ -508,11 +543,14 @@ DMA_TAKES_REFRESH = True
 #: board's 68000 parted from the die's 196 MCLK after the reset):
 #: on Nuked-MD (its VRAM write strobes, ``NMD_TRACE_MASK`` bit 4) a transfer's first
 #: word is written 57 MCLK after it is read, so its reads stall after six where the
-#: board, writing at the next slot, ran on for nine; 32 fits the boot's transfers best
-#: (docs/worklog.md, "The FIFO's delay"). CRAM and VSRAM, inside the VDP, take no delay:
-#: a 64-word CRAM transfer matches the die without one. Die-derived; 0 commits at the
-#: next slot.
-FIFO_COMMIT_DELAY_MCLK = 32
+#: board, writing at the next slot, ran on for nine (docs/worklog.md, "The FIFO's
+#: delay"). CRAM and VSRAM, inside the VDP, take no delay: a 64-word CRAM transfer
+#: matches the die without one. On a blank line the die passes up a write slot 30 MCLK
+#: after its read and takes the one 46 after (the boot's third long transfer), so the
+#: delay from the board's read, 3 MCLK before the die's, is more than 32 and at most
+#: 48; any of 33-48 gives the same boot ("The DMA's read into room"). Die-derived; 0
+#: commits at the next slot.
+FIFO_COMMIT_DELAY_MCLK = 40
 #: A 68000-to-VDP transfer reads the 68000's memory at its own pace, into the FIFO
 #: while it has room, not only at an access slot: on Nuked-MD a 1-word transfer in the
 #: active display costs 11 cycles beyond its write (the hold, the start-up and one read)
@@ -672,7 +710,12 @@ class VDP:
     def _choose_slots(self) -> None:
         """The slot list for the current line, and where in it the VDP is."""
         active = self.display_enabled and (not self.border or self.v == 0x1FF)
-        self.slots = self.hmode.slots_active if active else self.hmode.slots_idle
+        if active:
+            self.slots = self.hmode.slots_active
+        elif self.display_enabled and self.v == self._blank_line() and self.hmode.slots_first_idle:
+            self.slots = self.hmode.slots_first_idle
+        else:
+            self.slots = self.hmode.slots_idle
         self.slot_index = bisect_right(self.slots, self.mclk - self.line_start - 1)
 
     def _line_events(self) -> None:
@@ -981,6 +1024,7 @@ class VDP:
         while (
             self.code & 0x20 and self.registers[23] >> 6 < 2 and self.transfer_active
             and (not self.transfer_cached or not self._fifo_full())
+            and not (DMA_READS_INTO_ROOM and self._dma_die and self._fifo_full())
             and self.transfer_next_read + self._read_inc <= self.mclk
         ):  # fmt: skip
             if not self.transfer_cached:
@@ -1155,6 +1199,14 @@ class VDP:
                 self.transfer_next_read = self.mclk
                 if self._dma_die:
                     self._read_inc = self._dma_tick_after(self.mclk) - self.mclk
+            elif (
+                DMA_READS_INTO_ROOM and self._dma_die and self.code & 0x20 and dmd < 2
+                and self.transfer_active and self.transfer_next_read + self._read_inc <= self.mclk
+            ):  # fmt: skip
+                # The read that waited for room follows the VRAM write that made it.
+                lag = DMA_ACTIVE_WRITE_LAG_MCLK if self.slots is self.hmode.slots_active else 0
+                due = self._dma_tick_after(self.mclk + lag - 1)
+                self.transfer_next_read, self._read_inc = self.mclk, due - self.mclk
 
     def _vsram_store(self, index: int, value: int) -> None:
         """Store one VSRAM word, keeping what the vertical scroll latches took if the
@@ -1472,7 +1524,7 @@ class VDP:
 
             board.cart_refresh_due += ((self.mclk - board.cart_refresh_due) // period + 1) * period
         if self._dma_die:
-            back = max(written, self.mclk + DMA_RESUME_DIE_MCLK[source]) - (mclk + WRITE_CYCLE_MCLK)
+            back = max(written, self.mclk + DMA_RESUME_DIE_MCLK) - (mclk + WRITE_CYCLE_MCLK)
             return -(-back // 7) * 7  # on the 68000's clock
         return DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
 

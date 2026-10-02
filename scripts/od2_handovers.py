@@ -133,7 +133,7 @@ def compare(board: dict, referee: dict) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--src", type=Path, default=ROOT / "src", help="the board to run")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_705)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_719)
     parser.add_argument("--count", type=int, default=20, help="handovers to show")
     args = parser.parse_args()
     board_z80, board_m68k, start = board_log(args.src.resolve(), args.reset_mclk)
