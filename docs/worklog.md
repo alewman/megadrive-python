@@ -6035,3 +6035,51 @@ window is identical (100 of 100). Frames 6,981-7,200: 183 at the expected frame 
 the slip at 7,053 to the window's end, but it catches up through one junk frame: 7,089
 is black with a pale block and a patch of tiles, between the die's fading pattern and
 its white flash, the one frame of the window not found within three of the die's.
+
+### The work-RAM refresh after a transfer
+
+The judge's first difference, +933,737, was a work-RAM write the die holds 21 MCLK and
+the board does not, after the boot's longest stretch without a work-RAM access, almost
+all of it spent in transfers from the cartridge. The rule (`board.ram_refresh`, fitted
+on the 3D scene) gets 313 of the boot's 3,935 work-RAM accesses wrong. Two test
+cartridges on the die (`scripts/run_ram_refresh.py --idle` / `--dma`), each with dense work-RAM reads (one every 56 MCLK, so each
+refresh is taken by a read and the timer's phase is known), something in between, and
+dense reads again:
+
+- **Idle in ROM** (a `dbra` spin, 700 to 280,000 MCLK): the rule's self-run chain is
+  right. 65 of 68 idle lengths put the first held read exactly where it predicts. The
+  other three are the known refresh one 68000 clock early, on an odd master clock.
+  Period 931 (112 + 819) and only 931 fits.
+- **A transfer in between** (10 to 6,000 words from the cartridge, display off): the
+  rule misses 15 of 16. The first held read is always the fourth after the transfer,
+  whatever its length. Moving the reads in steps of 14 MCLK (NOPs and an `exg`), the
+  first read held is the first at least 238-251 MCLK after the transfer's last memory
+  select, to VRAM and to CRAM, 100 and 1,000 words alike. Measured from the 68000's
+  resume instead, the boot's own hold (210 after it) contradicts the cartridges by 1
+  MCLK; measured from the last select, the boot agrees (218 free, 246 held) and narrows
+  it to 238-246. So the transfer restarts the timer from its end:
+  `vdp.RAM_REFRESH_AFTER_DMA_MCLK` = 245 from the board's last read (3 MCLK before the
+  die's select).
+
+The judge now agrees to **+1,227,275** (from +933,737). The difference there is a VRAM
+read through the data port on line $1FF, the line before the display, which the board
+counts as active: the board fills the buffer at the slot at H $002 and lets the read go
+45 MCLK later (`READ_RELEASE_MCLK`), and the die lets it go 50-56 after that slot, one
+68000 clock later. The 45 was fitted to a sweep where the die ended waiting reads
+42-48 MCLK after the board. That is the next lead, with the cartridge refresh holds
+that land on different cycles after it.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's whole
+output, the arms window (100 of 100). Frames 6,981-7,200: 218 identical in the window,
+109 at the expected frame (the last round's branch 219 and 183, main 220 and 75): the
+slip that began at 7,053 is gone (7,054-7,088 now at the expected frame) and a slip
+begins at 7,094 instead. Threshold measures downstream of the Z80, as before.
+
+**The "junk" frame is the die's own.** The board's frames 7,052 and 7,089 are a black
+screen with a pale block and a patch of tiles, Aubrey's "junk between scenes". Nuked-MD
+shows the same picture once in this window, at its frame 7,052 (71,087 of 71,680 pixels
+alike), between the logo and the next scene; it is the only mostly black frame the die
+shows here. The board shows it one frame late at 7,052 and then again at 7,089, where
+the die has gone to its white flash. So the picture is not the board's invention; the
+repeat is. Whether a real console shows that frame at all is a question for hardware or
+BlastEm (Aubrey sees BlastEm's transitions clean).
