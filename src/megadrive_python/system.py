@@ -94,8 +94,8 @@ M68K_POWER_ON_PHASE = 4
 #: The E clock's phase at power-on, in 68000 clocks (the core counts its E clock from
 #: ``M68000CPU.clock``): where an autovectored interrupt acknowledge ends. The die's is
 #: whatever its power-on gave; this matches its acknowledges (docs/worklog.md, "The
-#: VDPs' offset").
-M68K_E_CLOCK_POWER_ON = 9
+#: VDPs' offset", "The DMA's read into room").
+M68K_E_CLOCK_POWER_ON = 7
 #: How far past the 68000's write to $A11100 the Z80 takes a bus request: it lets go at
 #: the end of the first machine cycle ending this long or more after the write. /BUSREQ
 #: falls 18 MCLK after the write begins (Nuked-MD, every write in the logo trace) and
