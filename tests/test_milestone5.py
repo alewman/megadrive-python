@@ -265,19 +265,21 @@ def test_a_vram_write_lands_inside_the_line_being_drawn() -> None:
 
 
 def test_data_port_reads_end_where_the_die_lets_them_go() -> None:
-    """A burst of CRAM reads in an active H40 line waits for the read-ahead at each
-    slot; Nuked-MD lets each go within these windows of the line (MCLK, the board's
-    line start; ``scripts/run_read_slots.py``), and never at the end-of-line slot $140
-    or $142 the board used to catch (``vdp.READ_RELEASE_MCLK``; docs/worklog.md
-    Session 14). Active lines only: in blanking every slot is open."""
-    import run_read_slots
+    """A CRAM read in an active H40 line waits for the read-ahead's slot; read against
+    each machine's own HV counter right after (``scripts/run_slot_hv.py read``),
+    Nuked-MD's waiting reads end where the 68000 next reads these H values, 92 % of them
+    and nearly all the rest one step later. The board's must land on them too: 0.87
+    with ``vdp.READ_RELEASE_MCLK`` = 52, 0.71 with the 45 an /HSYNC-anchored sweep had
+    fitted (docs/worklog.md, "The active-line slots")."""
+    from itertools import pairwise
 
-    die = [(365, 371), (828, 834), (956, 962), (1084, 1090), (1340, 1346), (1468, 1474),
-           (1596, 1602), (1852, 1858), (1980, 1986), (2108, 2114), (2364, 2370),
-           (2492, 2498), (2620, 2626), (2876, 2882), (3004, 3010), (3132, 3138),
-           (3372, 3378)]  # fmt: skip
-    rom = run_read_slots.cartridge(True, True)
-    ends = [end for end, stall, v in run_read_slots.board(rom) if stall and 2 <= v < 222]
-    assert ends
-    outside = [e for e in ends if not any(lo - 8 <= e <= hi + 8 for lo, hi in die)]
-    assert len(outside) <= len(ends) // 50, sorted(set(outside))[:10]
+    import run_slot_hv
+
+    die = {0x08, 0x10, 0x18, 0x28, 0x30, 0x38, 0x48, 0x50, 0x58, 0x68, 0x70, 0x78, 0x88,
+           0x90, 0x98, 0xA7, 0xED}  # fmt: skip
+    run_slot_hv.FIRST, run_slot_hv.LAST = 6, 8
+    cycles = run_slot_hv.board(run_slot_hv.cartridge("read", True))
+    ends = [nxt[3] & 0xFF for (address, _, held, _), nxt in pairwise(cycles)
+            if address == run_slot_hv.DATA and held > 0 and nxt[0] == run_slot_hv.HV]  # fmt: skip
+    assert len(ends) > 1000
+    assert sum(h in die for h in ends) >= 0.85 * len(ends)
