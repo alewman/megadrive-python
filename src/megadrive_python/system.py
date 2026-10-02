@@ -80,12 +80,22 @@ RESET_RAM_REFRESH_MCLK = 2380
 #: with the bus already requested, it makes that first opcode fetch before it lets go
 #: -- BUSREQ is sampled only at the end of a machine cycle (Zilog UM0080) -- and the
 #: rest of the instruction waits for the bus. Die-derived.
-#: The phase was 6 in the die's own time; what is physical is the two clocks' relation,
-#: the die's 68000 edges at 6 mod 7 and Z80 edges at 6 mod 15 -- with the board's
-#: 68000 at 0, as it is from power-on, the Z80's at 13 (the two lined up as the Overdrive
-#: 2 comparisons line them, 240,323 MCLK apart; docs/worklog.md "Handover by handover").
-#: A real console's relation is whatever its power-on gives; this is the die's.
-Z80_CLOCK_PHASE = 13
+#: The phase was 6 in the die's own time; what is physical is the clocks' relation: the
+#: die's 68000 edges at 6 mod 7 MCLK and its Z80's at 6 mod 15, against its VDP. The
+#: board's VDP lines up with the die's 240,277 MCLK apart -- every one of 16,427 HBlank
+#: flags the die's 68000 read in the Overdrive 2 boot falls where the board's VDP puts
+#: it at that offset and none other (docs/worklog.md, "The VDPs' offset") -- so in the
+#: board's time the 68000's edges are at 4 (:data:`M68K_POWER_ON_PHASE`) and the Z80's
+#: at 14. A real console's relation is whatever its power-on gives; this is the die's.
+Z80_CLOCK_PHASE = 14
+#: Where the 68000's clock edges fall against the VDP's, mod 7 MCLK: the board's 68000
+#: starts this far into power-on and keeps the phase (its holds are whole clocks).
+M68K_POWER_ON_PHASE = 4
+#: The E clock's phase at power-on, in 68000 clocks (the core counts its E clock from
+#: ``M68000CPU.clock``): where an autovectored interrupt acknowledge ends. The die's is
+#: whatever its power-on gave; this matches its acknowledges (docs/worklog.md, "The
+#: VDPs' offset").
+M68K_E_CLOCK_POWER_ON = 9
 #: How far past the 68000's write to $A11100 the Z80 takes a bus request: it lets go at
 #: the end of the first machine cycle ending this long or more after the write. /BUSREQ
 #: falls 18 MCLK after the write begins (Nuked-MD, every write in the logo trace) and
@@ -154,7 +164,10 @@ class System:
         self.reset_pressed = False
         self.reset_at = 0
         # Power-on: the 68000 takes its reset vector; the Z80 is held in reset.
-        self.mclk = self.m68k.reset() * M68K_DIVIDER
+        self.m68k.clock = M68K_E_CLOCK_POWER_ON
+        # The YM2612 runs on the 68000's clock (MCLK/7): its edges are the 68000's.
+        self.board.fm.mclk = M68K_POWER_ON_PHASE
+        self.mclk = M68K_POWER_ON_PHASE + self.m68k.reset() * M68K_DIVIDER
         self._z80_reset_line(True)
 
     # -- the CPUs' interrupt lines ------------------------------------------------

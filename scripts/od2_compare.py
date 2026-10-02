@@ -156,7 +156,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("rom", type=Path)
     parser.add_argument("--src", type=Path, default=ROOT / "src", help="the board to run")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_694)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_705)
     parser.add_argument("--align-fm", action="store_true", help="ROM-specific; see above")
     parser.add_argument("--frames", type=int, default=80)
     parser.add_argument("--machine", default="megadrive-tmss", help="the referee is version 1")

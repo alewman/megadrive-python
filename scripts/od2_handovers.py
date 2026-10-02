@@ -12,7 +12,7 @@ somewhere else (docs/worklog.md, "Handover by handover").
 The referee is ``reference/z80-reset`` (Nuked-MD from power-on, the reset button at frame
 25, 68000 and Z80 buses traced); the board runs as ``nuked-md`` with the button at the
 same clock (``od2_compare``). Also printed: each side's 68000 and Z80 clock phases, the
-referee's in the board's time (lined up by the VDPs, 240,323 MCLK).
+referee's in the board's time (lined up by the VDPs, 240,277 MCLK).
 
     python scripts/od2_handovers.py [--src DIR] [--count N]
 """
@@ -32,7 +32,7 @@ import nuked_md  # noqa: E402
 
 REFERENCE = ROOT / "reference"
 REFEREE_Z80_START = 42_570_940
-VDP_OFFSET = 240_323
+VDP_OFFSET = 240_277
 
 
 def board_log(src: Path, reset_mclk: int) -> tuple[list, list, int]:
@@ -116,10 +116,11 @@ def handovers(m68k: list, z80: list, t0: int) -> list[dict]:
 
 
 def compare(board: dict, referee: dict) -> list[str]:
-    diffs = []
-    for key in ("req", "first68", "rel"):
-        if board[key] != referee[key]:
-            diffs.append(f"{key} {(board[key] or 0) - (referee[key] or 0):+d}")
+    diffs = [
+        f"{key} {(board[key] or 0) - (referee[key] or 0):+d}"
+        for key in ("req", "first68", "rel")
+        if board[key] != referee[key]
+    ]
     for key in ("last", "resume"):
         ours, theirs = board[key], referee[key]
         if ours and theirs and ours[1] != theirs[1]:
@@ -132,7 +133,7 @@ def compare(board: dict, referee: dict) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--src", type=Path, default=ROOT / "src", help="the board to run")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_694)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_705)
     parser.add_argument("--count", type=int, default=20, help="handovers to show")
     args = parser.parse_args()
     board_z80, board_m68k, start = board_log(args.src.resolve(), args.reset_mclk)

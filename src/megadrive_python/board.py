@@ -138,13 +138,18 @@ def ram_refresh(due: int, t: int) -> tuple[int, int]:
 #: 2's first 12 frames -- where the die's edges keep one phase from power-on
 #: (docs/worklog.md, "Handover by handover"). False keeps the master clocks.
 HOLD_ON_68K_EDGE = True
-#: A write to $A11200 reaches the YM2612's /IC 18 MCLK after it begins: on Nuked-MD the
-#: line moves 18 MCLK after each of Overdrive 2's four writes at the Z80's start, as
-#: /BUSREQ does after a write to $A11100 (``system.Z80_BUSREQ_LAG_MCLK``). Where the
-#: assertion falls in the FM's slot decides whether its counter restarts or pauses
-#: (``ym2612.IC_PAUSE_POSITIONS``). The Z80's side is fitted from the write itself
-#: (``system.Z80_RESET_RESUME_MCLK``). Die-derived.
-ZRES_PIN_MCLK = 18
+#: How long after a write to $A11200 begins the YM2612 is given /IC. On Nuked-MD the line
+#: moves 18 MCLK after the write, but the FM model already samples it later
+#: (``ym2612.IC_SLOT_LAG``, three FM clocks after the bus cycle): with the clocks lined
+#: up as the die's (``system.M68K_POWER_ON_PHASE``), the FM's phase after the boot's
+#: resets matches the die's with 0 to 6 here and leaves it 175-440 MCLK out with 9 or more
+#: (docs/worklog.md, "The VDPs' offset"). 0.
+ZRES_PIN_MCLK = 0
+#: Where in the Z80's read of the YM2612 its status is taken, after the read begins: on
+#: the Z80's last clock of the cycle, where it latches the data. Overdrive 2's driver
+#: polls timer A's flag and the Z80s run together for 3,301 reads with 40-45 here, 1,150
+#: or fewer outside it (docs/worklog.md, "The VDPs' offset"). Die-derived, fitted.
+Z80_FM_SAMPLE_MCLK = 42
 
 
 def _on_edge(held: int) -> int:
@@ -802,7 +807,7 @@ class Board:
                 self._bank_delay()  # the arbiter holds both CPUs for this access
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
-            return self._fm_read(address & 3, self._z80_access_time())
+            return self._fm_read(address & 3, self._z80_access_time() + Z80_FM_SAMPLE_MCLK)
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")

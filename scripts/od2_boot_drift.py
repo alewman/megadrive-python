@@ -152,7 +152,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("rom", type=Path)
     parser.add_argument("trace", type=Path, help="Nuked-MD trace covering the window")
-    parser.add_argument("--reset-mclk", type=int, default=26_601_694)
+    parser.add_argument("--reset-mclk", type=int, default=26_601_705)
     parser.add_argument("--machine", default="megadrive-tmss",
                         help="the referee is a TMSS Model 1 (version 1)")  # fmt: skip
     parser.add_argument("--span", type=int, default=200_000, help="MCLK after the anchor")
