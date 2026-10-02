@@ -468,9 +468,13 @@ READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
 DMA_READ_MCLK = 16
 
 #: The data port's read-ahead, as the die model times it. A read that waits for the
-#: buffer is let go :data:`READ_RELEASE_MCLK` after the slot that fills it, not at the
-#: slot; a slot fills the buffer only :data:`READ_FILL_LEAD_MCLK` or more after the read
-#: that emptied it began; and in an active H40 line the slot at H $142 fills no read.
+#: buffer is let go :data:`READ_RELEASE_MCLK` after the active-line slot that fills it
+#: (:data:`READ_RELEASE_IDLE_MCLK` after a blank-line one), not at the slot; a slot
+#: fills the buffer only :data:`READ_FILL_LEAD_MCLK` or more after the read that emptied
+#: it began, or the control write that set a new address (the read sweep with the
+#: address set before each burst: the die's first reads stall a clock more often than
+#: the board's did without it, and 21 is the lead that matches, histogram distance 696 to
+#: 122 with the display off); and in an active H40 line the slot at H $142 fills no read.
 #: Nuked-MD, a cartridge sweeping bursts and pairs of CRAM, VSRAM and VRAM reads across
 #: the line (``scripts/run_read_slots.py``): the die ends a waiting read 42-48 MCLK
 #: after the board did at every slot, catches $140 from a read begun 22 MCLK before it
@@ -482,6 +486,13 @@ DMA_READ_MCLK = 16
 #: fails with them every time; it passes on the die about once per 800 iterations, so
 #: it cannot judge them (``scripts/run_vdpfifotesting.py``, ``INTERMITTENT``).
 READ_RELEASE_MCLK = 45
+#: On a blank line the die lets a waiting read go this long after the slot that fills
+#: it. Back-to-back CRAM reads with the display off: the die stalls 2,717 of 14,656 of
+#: them, nearly all by one 68000 clock, where the board, letting them go 45 after the
+#: slot, stalled 13,185 by three or four; 25 and 26 bracket the die's count (2,241 and
+#: 3,024). Stall lengths need no lining up of the two machines (docs/worklog.md, "The
+#: active-line slots"). Die-derived.
+READ_RELEASE_IDLE_MCLK = 26
 READ_FILL_LEAD_MCLK = 21
 #: A 68000 bus cycle without wait states: 4 clocks.
 WRITE_CYCLE_MCLK = 28
@@ -540,8 +551,10 @@ DMA_READS_INTO_ROOM = True
 RAM_REFRESH_AFTER_DMA_MCLK = 245
 #: On an active line the die's strobe comes this long after the board's external slot
 #: (49 MCLK, its select 51), so the read waits for it. Only the transfer's reads wait:
-#: the 68000's own FIFO is left as it is (moving the active slots instead shifts a
-#: VDPFIFOTesting result and parts the boot). Die-derived.
+#: the word leaves the FIFO at the slot, where the die's stalled 68000 writes end against
+#: its own HV counter (the board's to within one HV step), and reaches VRAM later -- the
+#: die's write pipeline on an active line, not a misplaced slot (docs/worklog.md, "The
+#: active-line slots"). Die-derived.
 DMA_ACTIVE_WRITE_LAG_MCLK = 48
 #: The transfer's own bus cycles take the cartridge refresh ticks that fall due while it
 #: runs, so the 68000's first cycle after it is not stretched for them: on Nuked-MD it
@@ -1111,7 +1124,10 @@ class VDP:
             self._read_cache()
             did_read = True
             if self.read_available:
-                self.read_ready_at = self.mclk + READ_RELEASE_MCLK
+                active = self.slots is self.hmode.slots_active
+                self.read_ready_at = self.mclk + (
+                    READ_RELEASE_MCLK if active else READ_RELEASE_IDLE_MCLK
+                )
         if (
             fifo[self.fifo_read][4]
             and not did_read
@@ -1507,6 +1523,7 @@ class VDP:
         self.modified = True
         self.read_available = False
         self.read_half = False
+        self.read_fill_after = max(self.read_fill_after, mclk + READ_FILL_LEAD_MCLK)
         # A 68000-to-VDP transfer starts once the whole command word is in place.
         return self._run_transfer(mclk) if transfer else 0
 

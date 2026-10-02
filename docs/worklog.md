@@ -6083,3 +6083,66 @@ shows here. The board shows it one frame late at 7,052 and then again at 7,089, 
 the die has gone to its white flash. So the picture is not the board's invention; the
 repeat is. Whether a real console shows that frame at all is a question for hardware or
 BlastEm (Aubrey sees BlastEm's transitions clean).
+
+### The active-line slots
+
+The judge's difference at +1,227,275 is the boot's first data-port read, a CRAM read
+on line $1FF (which the board counts as an active line). The board fills the buffer at
+the table's slot at H $002 and lets the read go 45 MCLK later; the die lets it go
+50-56 after that slot, one 68000 clock later. The read sweep (`run_read_slots.py`), to
+which the 45 was fitted, puts the board's and the die's waiting reads in the same
+places on active lines; so the question was which frame to believe.
+
+- **The two frames disagree.** The sweep lines the die up by its /HSYNC fall, taking
+  the die's H counter as the board's plus 3. In the boot, lined up by the VDPs' offset,
+  the die's /HSYNC fall (at its H $1CD) comes 39 MCLK after where the board puts H $1CA.
+  The boot's frame is the one the die's own VRAM strobes confirm (1 MCLK after the
+  board's blank-line slots, all of them).
+- **Stall lengths need no frame.** Back-to-back CRAM reads with the display off: the die
+  stalls 2,717 of 14,656, nearly all by one 68000 clock; the board stalled 13,185, by
+  three or four. A blank-line release of 25-26 MCLK after the slot brackets the die's
+  count (`READ_RELEASE_IDLE_MCLK` = 26; the active-line figure was the only one).
+- **After a new address.** The same sweep with the read address set before each burst:
+  the die's first read stalls one clock more often than the board's (display off: 618
+  unstalled and 299 by a clock, against the board's 966 and 2). A slot fills the buffer
+  only 21 MCLK after the control write, as after a read (`READ_FILL_LEAD_MCLK`, now for
+  both); the histogram distance falls from 696 to 122. It does not reach the boot's
+  read, whose command was written long before the slot.
+- **Six H, tried and rejected.** Several corrections have come out at about 48 MCLK on
+  active lines (the transfer's VRAM strobes 49 after the table's slots, the die's /HSYNC
+  39 after) and the refresh gaps on blank lines 4-6 H after Exodus's. Moving the H40
+  active slots 6 H later, dropping the transfer's separate lag and letting a waiting
+  read go 5 MCLK after the moved slot looked better on every measure at hand (the judge
+  to +1,230,229, 7,408 steps of 7+ MCLK over the first 16M where there are 13,675, the
+  read sweep's stalls closer, VDPFIFOTesting 122/0), but moved the CRAM dot and the read
+  windows (two tests). The frames were the question, so three tests that need none, on
+  each machine against its own HV counter as the 68000 reads it
+  (`scripts/run_slot_hv.py write|status|read`):
+  - VRAM writes with the FIFO full, the HV counter read after each: the die's stalled
+    writes end at H $06, $16, $2E, $46, $56, $6E, $86, $96, $A6 (about 770 each), the
+    board's at the same or one HV step (16 MCLK) earlier. The board's slots are where the
+    die's are, to within one step, not 48 MCLK out.
+  - Status and HV counter read in turn: HBlank sets at H $E4-$EA and clears at $09-$0F
+    on both.
+  - CRAM reads with the display on, the HV counter after each: the waiting reads end at
+    the same H on both ($08, $10, $18, $28 ... $A7, $ED), so the active release of 45 is
+    right; the board alone also lets about 6 % go at $20, $40, $60 and $80, and splits
+    $08/$09 and $EC/$ED where the die does not, one step either way.
+
+  So the slot table is right and the 6-H move was wrong: the 48 MCLK is the die's VRAM
+  write pipeline on an active line (the word leaves the FIFO at the slot, which is what
+  the 68000 sees, and reaches VRAM about 48 later, which is what a transfer's next read
+  waits for: `DMA_ACTIVE_WRITE_LAG_MCLK` models exactly that), and the sweep's /HSYNC
+  frame, anchored in the slow pixels around the sync, is what is out. The boot's read on
+  line $1FF is a one-step difference at one slot, of the kind the HV test shows the board
+  making at $08/$09. (The move's `vdp.py` is not kept.)
+
+The judge still parts at +1,227,275, at that read. Next: which of the board's read releases
+the die never makes ($20, $40, $60, $80) and why the two split one step at $08/$09.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the die's DMA
+probes, the arms window (100 of 100), frames 6,981-7,200 (218 identical, 109 at the
+expected frame), the judge (+1,227,275), the Z80 reads (187). VDPFIFOTesting's "FIFO
+Wait States", intermittent on hardware and passing on the die about once in 800, now
+fails on `megadrive`, `megadrive-tmss` and `megadrive2` as on the die (the blank-line
+release); "0 fail that pass on hardware" on every machine.
