@@ -460,6 +460,9 @@ class System:
                 board.cart_refresh_due = start + held + CART_REFRESH_MCLK
                 board.ram_refresh_due = start + held + RESET_RAM_REFRESH_MCLK
             board.stall = 0
+            # What the arbiter charged the 68000 for the Z80's bank accesses before the
+            # press is spent in the pulse: the 68000 is held there, not running.
+            board.m68k_pending_stall = 0
             if board.m68k_accesses:
                 board.m68k_accesses.clear()
             clocks = cpu.reset()

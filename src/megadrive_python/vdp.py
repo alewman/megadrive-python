@@ -503,6 +503,16 @@ DMA_TRIGGER_HOLD_MCLK = 21
 #: is not, 114 times of 118 (the boot and logo traces), where the board stretched it
 #: every time. Die-derived. False leaves the ticks to the 68000.
 DMA_TAKES_REFRESH = True
+#: A transfer's FIFO entry for VRAM reaches it no sooner than this long after it enters
+#: the FIFO (the 68000's own data-port writes take none: with them delayed too, the
+#: board's 68000 parted from the die's 196 MCLK after the reset):
+#: on Nuked-MD (its VRAM write strobes, ``NMD_TRACE_MASK`` bit 4) a transfer's first
+#: word is written 57 MCLK after it is read, so its reads stall after six where the
+#: board, writing at the next slot, ran on for nine; 32 fits the boot's transfers best
+#: (docs/worklog.md, "The FIFO's delay"). CRAM and VSRAM, inside the VDP, take no delay:
+#: a 64-word CRAM transfer matches the die without one. Die-derived; 0 commits at the
+#: next slot.
+FIFO_COMMIT_DELAY_MCLK = 32
 #: A 68000-to-VDP transfer reads the 68000's memory at its own pace, into the FIFO
 #: while it has room, not only at an access slot: on Nuked-MD a 1-word transfer in the
 #: active display costs 11 cycles beyond its write (the hold, the start-up and one read)
@@ -551,6 +561,8 @@ class VDP:
         self.modified = True  # code/address rewritten since the last FIFO entry
         # The FIFO: [code, address, data, half written, pending] x 4.
         self.fifo = [[0, 0, 0, False, False] for _ in range(4)]
+        #: When each entry may first be committed (:data:`FIFO_COMMIT_DELAY_MCLK`).
+        self.fifo_ready = [0, 0, 0, 0]
         self.fifo_read = 0
         self.fifo_write = 0
         self.read_buffer = 0
@@ -1046,7 +1058,11 @@ class VDP:
             did_read = True
             if self.read_available:
                 self.read_ready_at = self.mclk + READ_RELEASE_MCLK
-        if fifo[self.fifo_read][4] and not did_read:
+        if (
+            fifo[self.fifo_read][4]
+            and not did_read
+            and self.mclk >= self.fifo_ready[self.fifo_read]
+        ):
             self._fifo_write()
         if self.code & 0x20 and dmd < 2 and self.transfer_cached and not self._fifo_full():
             self._transfer_push()
@@ -1279,10 +1295,10 @@ class VDP:
         self.transfer_cached = True
 
     def _transfer_push(self) -> None:
-        self._push(self.transfer_value)
+        self._push(self.transfer_value, dma=True)
         self.transfer_cached = False
 
-    def _push(self, data: int) -> None:
+    def _push(self, data: int, dma: bool = False) -> None:
         """A new FIFO entry (Exodus WriteInterface, Ports.cpp 1273-1300): its code and
         address are the command registers' if rewritten since the last entry, else the
         last entry's with the address incremented."""
@@ -1297,6 +1313,8 @@ class VDP:
         entry[2] = data & 0xFFFF
         entry[3] = False
         entry[4] = True
+        delay = FIFO_COMMIT_DELAY_MCLK if dma and entry[0] & 0x0F == WRITE_VRAM else 0
+        self.fifo_ready[self.fifo_write] = self.mclk + delay
         self.fifo_write = (self.fifo_write + 1) & 3
 
     def _dma_step(self) -> None:

@@ -5803,3 +5803,40 @@ all three clocks, so their relation is still not the die's somewhere -- the next
 find, with the active-display DMA's end. The harnesses default to 26,601,694 (the
 68000's own bus stream agrees with the die further: to 850,199 MCLK, not 390,859); it is
 a harness setting, not board behaviour.
+
+### The FIFO's delay (the end of DMA during the picture)
+
+**The die's VRAM writes.** `NMD_TRACE_MASK` bit 4 now logs Nuked-MD's VRAM write strobes
+(/RAS, /CAS and /WE low together; type-5 records, `nuked_md.EV_VRAM`). With them and the
+DMA reads, the boot's four transfers around 850,000 MCLK after the reset:
+
+- The end is not where the board differed. After the last read the die's 68000 has the
+  bus back in 40-55 MCLK, in the active display as in the blank (the "389" of the last
+  section was a read misselected).
+- The die writes a transfer's first word to VRAM **57 MCLK after reading it**; its reads
+  then stall after six, the FIFO full. The board wrote at the next slot, the same clock
+  it read, and ran on for nine. `vdp.FIFO_COMMIT_DELAY_MCLK` = 32 (fitted over the four:
+  the last reads and returns to within 7-21 MCLK, where they were 35-189 out): a
+  transfer's entry for VRAM is committed no sooner than that after it is pushed. CRAM
+  and VSRAM, inside the VDP, take none (a 64-word CRAM transfer matches without one), nor
+  do the 68000's own data-port writes (no evidence either way; the transfers are what
+  was measured).
+
+**A latent reset bug it exposed.** With the delay the first difference in the 68000's
+bus stream jumped to 196 MCLK after the reset: the board added 70 MCLK after `move
+#$2700,SR`. Not the FIFO: the delay moved the boot's timing so that the Z80 made a bank
+read just before the button, and the arbiter's charge for it (`m68k_pending_stall`)
+survived the reset and was added to the 68000's first step after it. The 68000 is held
+through the pulse; the reset now clears it.
+
+| | before | after |
+|---|---:|---:|
+| the boot's first transfer (280 words, from line 202): 68000 back, board minus die | +189 | **-14** |
+| the two 32-word VRAM transfers after it | -42, -35 | +7, -7 |
+| first difference in the 68000's bus stream after the reset | 850,199 (-252) | 850,199 (-14) |
+
+VDPFIFOTesting's "FIFO Wait States" (intermittent on hardware, passing once in 812 on
+the die) now fails on the plain machines as the die mostly does; every other test of
+the 122 unchanged on all ten machines. Unchanged: the suites (148, both interpreters),
+Nemesis's HV captures and sprite masking, MoD's Z80 bus test, Nuked-MD's probes, the arms
+window (100 of 100), frames 6,981-7,200 (219 identical, 182 at the expected frame).

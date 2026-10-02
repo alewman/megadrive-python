@@ -57,7 +57,7 @@ Z80_DIVIDER = 15
 AS_LOW = 18
 
 EVENT = struct.Struct("<QIIHHBBH")
-EV_M68K, EV_Z80, EV_SIGNAL, EV_MEM = 1, 2, 3, 4
+EV_M68K, EV_Z80, EV_SIGNAL, EV_MEM, EV_VRAM = 1, 2, 3, 4, 5
 
 #: ``validation/nuked_md_headless.c``'s signal numbers.
 SIG_BUSREQ, SIG_BUSACK, SIG_ZRESET, SIG_BGACK = 0, 1, 2, 3

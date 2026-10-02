@@ -45,7 +45,8 @@
  *   NMD_TRACE_TO=<t>      one past the last (default NMD_STOP).
  *   NMD_TRACE_MASK=<n>    bit 0: 68000/VDP bus cycles.  bit 1: Z80 bus cycles.
  *                         bit 2: the signal changes below.  bit 3: work-RAM and
- *                         cartridge selects (type 4).  Default 7.
+ *                         cartridge selects (type 4).  bit 4: VRAM write strobes
+ *                         (type 5).  Default 7.
  *   NMD_DUMP_RAM=<path>   68000 work RAM (64 KB) at the stop.
  *   NMD_DUMP_ZRAM=<path>  Z80 RAM (8 KB) at the stop.
  *   NMD_DUMP_VRAM=<path>  Nuked-MD's own vram_save() blob at the stop.
@@ -72,6 +73,9 @@
  *                 read (all "at some point in the cycle"), 4 the select stayed low
  *                 and the address changed (a new read under the same select); addr
  *                 and data are the 68000 bus's.
+ *                 type 5: a VRAM write strobe (/RAS, /CAS and /WE low together), at
+ *                 its start: flags bit 0 the bank (/WE1 rather than /WE0); addr the
+ *                 VRAM address lines then (the column).
  *   uint16 pad
  *
  * A "bus cycle" on the 68000's bus is /AS low to /AS high; on the Z80's bus it is
@@ -252,7 +256,7 @@ typedef struct {
 } nmd_event;
 #pragma pack(pop)
 
-enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4 };
+enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4, EV_VRAM = 5 };
 
 /* Signal numbers for EV_SIGNAL records.  These are the board-level lines milestone 5
    models and has no hardware judge for: the Z80's bus handover, its reset, the
@@ -299,6 +303,7 @@ static uint8_t m68k_flags;
 static int prev_zact;
 /* The memory selects, [0] the cartridge's /CE0 and [1] work RAM's /RAS0. */
 static int prev_sel[2] = {1, 1};
+static int prev_vwe[2];
 static uint64_t mem_start[2];
 static uint32_t mem_start_zt[2], mem_addr[2];
 static uint8_t mem_flags[2];
@@ -787,6 +792,20 @@ void Audio_Update(void)
                      (uint16_t)(md.vdata & 0xffff), (uint16_t)(mcycles - mem_start[i]),
                      mem_flags[i]);
             prev_sel[i] = sel[i];
+        }
+    }
+
+    /* --- VRAM writes (the FIFO's words reaching VRAM) --------------------------- */
+    if (trace_mask & 16) {
+        int base = !(ym.vdp.o_vram_ras & 1) && !(ym.vdp.o_vram_cas & 1);
+        int we[2];
+        we[0] = base && !(ym.vdp.o_vram_we0 & 1);
+        we[1] = base && !(ym.vdp.o_vram_we1 & 1);
+        for (i = 0; i < 2; i++) {
+            if (we[i] && !prev_vwe[i] && tracing)
+                emit(EV_VRAM, mcycles, zclk_edges, (uint32_t)(ym.vdp.o_vram_ad & 0xffff),
+                     0, 0, (uint8_t)i);
+            prev_vwe[i] = we[i];
         }
     }
 
