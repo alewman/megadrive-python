@@ -6126,8 +6126,12 @@ places on active lines; so the question was which frame to believe.
     on both.
   - CRAM reads with the display on, the HV counter after each: the waiting reads end at
     the same H on both ($08, $10, $18, $28 ... $A7, $ED), so the active release of 45 is
-    right; the board alone also lets about 6 % go at $20, $40, $60 and $80, and splits
-    $08/$09 and $EC/$ED where the die does not, one step either way.
+    right. The board alone shows about 6 % at $20, $40, $60 and $80; those are reads of
+    the HV counter made just as it steps from $x7 to $x8, which the board answers with
+    mixed bits as Nemesis's captures show the hardware doing (`run_hv_captures`, "reads
+    at a phase where a counter steps") and the die answers cleanly -- the reads before
+    them were let go after the ordinary slots. The board also splits $08/$09 and
+    $EC/$ED where the die does not, one step either way.
 
   So the slot table is right and the 6-H move was wrong: the 48 MCLK is the die's VRAM
   write pipeline on an active line (the word leaves the FIFO at the slot, which is what
@@ -6137,8 +6141,8 @@ places on active lines; so the question was which frame to believe.
   line $1FF is a one-step difference at one slot, of the kind the HV test shows the board
   making at $08/$09. (The move's `vdp.py` is not kept.)
 
-The judge still parts at +1,227,275, at that read. Next: which of the board's read releases
-the die never makes ($20, $40, $60, $80) and why the two split one step at $08/$09.
+The judge still parts at +1,227,275, at that read. Next: why the board's releases split one
+step at $08/$09 and $EC/$ED where the die's do not.
 
 Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the die's DMA
 probes, the arms window (100 of 100), frames 6,981-7,200 (218 identical, 109 at the
