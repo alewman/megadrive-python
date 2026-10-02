@@ -5744,3 +5744,62 @@ change anywhere (an after of 2 gives -88, of 3 gives -4): threshold quantities, 
 measures of how close the model is. Unchanged: suites (148), VDPFIFOTesting, MoD's Z80
 bus test, the arbiter's experiments and the die's (the board's waits 2.49 against the
 die's 2.25).
+
+### Handover by handover
+
+A comparison of every Z80 bus handover after the driver's start, board against die
+(the request, the Z80's last access before it stops, the 68000's first access to Z80
+space, the release, the Z80's first access after it), found the first difference at the
+first handover: every 68000 event 8 MCLK late against the Z80's. Not a whole 68000
+clock, so not a timing rule: the two CPUs' clock phases.
+
+- **The 68000's phase drifted.** On the die its edges keep one phase from power-on; on
+  the board every VDP hold that was not a multiple of 7 MCLK moved them -- 4,000 times
+  in Overdrive 2's first 12 frames. A held cycle ends on the first edge after the device
+  lets go (/DTACK is sampled on an edge): `board.HOLD_ON_68K_EDGE` rounds the VDP's holds
+  and the wait for the Z80's bus up to the 68000's clock. The phase now never moves.
+- **The two clocks' relation.** The die's 68000 edges fall at 6 mod 7 MCLK and its Z80's
+  at 6 mod 15, in its own time; lined up with the board as the Overdrive 2 comparisons
+  line them (240,323 MCLK), that is 0 and 13 in the board's. The board had 0 (from
+  power-on) and 6, and its arbiter assumed 6. `system.Z80_CLOCK_PHASE` = 13 and
+  `arbiter.M68K_EDGE_PHASE` = 0: the first handover then matches the die exactly, and
+  the second's release and resume.
+- **The YM2612's /IC.** Its phase is set by the 68000's last write to $A11200 (the reset
+  line it shares with the Z80), not the reset button: on the die /IC moves 18 MCLK after
+  each such write. `board.ZRES_PIN_MCLK` = 18 for the FM's view of it. Its slot counter
+  then sits within 3.5 MCLK of the die's after the final release (taking the model's
+  note that the die's slots begin 24 MCLK after its cycles; the 85 MCLK `od2_compare`
+  calibrated with in Session 14 had absorbed errors since fixed).
+- **The reset press.** With the 68000's holds whole clocks, the first interrupt after the
+  reset button fell one instruction early, the miss shrinking by 7 MCLK for each 7 MCLK
+  later the button: at 26,601,694 it is gone, and the first difference in the 68000's
+  bus stream moves from 390,859 MCLK after the reset to 850,199. The harnesses default to
+  it.
+
+**What is left there.** At 850,199 the board comes out of the boot's first transfer --
+272 words from the cartridge, the display on, during the active display -- 252 MCLK
+early: the die's 68000 gets the bus back 389 MCLK after the transfer's last read where in
+the blank it is 35-55, presumably as the FIFO drains through the active display's few
+slots. That decides the 68000's timing to the Z80's start, and so whether the driver's
+first timer poll sees the flag (board 2,640 MCLK after the load, die 2,895; one poll).
+
+| | before | after |
+|---|---:|---:|
+| first difference in the 68000's bus stream after the reset | 390,859 | 850,199 |
+| handovers 0 and 1 against the die | +8 MCLK each | exact (the second's request 14 early) |
+| the driver's first timer wait, load to flag (die 2,670) | 2,535 | 2,640 |
+| frames 6,981-7,200 at the expected frame, `nuked-md` | 75 | 182 |
+| aligned frames 5,741-5,840 identical | 100 | 100 |
+
+Unchanged: Nemesis's HV captures (8,762,828 words), VDPFIFOTesting on every machine,
+MoD's tests, Nuked-MD's probes (3,155 of 3,546). `test_a_z80_access_waits_as_the_die_times_it`
+now names its clock edge by the constant. The comparison is `scripts/od2_handovers.py`.
+
+**Not settled: the press time.** At 26,601,687 the first two handovers match the die
+(the 68000 against the Z80) and the first interrupt after the reset comes one
+instruction early (the 68000 against the VDP); at 26,601,694 the interrupt matches and
+the handovers are 5 MCLK off (`scripts/od2_handovers.py`). No one press time lines up
+all three clocks, so their relation is still not the die's somewhere -- the next thing to
+find, with the active-display DMA's end. The harnesses default to 26,601,694 (the
+68000's own bus stream agrees with the die further: to 850,199 MCLK, not 390,859); it is
+a harness setting, not board behaviour.

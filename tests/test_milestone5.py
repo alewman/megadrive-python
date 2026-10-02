@@ -37,9 +37,12 @@ def test_a_z80_access_waits_as_the_die_times_it() -> None:
     assert z80_access_wait(1000, [[1021, AS_LOW_MCLK]])[0] == 4  # granted at 1,056
     assert z80_access_wait(1000, [[1022, AS_LOW_MCLK]])[0] == 2
     # Ending 8 MCLK in, the 68000's cycle leaves the grant at its floor, 29 MCLK after
-    # the request, on the next 68000 clock edge (6 past a multiple of 7).
+    # the request, on the next 68000 clock edge (``arbiter.M68K_EDGE_PHASE``).
+    from megadrive_python.arbiter import M68K_EDGE_PHASE
+
+    edge = 1029 + (M68K_EDGE_PHASE - 1029) % 7
     wait, resume, own = z80_access_wait(1000, [[990, AS_LOW_MCLK]])
-    assert (own, wait, resume) == (1035, 2, 1000 + 37 + 30 + 25)
+    assert (own, wait, resume) == (edge, 2, 1000 + 37 + 30 + 25)
 
 
 def test_bus_grant_waits_for_the_end_of_the_machine_cycle() -> None:
