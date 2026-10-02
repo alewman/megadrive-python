@@ -5886,3 +5886,68 @@ The Z80 now parts from the die at read 3,301 (`$011C`/`$0120`), a later timer wa
 waits from the fourth on alternate one poll early and late against the die's, a phase
 finer than these constants. Unchanged: the suites (148), VDPFIFOTesting, Nemesis's HV
 captures and sprite masking, MoD's tests, Nuked-MD's probes, the arms window (100).
+
+### The FM's restart (the timer, wait by wait)
+
+The last section left a compensating pair: the YM2612 held 3 cycles after /IC
+(`IC_FSM_HOLD`, against the 2 its `ic_check` gives) and the Z80 taking the chip's status
+42 MCLK into its read (`board.Z80_FM_SAMPLE_MCLK`). Compared wait by wait, every one of the
+Overdrive 2 driver's timer A waits had the board's flag 42.5 MCLK late after the load, and
+the sampling offset hid it.
+
+- **The die's FM alone.** Nuked-MD's prescaler and slot counter (`fm.c` `FM_Prescaler`,
+  `FM_FSM1`/`FM_FSM2`), clocked by a small harness the way `fc1004.c` drives them
+  (`i_fsm_reset` from `ic_check_latch`, phi1/phi2 from the prescaler), with /IC asserted
+  at each of the six FM clocks of a slot: the counter's next slot comes **15 FM clocks
+  after the clock that first samples /IC, at every phase**. Sampled 1-3 clocks after the
+  last slot began, the count is kept and the next slot is entered at that point, 10-12
+  clocks late. Sampled 4-6 clocks after, the slot under way is finished and the count
+  restarts at 0. The harness's marker and timer clock land 150.5 and 24.5 FM clocks after
+  the sampling clock. The die's own run puts them 1,077 and 195 MCLK after its console
+  reset's /IC, so the sampling clock is 23.5 MCLK after /IC moves, and /IC moves about
+  16 MCLK after the write that drives it.
+- **In the board's terms** the restart is 15 + ~3 FM clocks, about 126 MCLK after the
+  write: 3 cycles, the hold the board already had. That fits for **both** kinds of
+  assertion, so the hold was never the error. The error was the pause's count: it went
+  on from the slot under way, not the one after it (`ym2612.IC_PAUSE_CARRY` = 1). With
+  the old hold of 2 the two mistakes cancelled. Moving the hold to 3 for the console
+  reset left the boot's final /IC pulse, a pause, one cycle late.
+- **Against the die's slot-23 markers** (board cycle 0 = marker + 42), after the console
+  reset the board is +0.5 MCLK before and after the change. After the final pulse it was
+  +42.5 and is now **+0.5**. (The pulse at 14.6M, before the press, is 637.5 off. The
+  console reset restarts the count, so it reaches nothing; the 68000s are not aligned
+  that early.)
+- **The status read** needs no offset now: `Z80_FM_SAMPLE_MCLK` is gone and the Z80
+  takes the status when its read begins. At 0, 22 of the driver's first 24 waits have
+  the flag rise within 0.5 MCLK of the die's after the load, and the Z80's last poll
+  before the flag is the die's to 0.5 MCLK (82 against 81.5, 154 against 153.5, ...).
+  At 14 or more, waits 1 and 9 miss a poll and run 255 MCLK late.
+- **Waits 0 and 8** are the two that differ: the die's flag shows 20 and 26 MCLK after
+  the board's. On the board both rises fall inside a Z80 status read, 10 and 4 MCLK into
+  it. The die shows both exactly 30 MCLK after that read began, at the read's end, as if
+  its status were held while /RD is low. Either way the Z80 reads the flag clear and the
+  next loads agree on both machines.
+
+| | before | after |
+|---|---:|---:|
+| board cycle 0 against the die's marker, after the final /IC pulse | +42.5 | **+0.5** |
+| timer A waits, flag after load within 0.5 MCLK of the die's (of 24) | 0 | **22** |
+| Z80 sampling offset (fitted) | 42 | **none** |
+| matching Z80 reads | 3,301 | 3,301 |
+| the 68000 judge (`od2_boot_drift --from-reset`) | | identical |
+
+**Where read 3,301 comes from.** Not a timer wait: handover 2 (185,313 MCLK after the
+driver starts). The board's 68000 asks for the bus 14 MCLK early, so the Z80 stops one
+access sooner (`$012A` against `$012B`) and resumes 45 MCLK late. 190 reads later, at
+`$011C`/`$0120`, a poll lands on the other side of the flag. The lead is on the 68000
+side: its bus stream parts from the die's at +850,199 after the reset (-21, the boot's
+first transfer) and is 14 MCLK early by handover 2.
+
+Unchanged: the suites (148, CPython and PyPy), VDPFIFOTesting on every machine, Nemesis's
+sprite masking, MoD's Z80 bus test, the soft checker, r57shell's tests, the pads, TMSS and
+Nuked-MD's probes (the whole battery's output is identical), and frames 6,981-7,200 (220
+identical in the window, 75 at the expected frame, the slip still at 7,053). In the arms
+window (5,741-5,840) one pixel moved: frame 5,783 at (0, 32) is white where the die and
+main have grey, a colour-RAM write's dot at the line's start. The Z80 has parted from the
+die's 190 reads after handover 2, long before this frame, so its handovers there are not
+the die's on either board; the dot rides on that.

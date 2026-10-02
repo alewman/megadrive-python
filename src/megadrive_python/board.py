@@ -145,11 +145,6 @@ HOLD_ON_68K_EDGE = True
 #: resets matches the die's with 0 to 6 here and leaves it 175-440 MCLK out with 9 or more
 #: (docs/worklog.md, "The VDPs' offset"). 0.
 ZRES_PIN_MCLK = 0
-#: Where in the Z80's read of the YM2612 its status is taken, after the read begins: on
-#: the Z80's last clock of the cycle, where it latches the data. Overdrive 2's driver
-#: polls timer A's flag and the Z80s run together for 3,301 reads with 40-45 here, 1,150
-#: or fewer outside it (docs/worklog.md, "The VDPs' offset"). Die-derived, fitted.
-Z80_FM_SAMPLE_MCLK = 42
 
 
 def _on_edge(held: int) -> int:
@@ -807,7 +802,7 @@ class Board:
                 self._bank_delay()  # the arbiter holds both CPUs for this access
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
-            return self._fm_read(address & 3, self._z80_access_time() + Z80_FM_SAMPLE_MCLK)
+            return self._fm_read(address & 3, self._z80_access_time())
         if address >= 0x7F00:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
