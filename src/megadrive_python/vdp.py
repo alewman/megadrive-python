@@ -528,6 +528,16 @@ DMA_TRIGGER_HOLD_MCLK = 21
 #: DMA's read into room"). So the read is on the slot's own tick, 3 MCLK before the
 #: die's, as every other read of the board's is. Die-derived.
 DMA_READS_INTO_ROOM = True
+#: The work-RAM refresh after a 68000-to-VDP transfer falls due this long after the
+#: transfer's last read, whatever its timer was doing before: on Nuked-MD, with work-RAM
+#: reads every 56 MCLK before and after transfers of 10 to 6,000 words from the
+#: cartridge to VRAM and CRAM, display off and on, the first read held is the first at
+#: least 238-251 MCLK after the last memory select, every time, and the boot's fifth
+#: transfer narrows it to 238-246; the board's timer, which ran on through the transfer,
+#: missed 15 of 16 (docs/worklog.md, "The work-RAM refresh after a transfer"). The
+#: board's last read is 3 MCLK before the die's select. Die-derived; None lets the timer
+#: run on.
+RAM_REFRESH_AFTER_DMA_MCLK = 245
 #: On an active line the die's strobe comes this long after the board's external slot
 #: (49 MCLK, its select 51), so the read waits for it. Only the transfer's reads wait:
 #: the 68000's own FIFO is left as it is (moving the active slots instead shifts a
@@ -1525,8 +1535,12 @@ class VDP:
             board.cart_refresh_due += ((self.mclk - board.cart_refresh_due) // period + 1) * period
         if self._dma_die:
             back = max(written, self.mclk + DMA_RESUME_DIE_MCLK) - (mclk + WRITE_CYCLE_MCLK)
-            return -(-back // 7) * 7  # on the 68000's clock
-        return DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
+            back = -(-back // 7) * 7  # on the 68000's clock
+        else:
+            back = DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
+        if RAM_REFRESH_AFTER_DMA_MCLK is not None:
+            board.ram_refresh_due = self.mclk + RAM_REFRESH_AFTER_DMA_MCLK  # from the last read
+        return back
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------
 
