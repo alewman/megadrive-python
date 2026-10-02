@@ -490,6 +490,15 @@ DMA_READ_MCLK = 16
 #: fails with them every time; it passes on the die about once per 800 iterations, so
 #: it cannot judge them (``scripts/run_vdpfifotesting.py``, ``INTERMITTENT``).
 READ_RELEASE_MCLK = 52
+#: ... counted as this many pixel clocks from the slot plus the rest in master clocks, so
+#: the release stretches in the slow pixels around the sync (10 MCLK, not 8): at the
+#: slot at H $1CE the die lets reads go a step later than a flat 52 did (the HV test's
+#: $ED where the board split $EC/$ED; the boot's read at +1,230,075, 12 MCLK). Against
+#: the die's HV histogram 6 pixels score 1,172 and 5 pixels 1,140 where a flat 52
+#: scores 1,552, and with 6 the boot's 68000 stream has 7,241 steps of 7+ MCLK over its
+#: first 16M (8,592 with 5, 11,173 flat; docs/worklog.md, "The cartridge refresh when
+#: the bus is free"). Die-derived.
+READ_RELEASE_PIXELS = 6
 #: On a blank line the die lets a waiting read go this long after the slot that fills
 #: it. Back-to-back CRAM reads with the display off: the die stalls 2,717 of 14,656 of
 #: them, nearly all by one 68000 clock, where the board, letting them go 45 after the
@@ -1128,10 +1137,12 @@ class VDP:
             self._read_cache()
             did_read = True
             if self.read_available:
-                active = self.slots is self.hmode.slots_active
-                self.read_ready_at = self.mclk + (
-                    READ_RELEASE_MCLK if active else READ_RELEASE_IDLE_MCLK
-                )
+                if self.slots is self.hmode.slots_active:
+                    # Counted in pixel clocks, which run slower around the sync.
+                    extra = READ_RELEASE_MCLK - 8 * READ_RELEASE_PIXELS
+                    self.read_ready_at = self._pixels_after(self.mclk, READ_RELEASE_PIXELS) + extra
+                else:
+                    self.read_ready_at = self.mclk + READ_RELEASE_IDLE_MCLK
         if (
             fifo[self.fifo_read][4]
             and not did_read
@@ -1141,6 +1152,17 @@ class VDP:
         if self.code & 0x20 and dmd < 2 and self.transfer_cached and not self._fifo_full():
             self._transfer_push()
             self._dma_step()
+
+    def _pixels_after(self, t: int, pixels: int) -> int:
+        """The master clock ``pixels`` pixel clocks after ``t`` (a pixel edge), by the
+        line's own pixel lengths (10 MCLK in the slow run around the sync, else 8)."""
+        mode = self.hmode
+        start = self.line_start
+        while t - start >= mode.length:
+            start += mode.length
+        index = bisect_right(mode.starts, t - start) - 1 + pixels
+        lines, index = divmod(index, len(mode.starts))
+        return start + lines * mode.length + mode.starts[index]
 
     def _no_read_fill(self) -> bool:
         """This slot fills no data-port read: H40's $142 in an active line
