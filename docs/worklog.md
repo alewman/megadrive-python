@@ -6141,12 +6141,27 @@ places on active lines; so the question was which frame to believe.
   line $1FF is a one-step difference at one slot, of the kind the HV test shows the board
   making at $08/$09. (The move's `vdp.py` is not kept.)
 
-The judge still parts at +1,227,275, at that read. Next: why the board's releases split one
-step at $08/$09 and $EC/$ED where the die's do not.
+**The release, placed.** The die's waiting reads put the next HV read on $08 22 times in
+24, the board's spread over $07, $08 and $09: its release sat near the edge of an HV step,
+the die's inside one, and the 68000's clock, which drifts against the slots by 4 MCLK a
+line, carried the board's across. Swept against the die's HV histogram (28,214 stalled
+reads), the board's release after the slot scores 48,060 at 38, 13,352 at 45, 4,768 at 48,
+**4,193 at 52** and 4,454 at 55: `READ_RELEASE_MCLK` = 52, which is also what the boot's
+read wants (49-56). The test that held the board to the sweep's windows now holds it to
+the die's HV values (`test_data_port_reads_end_where_the_die_lets_them_go`: 87 % of the
+board's waiting reads land on them, 71 % with 45).
 
-Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the die's DMA
-probes, the arms window (100 of 100), frames 6,981-7,200 (218 identical, 109 at the
-expected frame), the judge (+1,227,275), the Z80 reads (187). VDPFIFOTesting's "FIFO
+The judge now agrees to **+1,230,229** (from +1,227,275), with 12,128 steps of 7 MCLK or
+more over the first 16M where there were 13,675; handovers 0-2 come within 1-15 MCLK
+(main: +22 and +8 for the first two). The next difference is a cartridge refresh: the die
+holds a ROM read 7 MCLK where the board holds 14.
+
+Unchanged by the blank-line release and the lead: the suites (148, CPython and PyPy),
+Nemesis's HV captures, the die's DMA probes, the arms window (100 of 100), frames
+6,981-7,200 (218 identical, 109 at the expected frame), the Z80 reads (187). VDPFIFOTesting's "FIFO
 Wait States", intermittent on hardware and passing on the die about once in 800, now
 fails on `megadrive`, `megadrive-tmss` and `megadrive2` as on the die (the blank-line
 release); "0 fail that pass on hardware" on every machine.
+
+With the release at 52: the suites (148, CPython and PyPy), Nemesis's HV captures, the
+battery's output, the arms window and frames 6,981-7,200 are as above; the Z80 reads 187.

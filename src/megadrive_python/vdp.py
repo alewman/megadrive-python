@@ -475,17 +475,21 @@ DMA_READ_MCLK = 16
 #: address set before each burst: the die's first reads stall a clock more often than
 #: the board's did without it, and 21 is the lead that matches, histogram distance 696 to
 #: 122 with the display off); and in an active H40 line the slot at H $142 fills no read.
-#: Nuked-MD, a cartridge sweeping bursts and pairs of CRAM, VSRAM and VRAM reads across
-#: the line (``scripts/run_read_slots.py``): the die ends a waiting read 42-48 MCLK
-#: after the board did at every slot, catches $140 from a read begun 22 MCLK before it
-#: and not from one 15 before, and from 15 before misses $142 too. Overdrive 2's boot
+#: Nuked-MD: placed against each machine's own HV counter (``scripts/run_slot_hv.py
+#: read``), the die's waiting reads end where the board's do with 52 here (the H read
+#: next lands on the die's values 87 % of the time, 71 % with 45), and the boot's first
+#: data-port read (line $1FF) allows 49-56. A cartridge sweeping bursts and pairs of
+#: reads across the line (``scripts/run_read_slots.py``) had fitted 45, lined up by the
+#: die's /HSYNC fall, which sits in the slow pixels and is out by tens of MCLK; it also
+#: has the die catch $140 from a read begun 22 MCLK before it and not from one 15
+#: before, and from 15 before miss $142 too. Overdrive 2's boot
 #: polls vblank once per pass of a CRAM readback, so the rules decide which pass it
 #: leaves on: without them the board reaches the Z80's start 4,182 MCLK late against its
 #: own vblank, with them 57 MCLK early (docs/worklog.md, Session 14). Die-derived:
 #: nothing hardware-captured times the read-ahead. VDPFIFOTesting's "FIFO Wait States"
 #: fails with them every time; it passes on the die about once per 800 iterations, so
 #: it cannot judge them (``scripts/run_vdpfifotesting.py``, ``INTERMITTENT``).
-READ_RELEASE_MCLK = 45
+READ_RELEASE_MCLK = 52
 #: On a blank line the die lets a waiting read go this long after the slot that fills
 #: it. Back-to-back CRAM reads with the display off: the die stalls 2,717 of 14,656 of
 #: them, nearly all by one 68000 clock, where the board, letting them go 45 after the
