@@ -187,8 +187,13 @@ MCLK_PER_CYCLE = 42
 #: low 12 FM clocks ago, i.e. for 12 clocks (2 internal cycles) after the assertion --
 #: and then restarts it from the assertion, /IC still low: the slot-23 marker keeps its
 #: 1,008-MCLK period through a long reset (docs/worklog.md, "The Z80 from the reset").
-#: Die-derived; the board used to freeze the counter until /IC was released.
-IC_FSM_HOLD = 2
+#: Die-derived; the board used to freeze the counter until /IC was released. **3**, one
+#: more than ``ic_check``'s 12 FM clocks give: with the clocks lined up as the die's
+#: (``system.M68K_POWER_ON_PHASE``) the FM's phase after both of the Overdrive 2 boot's
+#: later assertions comes out one cycle early with 2, and timer A's flag lands where the
+#: die's does with 3 (docs/worklog.md, "The VDPs' offset"); fitted, not read off the
+#: netlist.
+IC_FSM_HOLD = 3
 #: Whether the slot counter is also reset depends on where in its slot the assertion
 #: falls: ``i_fsm_reset`` (``fc1004.c``, ``ic_check`` three clocks late) resets it only
 #: if a phase-1 clock still comes while it holds. Measured by clocking Nuked-MD's own

@@ -5840,3 +5840,49 @@ the die) now fails on the plain machines as the die mostly does; every other tes
 the 122 unchanged on all ten machines. Unchanged: the suites (148, both interpreters),
 Nemesis's HV captures and sprite masking, MoD's Z80 bus test, Nuked-MD's probes, the arms
 window (100 of 100), frames 6,981-7,200 (219 identical, 182 at the expected frame).
+
+### The VDPs' offset (the press-time conflict)
+
+The comparisons had lined the board up with the die by 240,323 MCLK, "the two VDPs'
+offset", and from it the CPUs' phases and the reset press. Fitted directly instead:
+Overdrive 2's boot polls the VDP's status 186,758 times on the die; the HBlank flag of
+every poll the board's line structure covers (16,427) comes out as the die read it at an
+offset of **240,277** MCLK and at no other (240,323 gets 15,995). With it:
+
+- **The clocks' relation.** The die's 68000 edges (6 mod 7) and Z80 edges (6 mod 15) are
+  at 4 and 14 in the board's time. The board's 68000 now starts 4 MCLK into power-on
+  (`system.M68K_POWER_ON_PHASE`, kept through everything: its holds are whole clocks),
+  the arbiter's edge is at 4, the Z80's at 14 (`Z80_CLOCK_PHASE`).
+- **The E clock.** The first interrupt's autovectored acknowledge (VPA, waiting for the
+  E clock) ended a 68000 clock early: the E clock's phase at power-on,
+  `M68K_E_CLOCK_POWER_ON` = 9, puts it where the die's is.
+- **One press time does both.** At 26,601,705 the first interrupt and the first two
+  handovers match the die exactly; the 68000's bus stream agrees to 850,199 MCLK after
+  the reset (-21, the boot's first transfer). The harnesses default to it. (The die's
+  pulse less the offset is 26,601,719; the 14 is the board's pulse start against the
+  die's.)
+- **The YM2612.** Its sample phase after /IC was off by 455 MCLK: its reset-or-pause rule
+  (`ym2612.IC_PAUSE_POSITIONS`, `IC_SLOT_LAG`) had been fitted under the wrong relation,
+  and the 18-MCLK pin delay added last session counted the model's own sampling delay
+  twice -- with it at 0 the phase after the boot's later two assertions is one FM cycle
+  early, with 9 or more 175-440 MCLK out (`board.ZRES_PIN_MCLK` = 0 now). Timer A's
+  flag rises 168 MCLK after the die's slot-23 marker and 126 after the board's cycle 0,
+  so the board's cycle 0 is the die's marker + 42 (not + 18, the note the earlier
+  calibration leant on); against that the FM was one cycle early, and holding it 3 cycles
+  after /IC (`IC_FSM_HOLD`, from 2) puts timer A's first flag where the die's is. 3 is
+  fitted against two assertions, not read off the netlist (its `ic_check` gives 12 FM
+  clocks, 2 cycles); no sampling point recovers it with 2.
+- **The status read.** The Z80 takes the YM2612's status at the end of its read cycle:
+  `board.Z80_FM_SAMPLE_MCLK` = 42 (40-45 all give the same; outside, 1,150 or fewer).
+
+| | before | after |
+|---|---:|---:|
+| matching Z80 reads | 192 | **3,301** |
+| the driver's first timer wait, load to flag (die 2,895) | 2,640 | 2,895 |
+| handovers 0 and 1 / the first interrupt at one press time | no | **yes** |
+| frames 6,981-7,200 identical (window); at the expected frame | 219; 182 | 220; 75 |
+
+The Z80 now parts from the die at read 3,301 (`$011C`/`$0120`), a later timer wait: the
+waits from the fourth on alternate one poll early and late against the die's, a phase
+finer than these constants. Unchanged: the suites (148), VDPFIFOTesting, Nemesis's HV
+captures and sprite masking, MoD's tests, Nuked-MD's probes, the arms window (100).
