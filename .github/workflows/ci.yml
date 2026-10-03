@@ -1,17 +1,32 @@
 name: CI
 
+# Actions minutes are the cost here: from 1 to 3 October 2026 this workflow
+# used 3,737 minutes in 29 runs, because the suite takes 60-79 minutes on
+# CPython and 8-10 on PyPy. So: PyPy only, on pushes to main and on pull
+# requests (a pushed branch with a PR open no longer runs twice), a newer run
+# on the same ref cancels the older one, and the CPython interpreters run only
+# when started by hand (Actions tab, "Run workflow").
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    # PyPy takes about 10 minutes; a manual CPython run about 80.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 120 || 30 }}
     strategy:
       fail-fast: false
       matrix:
         # The floor is the newest Python PyPy supports (docs/handoff-brief.md).
-        python-version: ["3.11", "3.14", "pypy3.11"]
+        # CPython 3.11 and 3.14 only on a manual run: an hour each per push.
+        python-version: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["3.11", "3.14", "pypy3.11"]') || fromJSON('["pypy3.11"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
