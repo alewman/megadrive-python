@@ -268,9 +268,10 @@ def test_data_port_reads_end_where_the_die_lets_them_go() -> None:
     """A CRAM read in an active H40 line waits for the read-ahead's slot; read against
     each machine's own HV counter right after (``scripts/run_slot_hv.py read``),
     Nuked-MD's waiting reads end where the 68000 next reads these H values, 92 % of them
-    and nearly all the rest one step later. The board's must land on them too: 0.87
-    with ``vdp.READ_RELEASE_MCLK`` = 52, 0.71 with the 45 an /HSYNC-anchored sweep had
-    fitted (docs/worklog.md, "The active-line slots")."""
+    and nearly all the rest one step later. The board's must land on them too: 0.91
+    with the release in half pixels (``vdp.READ_RELEASE_HALF_PIXELS``), 0.71 with the
+    flat 45 an /HSYNC-anchored sweep had fitted (docs/worklog.md, "The active-line
+    slots", "The read release in half pixels")."""
     from itertools import pairwise
 
     import run_slot_hv

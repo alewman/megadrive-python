@@ -6202,3 +6202,33 @@ expected frame (the slip at 7,053 is back). The bus-arbiter test against the die
 pop's second read 2.45 to 2.55 wait states (die 3.60, MoD's hardware 3.5), its first 2.92
 to 2.82 (die 2.95); against MoD's average for the whole loop 3.27 to 3.24 (3.5).
 Handovers 0 and 1 exact; the Z80 reads 187.
+
+### The read release in half pixels
+
+The judge's difference at +1,230,698 is a data-port read filled at the slot at H $002
+that the board let go a clock early (52 MCLK after the slot). A flat 53 or more fixes it
+and makes the read before, at H $1CE in the slow pixels, a clock late. Reading the
+limits off the boot's reads at those two slots, sweeping the release with the scratch
+variant helper (new trees, nothing deleted):
+
+- At H $002 (8-MCLK pixels): one read needs at least 53, another at most 53.
+- At H $1CE (10-MCLK pixels): one read needs at least 64, another at most 64.
+
+So the die lets the read go 53 MCLK after the one slot and 64 after the other, 11 apart.
+Whole pixel clocks from the slot give 10 apart (5 pixels) or 12 (6); 5 pixels + 13 and
+5 pixels + 14 each leave one of the four reads a clock out (the judge parts at
++1,237,075 and +1,247,792). Eleven half pixels are 44 MCLK on ordinary pixels and 55 on
+slow ones, 11 apart: `vdp.READ_RELEASE_HALF_PIXELS` = 11 plus 9 MCLK
+(`READ_RELEASE_MCLK` = 53 on ordinary pixels). The judge now agrees to **+1,373,449**
+(from +1,230,698), with 5,469 steps of 7+ MCLK over the first 16M where there were
+7,241; against the die's HV histogram 1,302 (1,172 with 6 whole pixels), and the board's
+waiting reads land on the die's HV values 91 % of the time (87 % before).
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the arms window,
+frames 6,981-7,200 (220 within three frames of the die's, 75 at the expected one),
+handovers 0 and 1 exact, the Z80 reads (187). VDPFIFOTesting's "FIFO Wait States"
+(intermittent on hardware, passing on the die about once in 800) fails again on three
+machines; it has flipped with each of these read-timing changes. The next difference,
++1,373,449, is a read filled at the slot at H $140 that the die lets go at most about 46
+MCLK after it, where the board's 11 half pixels + 9 give 53: the release differs by slot
+beyond the pixels' speed, and $140/$142 are already special (no read is filled at $142).

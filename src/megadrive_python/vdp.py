@@ -476,11 +476,12 @@ DMA_READ_MCLK = 16
 #: the board's did without it, and 21 is the lead that matches, histogram distance 696 to
 #: 122 with the display off); and in an active H40 line the slot at H $142 fills no read.
 #: Nuked-MD: placed against each machine's own HV counter (``scripts/run_slot_hv.py
-#: read``), the die's waiting reads end where the board's do with 52 here (the H read
-#: next lands on the die's values 87 % of the time, 71 % with 45), and the boot's first
-#: data-port read (line $1FF) allows 49-56. A cartridge sweeping bursts and pairs of
-#: reads across the line (``scripts/run_read_slots.py``) had fitted 45, lined up by the
-#: die's /HSYNC fall, which sits in the slow pixels and is out by tens of MCLK; it also
+#: read``), the die's waiting reads end where the board's do with the release below (the
+#: H read next lands on the die's values 91 % of the time, 71 % with a flat 45), and
+#: the boot's data-port reads pin it (:data:`READ_RELEASE_HALF_PIXELS`). A cartridge
+#: sweeping bursts and pairs of reads across the line (``scripts/run_read_slots.py``)
+#: had fitted 45, lined up by the die's /HSYNC fall, which sits in the slow pixels and
+#: is out by tens of MCLK; it also
 #: has the die catch $140 from a read begun 22 MCLK before it and not from one 15
 #: before, and from 15 before miss $142 too. Overdrive 2's boot
 #: polls vblank once per pass of a CRAM readback, so the rules decide which pass it
@@ -489,16 +490,15 @@ DMA_READ_MCLK = 16
 #: nothing hardware-captured times the read-ahead. VDPFIFOTesting's "FIFO Wait States"
 #: fails with them every time; it passes on the die about once per 800 iterations, so
 #: it cannot judge them (``scripts/run_vdpfifotesting.py``, ``INTERMITTENT``).
-READ_RELEASE_MCLK = 52
-#: ... counted as this many pixel clocks from the slot plus the rest in master clocks, so
-#: the release stretches in the slow pixels around the sync (10 MCLK, not 8): at the
-#: slot at H $1CE the die lets reads go a step later than a flat 52 did (the HV test's
-#: $ED where the board split $EC/$ED; the boot's read at +1,230,075, 12 MCLK). Against
-#: the die's HV histogram 6 pixels score 1,172 and 5 pixels 1,140 where a flat 52
-#: scores 1,552, and with 6 the boot's 68000 stream has 7,241 steps of 7+ MCLK over its
-#: first 16M (8,592 with 5, 11,173 flat; docs/worklog.md, "The cartridge refresh when
-#: the bus is free"). Die-derived.
-READ_RELEASE_PIXELS = 6
+READ_RELEASE_MCLK = 53
+#: ... counted as this many half pixel clocks from the slot plus the rest in master
+#: clocks, so the release stretches in the slow pixels around the sync (10 MCLK, not 8).
+#: The boot's data-port reads pin it: those filled at H $002 are let go 53 MCLK after
+#: the slot (two reads: at least 53, at most 53), those at H $1CE, in the slow pixels,
+#: 64 after (at least 64, at most 64). Eleven half pixels are 44 and 55 MCLK there, 11
+#: apart, as the die's are; whole pixels give 10 or 12 apart and leave one of the four
+#: reads a clock out (docs/worklog.md, "The read release in half pixels"). Die-derived.
+READ_RELEASE_HALF_PIXELS = 11
 #: On a blank line the die lets a waiting read go this long after the slot that fills
 #: it. Back-to-back CRAM reads with the display off: the die stalls 2,717 of 14,656 of
 #: them, nearly all by one 68000 clock, where the board, letting them go 45 after the
@@ -1138,9 +1138,13 @@ class VDP:
             did_read = True
             if self.read_available:
                 if self.slots is self.hmode.slots_active:
-                    # Counted in pixel clocks, which run slower around the sync.
-                    extra = READ_RELEASE_MCLK - 8 * READ_RELEASE_PIXELS
-                    self.read_ready_at = self._pixels_after(self.mclk, READ_RELEASE_PIXELS) + extra
+                    # Counted in half pixel clocks, which run slower around the sync.
+                    half = READ_RELEASE_HALF_PIXELS
+                    extra = READ_RELEASE_MCLK - 4 * half
+                    after = self._pixels_after(self.mclk, half // 2)
+                    if half % 2:  # half of the next pixel
+                        after += (self._pixels_after(after, 1) - after) // 2
+                    self.read_ready_at = after + extra
                 else:
                     self.read_ready_at = self.mclk + READ_RELEASE_IDLE_MCLK
         if (
