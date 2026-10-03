@@ -6165,3 +6165,40 @@ release); "0 fail that pass on hardware" on every machine.
 
 With the release at 52: the suites (148, CPython and PyPy), Nemesis's HV captures, the
 battery's output, the arms window and frames 6,981-7,200 are as above; the Z80 reads 187.
+
+### The cartridge refresh when the bus is free
+
+The judge's difference at +1,230,229: in the boot's CRAM readback loop, a data-port read
+the die holds 126 MCLK, then a ROM read the die holds 7 for the cartridge refresh where
+the board held 14. Kabuto's rule already has the refresh swallowed by a VDP write; this
+one was half swallowed by the long held read before it.
+
+- **The boot.** Over the 1,000 refreshes that fall due during a held data-port read in the
+  boot's first 16M MCLK, against how long before the next cartridge read the board's
+  refresh fell due: up to 105 MCLK the die holds that read 14, at 112-119 it holds 7, from
+  126 not at all. The board held all of them 14.
+- **A test cartridge** (`scripts/run_cart_refresh.py`): dense cartridge reads, which place
+  the die's own refresh grid, between `mulu.w #$FFFF` gaps of 70 clocks with no bus cycle.
+  The read after a gap is held 14 when the refresh fell due up to 112 MCLK before it and
+  not at all from 126 (184 reads). So it is any free bus, not the VDP's hold.
+- So the refresh runs by itself once the bus has been free 112 MCLK after it fell due, and
+  takes 14: `board.CART_REFRESH_SELF_MCLK` = 112, half the stretch for an access that
+  comes while it runs. The same shape as the work-RAM refresh's self-run.
+
+With it the read at +1,230,229 is held 7 on both, handovers 0 and 1 are exact, and the
+mean difference over most of the boot's first 16M falls from about 15 MCLK to 9-10
+(steps of 7+ MCLK 12,128 to 11,173). The read before it, at the slot at H $1CE, was let go
+a step early: that slot is in the slow pixels around the sync (10 MCLK each), and counted
+in pixel clocks the release stretches there. `vdp.READ_RELEASE_PIXELS` = 6 (plus 4 MCLK,
+the same 52 on ordinary pixels): against the die's HV histogram 1,172 where the flat 52
+now scores 1,552, and the boot's steps of 7+ MCLK fall to 7,241. The judge now parts at
+**+1,230,698** (-7), another data-port read.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the arms window (100
+of 100). VDPFIFOTesting passes all 122 on every machine again ("FIFO Wait States", which
+the blank-line read release had made fail on three). Frames 6,981-7,200: all 220 found
+within three frames of the die's (the repeated "junk" frame at 7,089 is gone), 75 at the
+expected frame (the slip at 7,053 is back). The bus-arbiter test against the die: the
+pop's second read 2.45 to 2.55 wait states (die 3.60, MoD's hardware 3.5), its first 2.92
+to 2.82 (die 2.95); against MoD's average for the whole loop 3.27 to 3.24 (3.5).
+Handovers 0 and 1 exact; the Z80 reads 187.

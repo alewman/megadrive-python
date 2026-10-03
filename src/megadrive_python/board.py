@@ -51,6 +51,17 @@ if TYPE_CHECKING:
 #: (die-derived) in four probe loops, 670 of 670 ticks each (docs/worklog.md).
 CART_REFRESH_MCLK = 896
 CART_REFRESH_STALL = 14
+#: ... unless the bus was free long enough for it to run by itself: one that fell due at
+#: least this long before the access plus its own 14 costs it nothing, and one due from
+#: this long before costs half. Nuked-MD (die-derived): in Overdrive 2's boot, a refresh
+#: that falls due during a long held data-port read costs the next cartridge read 14 MCLK
+#: when due up to 105 before it, 7 at 112-119 and nothing from 126 (1,000 of them); and
+#: on a test cartridge whose 68000 spends 70 clocks in a ``mulu`` between bursts of
+#: cartridge reads, the read after the gap is held 14 up to 112 and not at all from 126
+#: (the die's own refresh grid, placed from its held reads; docs/worklog.md, "The
+#: cartridge refresh when the bus is free"). The same shape as the work-RAM refresh's
+#: self-run (:data:`RAM_REFRESH_SELF_MCLK`).
+CART_REFRESH_SELF_MCLK = 112
 #: The same refresh falling on a 68000 access to the Z80's space ($A00000-$A0FFFF)
 #: stretches it by one 68000 clock, not two -- and by none if it fell due only in the
 #: last 68000 clock before /AS, when it is used up all the same. Nothing hardware
@@ -383,8 +394,12 @@ class Board:
                 (t - self.cart_refresh_due) // CART_REFRESH_MCLK + 1
             ) * CART_REFRESH_MCLK
             stretch = 0
-            if address < 0x800000:
+            if late >= CART_REFRESH_SELF_MCLK + CART_REFRESH_STALL:
+                pass  # it ran by itself while the bus was free
+            elif address < 0x800000:
                 stretch = CART_REFRESH_STALL
+                if late >= CART_REFRESH_SELF_MCLK:
+                    stretch = CART_REFRESH_STALL // 2  # under way when the access came
             elif address >> 16 == 0xA0 and late >= Z80_REFRESH_LATE:
                 stretch = Z80_REFRESH_STALL
             if stretch:
