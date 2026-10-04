@@ -6232,3 +6232,30 @@ machines; it has flipped with each of these read-timing changes. The next differ
 +1,373,449, is a read filled at the slot at H $140 that the die lets go at most about 46
 MCLK after it, where the board's 11 half pixels + 9 give 53: the release differs by slot
 beyond the pixels' speed, and $140/$142 are already special (no read is filled at $142).
+
+### The slot at $140
+
+The judge's difference at +1,373,449 is a data-port read filled at the end-of-line slot
+at H $140 that the die does not hold and the board holds 7. A new tool,
+`scripts/od2_read_slots.py`, takes every data-port read of the boot's first 16M MCLK
+whose bus cycle starts in step on both machines and waited for the read-ahead, and
+compares when the next cycle starts, by the slot the board filled the buffer at. Every
+slot agrees on every read (tens of thousands; $002, $012 ... $122 and $1CE on active
+lines, and the blank-line slots) but $140: 2,184 agree, 20 end 7 MCLK earlier on the die,
+30 end 14 earlier. With `--slot 0x140`, by when the read began after the fill:
+
+| read starts after the fill (MCLK) | the die's read | the board's |
+|---|---:|---:|
+| 43-47 | 28 (no wait) | 35-42 |
+| 48-51 | 35 (one clock) | 35 |
+| 55-63 | 28 | 28 |
+
+So the data the $140 slot fetches is ready on the die by the time a read 43 MCLK after it
+needs it (the board's 53 is too late there), and yet a read starting 48-51 after it waits
+a clock: not a release time but a short window, about 32 MCLK after the $142 slot (which
+never fills a read), in which the VDP does not answer the data port. Neither a 68000
+sample point nor its phase changes the boot (tried: a flat sample point breaks the read
+on line $1FF; with the release moved to match, every phase gives the same 5,469 steps).
+The boot's offsets do not reach the window's edges; a die test sweeping a read's start
+across $140-$142 in single master clocks is the next step. No model change in this
+round.
