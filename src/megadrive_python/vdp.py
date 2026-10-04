@@ -506,6 +506,17 @@ READ_RELEASE_HALF_PIXELS = 11
 #: 3,024). Stall lengths need no lining up of the two machines (docs/worklog.md, "The
 #: active-line slots"). Die-derived.
 READ_RELEASE_IDLE_MCLK = 26
+#: A read that starts in this window after the end-of-line slot at H $140 fills the
+#: buffer is answered at once, though one starting before or after it waits for the
+#: release. Nuked-MD (die-derived), the Overdrive 2 boot's in-step reads
+#: (``scripts/od2_read_slots.py --slot 0x140``): started 43-47 MCLK after the fill, 28
+#: MCLK and no wait (50 reads); 48-51 after, one clock; 55 on, none. A die sweep of
+#: back-to-back reads across the line (``scripts/run_read_slots.py``'s cartridge, placed
+#: by the die's /HSYNC) shows the same island, a clock or two later; no other slot has
+#: one ($002's wait shrinks steadily to nothing at 53). Probably the $142 slot, 16 MCLK
+#: on, which never fills a read (docs/worklog.md, "The slot at $140").
+READ_EARLY_SLOT_H = 0x140
+READ_EARLY_MCLK = (43, 47)
 READ_FILL_LEAD_MCLK = 21
 #: A 68000 bus cycle without wait states: 4 clocks.
 WRITE_CYCLE_MCLK = 28
@@ -646,6 +657,8 @@ class VDP:
         #: it again (:data:`READ_RELEASE_MCLK`, :data:`READ_FILL_LEAD_MCLK`).
         self.read_ready_at = 0
         self.read_fill_after = 0
+        #: When a read finds the word before it is released (:data:`READ_EARLY_MCLK`).
+        self.read_early = (0, 0)
         # DMA.
         self.fill_running = False
         self.transfer_active = False
@@ -1145,8 +1158,15 @@ class VDP:
                     if half % 2:  # half of the next pixel
                         after += (self._pixels_after(after, 1) - after) // 2
                     self.read_ready_at = after + extra
+                    early = self.hmode.offset_of.get(READ_EARLY_SLOT_H)
+                    if self.mclk - self.line_start == early:
+                        lo, hi = READ_EARLY_MCLK
+                        self.read_early = (self.mclk + lo, self.mclk + hi)
+                    else:
+                        self.read_early = (0, 0)
                 else:
                     self.read_ready_at = self.mclk + READ_RELEASE_IDLE_MCLK
+                    self.read_early = (0, 0)
         if (
             fifo[self.fifo_read][4]
             and not did_read
@@ -1453,6 +1473,8 @@ class VDP:
                 return self.read_buffer  # an invalid read target locks up the hardware
             self._advance(mclk, lambda: self.read_available)
             self.hold = max(0, self.read_ready_at - mclk)
+            if self.read_early[0] <= mclk <= self.read_early[1]:
+                self.hold = 0
             self.read_fill_after = mclk + self.hold + READ_FILL_LEAD_MCLK
             self.read_available = False
             self.read_half = False
