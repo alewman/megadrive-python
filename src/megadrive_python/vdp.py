@@ -626,6 +626,16 @@ DMA_READS_BETWEEN_SLOTS = True
 #: Fitted to Nemesis's logic-analyser captures (docs/timing.md, "HV counter
 #: sampling"): no document states it.
 HV_SAMPLE_DELAY = 3
+#: With the die's figures (``Machine.dma_figures`` "die", the ``nuked-md`` machine) the
+#: status's VBLANK flag clears this many pixels into line $1FF, not as it begins.
+#: Nuked-MD in Overdrive 2's boot: a status read whose sample falls on the pixel edge
+#: that begins line $1FF still reads VBLANK set (+7,649,145), and the frames before
+#: allow at most about a pixel; placed against each machine's own HV counter
+#: (``scripts/run_slot_hv.py status --pal``) the die's clears are a step later than the
+#: board's at most. Nemesis's hardware captures lean the other way (two PAL H40 samples
+#: read VBLANK clear where the board still has it set), so only the die-figures machine
+#: takes it (docs/worklog.md, "The VBLANK flag a pixel late"). Die-derived.
+VBLANK_CLEAR_DIE_PIXELS = 1
 
 
 class VDP:
@@ -1038,6 +1048,11 @@ class VDP:
         h = self.hcounter()
         v = self.v
         vblank = (self.border and v != 0x1FF) or not self.display_enabled
+        if v == 0x1FF and self._dma_die and self.border:
+            # The die's flag clears a pixel into the line (VBLANK_CLEAR_DIE_PIXELS).
+            vblank = (
+                vblank or self.mclk - self.line_start < self.hmode.starts[VBLANK_CLEAR_DIE_PIXELS]
+            )
         hblank = h >= self.hmode.hblank_set or h < self.hmode.hblank_clear
         renderer = self.renderer
         return (

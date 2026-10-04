@@ -6399,3 +6399,26 @@ before. VDPFIFOTesting: "0 fail that pass on hardware" on every machine; the int
 and the Genesis 3 fails 8 (its VSRAM tests, as the hardware does) where it failed 9.
 `run_dma_cost`'s VRAM 128 KB blanking figure 405.7 to 405.0 bytes a line. Handovers 0-3
 within 12 MCLK of the die's.
+
+### The VBLANK flag a pixel late
+
+The judge's step at +7,649,439: the boot's poll for the end of vblank left its loop one
+pass (210 MCLK) earlier on the board. Frame by frame (scratchpad `vblank_polls.py`), the
+status reads bracketing each VBLANK flip agree on both machines for the boot's first six
+frames; at the seventh the die's read at +7,649,145 still sees VBLANK and the board's sees
+it clear. The board's line $1FF begins at +7,649,155, and its status read samples at the
+first pixel edge at or after the read plus 3 MCLK (`HV_SAMPLE_DELAY`, fitted to hardware),
+which is exactly that line's first edge. So the die's flag clears later than the line
+begins: at least a pixel, by this read, and at most about a pixel, by the frames before.
+Placed against each machine's own HV counter (`scripts/run_slot_hv.py status --pal`, now
+with `--v30` and `--frames`, and VBLANK changes listed), the two clear and set VBLANK at the
+same H to within one step, the die's never earlier, in PAL V28 and V30 alike.
+
+Nemesis's hardware captures lean the other way: in two PAL H40 samples the hardware reads
+VBLANK clear where the board still has it set. So the die-figures machine only
+(`nuked-md`; Aubrey's call to match the die there) keeps VBLANK set for the first pixel of
+line $1FF (`vdp.VBLANK_CLEAR_DIE_PIXELS` = 1). The boot's 68000 stream agrees with the die's
+to +9,512,769 but for the one-cycle refresh at +5,233,109.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's
+output, the arms window (99 of 100) and frames 6,981-7,200 (183 at the expected frame).
