@@ -143,6 +143,18 @@ def ram_refresh(due: int, t: int) -> tuple[int, int]:
     return wait, began + RAM_REFRESH_AFTER_MCLK
 
 
+def ram_refresh_paused(due: int, start: int, end: int) -> int:
+    """The work-RAM refresh due time after the VDP held the bus from ``start`` to ``end``
+    for a transfer: the refresh timer stops meanwhile and goes on from where it was
+    (:data:`RAM_REFRESH_PAUSES`). The refreshes that ran by themselves before ``start``
+    are counted first."""
+    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+    if start >= due + ran:
+        period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+        due += ((start - due - ran) // period + 1) * period
+    return due + max(0, end - start)
+
+
 #: A held 68000 bus cycle lasts whole 68000 clocks: /DTACK is sampled on a clock edge,
 #: so the cycle ends on the first edge after the device lets it go. The board added the
 #: VDP's (and the bus grant's) hold as it came, in master clocks, and every one that was

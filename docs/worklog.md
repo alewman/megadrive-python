@@ -6330,3 +6330,37 @@ commonest values); and on the read sweep cartridge run on both, line by line, 67
 reads wait exactly as long as the die's, nearly all the rest one 68000 clock longer or
 shorter in about equal numbers (1,233 and 1,163) -- the two machines' clocks meeting the
 VDP at different phases in that cartridge, which nothing lines up, rather than a rule.
+
+### The refresh timer stops for a transfer
+
+Reading Nuked-MD's VDP for the work-RAM refresh, rather than inferring it from held
+accesses, settles the last section. In `vdp.c` a seven-bit counter (`dff23`-`dff29`)
+counts 68000 clocks; at 112 (`w44`) the next work-RAM access takes a refresh (`dff13`),
+at 126 (`w43`) one runs by itself (`dff15`, then the sequence `dff16`-`dff21`); a
+refresh resets it (`w41`; its other input, `cpu_sel`, is the Mega Drive mode pin). It
+counts only while `w64` is set, and `w64` is not `t3`, the VDP holding the bus for a
+transfer. So a transfer **stops** the timer and it goes on from where it was; it does not
+restart it. The "restarts 238 after the last select" of two sections back was the test
+cartridge starting every transfer at the same count.
+
+- `vdp.RAM_REFRESH_PAUSES`: the board stops its refresh timer from the end of the write
+  that starts a transfer to `RAM_REFRESH_PAUSE_TAIL_MCLK` = 14 after its last read
+  (`board.ram_refresh_paused`). With 17 or 20 the refresh after the boot's run of four
+  transfers (+933,688) comes too late; with 14 the boot's 68000 stream agrees with the
+  die's to **+5,229,301** (from +3,076,143).
+- **Recorded, not inferred.** The harness traces the counter now (`NMD_TRACE_MASK` bit
+  5, type 6: the counter going back to 0, the count it reached, and whether an access took
+  the refresh or it ran by itself; `validation/build_nuked_md.sh` builds to
+  `NMD_BUILD_DIR` for experiments). `scripts/od2_refresh_events.py` puts every die refresh
+  of the boot's first 5.2M MCLK beside the board's: 5,376 on the die, 5,375 on the board,
+  each kind at a fixed offset (taken: -18/-19 MCLK; by itself: +7, -3, -47 or -61, the
+  counter's reset coming a different time into each), and three whose kind differs: one
+  at the reset itself and two refreshes the die runs by itself one 68000 clock before the
+  access the board lets take it (the known clock-early refresh).
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the arms window,
+the battery but VDPFIFOTesting's intermittent "FIFO Wait States" (passing on every machine
+again). Frames 6,981-7,200: all 220 within three frames of the die's (no repeated
+transition frame), 75 at the expected one (199 last round): the slip from 7,053 now runs
+on to the window's end. Handovers 0, 1 and 3 within 1 MCLK of the die, 2 at -15, 4 and 5
+at -120 and -43; the Z80 reads 192.

@@ -567,12 +567,21 @@ DMA_READS_INTO_ROOM = True
 #: transfer's last read, whatever its timer was doing before: on Nuked-MD, with work-RAM
 #: reads every 56 MCLK before and after transfers of 10 to 6,000 words from the
 #: cartridge to VRAM and CRAM, display off and on, the first read held is the first at
-#: least 238-251 MCLK after the last memory select, every time, and the boot's fifth
-#: transfer narrows it to 238-246; the board's timer, which ran on through the transfer,
-#: missed 15 of 16 (docs/worklog.md, "The work-RAM refresh after a transfer"). The
-#: board's last read is 3 MCLK before the die's select. Die-derived; None lets the timer
-#: run on.
-RAM_REFRESH_AFTER_DMA_MCLK = 245
+#: least 238-251 MCLK after the last memory select, every time, where the board's timer,
+#: which ran on through the transfer, missed 15 of 16 (docs/worklog.md, "The work-RAM
+#: refresh after a transfer"). That was a pause, not a restart: the die's refresh timer
+#: (``vdp.c``'s seven-bit counter ``dff23``-``dff29``, 112 68000 clocks to a pending
+#: refresh, 126 to one by itself) counts only while ``w64`` = not ``t3``, the VDP not
+#: holding the bus for a transfer, and is reset only by a refresh; the test cartridge
+#: always started its transfers at the same count. With the pause the boot's refresh
+#: after a frame of CRAM readback lands where the die's does (docs/worklog.md, "The
+#: refresh timer stops for a transfer"). Die-derived; False lets the timer run on.
+RAM_REFRESH_PAUSES = True
+#: ... until this long after the transfer's last read (``t3``, which stops the counter,
+#: is cleared after the transfer ends): with 14 the boot's 68000 bus stream agrees with
+#: the die's to +5,229,301; 17 and 20 miss the refresh after its run of four transfers at
+#: +933,688, and 54-81 miss more. Die-derived.
+RAM_REFRESH_PAUSE_TAIL_MCLK = 14
 #: On an active line the die's strobe comes this long after the board's external slot
 #: (49 MCLK, its select 51), so the read waits for it. Only the transfer's reads wait:
 #: the word leaves the FIFO at the slot, where the die's stalled 68000 writes end against
@@ -1607,8 +1616,13 @@ class VDP:
             back = -(-back // 7) * 7  # on the 68000's clock
         else:
             back = DMA_TRIGGER_HOLD_MCLK + max(0, self.mclk - written)
-        if RAM_REFRESH_AFTER_DMA_MCLK is not None:
-            board.ram_refresh_due = self.mclk + RAM_REFRESH_AFTER_DMA_MCLK  # from the last read
+        if RAM_REFRESH_PAUSES:
+            from .board import ram_refresh_paused  # board imports this module
+
+            # From the end of the write that started the transfer to a little after its
+            # last read.
+            end = self.mclk + RAM_REFRESH_PAUSE_TAIL_MCLK
+            board.ram_refresh_due = ram_refresh_paused(board.ram_refresh_due, written, end)
         return back
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------

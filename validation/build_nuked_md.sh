@@ -39,7 +39,8 @@
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
 src="$root/reference/src/Nuked-MD"
-out="$root/reference/build-nuked-md"
+# NMD_BUILD_DIR builds elsewhere (an experiment), leaving the tools' binary alone.
+out="${NMD_BUILD_DIR:-$root/reference/build-nuked-md}"
 
 if [ ! -f "$src/md.c" ]; then
     echo "reference/src/Nuked-MD is missing; run scripts/fetch_references.py first" >&2

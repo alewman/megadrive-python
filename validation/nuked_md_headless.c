@@ -46,7 +46,7 @@
  *   NMD_TRACE_MASK=<n>    bit 0: 68000/VDP bus cycles.  bit 1: Z80 bus cycles.
  *                         bit 2: the signal changes below.  bit 3: work-RAM and
  *                         cartridge selects (type 4).  bit 4: VRAM write strobes
- *                         (type 5).  Default 7.
+ *                         (type 5).  bit 5: work-RAM refreshes (type 6).  Default 7.
  *   NMD_DUMP_RAM=<path>   68000 work RAM (64 KB) at the stop.
  *   NMD_DUMP_ZRAM=<path>  Z80 RAM (8 KB) at the stop.
  *   NMD_DUMP_VRAM=<path>  Nuked-MD's own vram_save() blob at the stop.
@@ -76,6 +76,10 @@
  *                 type 5: a VRAM write strobe (/RAS, /CAS and /WE low together), at
  *                 its start: flags bit 0 the bank (/WE1 rather than /WE0); addr the
  *                 VRAM address lines then (the column).
+ *                 type 6: the VDP's work-RAM refresh counter (vdp.c dff23-dff29, which
+ *                 counts 68000 clocks while the VDP does not hold the bus) going back
+ *                 to 0, i.e. a refresh: data the count it reached; flags bit 0 a
+ *                 work-RAM access had taken it (dff13), 1 it ran by itself (dff15).
  *   uint16 pad
  *
  * A "bus cycle" on the 68000's bus is /AS low to /AS high; on the Z80's bus it is
@@ -256,7 +260,7 @@ typedef struct {
 } nmd_event;
 #pragma pack(pop)
 
-enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4, EV_VRAM = 5 };
+enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4, EV_VRAM = 5, EV_REFRESH = 6 };
 
 /* Signal numbers for EV_SIGNAL records.  These are the board-level lines milestone 5
    models and has no hardware judge for: the Z80's bus handover, its reset, the
@@ -807,6 +811,23 @@ void Audio_Update(void)
                      0, 0, (uint8_t)i);
             prev_vwe[i] = we[i];
         }
+    }
+
+    /* --- the work-RAM refresh counter ----------------------------------------- */
+    if (trace_mask & 32) {
+        static int prev_count, kind;
+        int count = (ym.vdp.dff23.l2 & 1) | (ym.vdp.dff24.l2 & 1) << 1
+                    | (ym.vdp.dff25.l2 & 1) << 2 | (ym.vdp.dff26.l2 & 1) << 3
+                    | (ym.vdp.dff27.l2 & 1) << 4 | (ym.vdp.dff28.l2 & 1) << 5
+                    | (ym.vdp.dff29.l2 & 1) << 6;
+        kind |= (ym.vdp.dff13.l2 & 1) | (ym.vdp.dff15.l2 & 1) << 1;
+        if (count == 0 && prev_count > 1) {
+            if (tracing)
+                emit(EV_REFRESH, mcycles, zclk_edges, 0, (uint16_t)prev_count, 0,
+                     (uint8_t)kind);
+            kind = 0;
+        }
+        prev_count = count;
     }
 
     /* --- board signals ------------------------------------------------------ */
