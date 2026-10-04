@@ -6364,3 +6364,38 @@ again). Frames 6,981-7,200: all 220 within three frames of the die's (no repeate
 transition frame), 75 at the expected one (199 last round): the slip from 7,053 now runs
 on to the window's end. Handovers 0, 1 and 3 within 1 MCLK of the die, 2 at -15, 4 and 5
 at -120 and -43; the Z80 reads 192.
+
+### The first read in the slow pixels
+
+The judge's difference at +5,229,301: a 32-word VRAM transfer from the cartridge on a
+blank line whose 68000 resume came 14 MCLK early. Its trigger write ends in the slow
+pixels around the sync (10 MCLK each, the DMA ticks 18-20 apart), and the board's first
+read came a tick early: the die skips the tick 11 MCLK after the write and reads at the
+one 29 after. Placing the boot's transfers by where their trigger writes end
+(scratchpad `firstread.py`), the die's first-read ticks want, after the write is over:
+at most 12 and 9, more than 1 and 7 (four transfers in ordinary pixels) and more than 11
+(this one). A flat delay cannot be both at most 9 and more than 11; one pixel's length
+plus a constant cannot either (8 + c <= 9, 10 + c > 11). Two pixels' lengths less 8 MCLK
+can: 8 in ordinary pixels, 12 in the slow ones (`vdp.DMA_FIRST_READ_DIE_PIXELS`, with
+`DMA_FIRST_READ_DIE_MCLK` = -8 for the cartridge). Then the transfer's later reads came a
+tick early: its bytes paired one slot ahead of the die's, as at the boot's third transfer
+(the die passes up the slot 40 MCLK after its first read and takes the next), so the
+FIFO's delay is 41-48, not 33-48 (`FIFO_COMMIT_DELAY_MCLK` = 44). Every transfer of that
+stretch now ends and resumes as on the die.
+
+The judge: the streams agree to +5,233,109, part there for one cycle (a work-RAM refresh
+the die takes at the access after the one the board's lets take it, after three transfers
+in a row; the pause's tail of 14 is a few MCLK short there, and 17 or more breaks the run
+of four at +933,688 -- a single tail does not fit both; counting the pause in whole 68000
+clocks, tried, fits neither), agree again to +7,649,439, part for one read (-210), and
+agree again to +9,512,769.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the Z80 reads (192).
+Frames 6,981-7,200: 219 within three frames of the die's, **183 at the expected one** (75
+last round). The arms window: 99 of 100, frame 5,805 a single pixel at (0, 40), a CRAM
+write's dot at a line's start, downstream of the Z80, which parts from the die long
+before. VDPFIFOTesting: "0 fail that pass on hardware" on every machine; the intermittent
+"FIFO Wait States" now fails on the Mega Drive machines and passes on the Genesis ones,
+and the Genesis 3 fails 8 (its VSRAM tests, as the hardware does) where it failed 9.
+`run_dma_cost`'s VRAM 128 KB blanking figure 405.7 to 405.0 bytes a line. Handovers 0-3
+within 12 MCLK of the die's.
