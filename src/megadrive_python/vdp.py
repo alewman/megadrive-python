@@ -545,8 +545,14 @@ DMA_STARTUP_MCLK = 39
 #: to the edge; the probe's work-RAM transfers, 33); the board's reads come 3 MCLK
 #: before the die's, so 33-36 here, and the boot's third transfer narrows it to 33-34
 #: (docs/worklog.md, "The DMA's read into room"). The 21 and 45 this replaced were
-#: fitted while the board still read a word ahead.
-DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": 8}
+#: fitted while the board still read a word ahead. From the cartridge the first read
+#: waits two pixel clocks' lengths after the write is over, less 8 MCLK -- 8 in ordinary
+#: pixels, 12 in the slow ones around the sync: five of the boot's transfers want 8-9 in
+#: ordinary pixels (one at most 9, one more than 7) and one at +5,228,195, in the slow
+#: pixels, more than 11; a flat figure or one pixel's length plus a constant fits one
+#: side or the other (docs/worklog.md, "The first read in the slow pixels").
+DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": -8}
+DMA_FIRST_READ_DIE_PIXELS = {"ram": 0, "rom": 2}
 DMA_RESUME_DIE_MCLK = 34
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
 #: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
@@ -604,9 +610,11 @@ DMA_TAKES_REFRESH = True
 #: matches the die without one. On a blank line the die passes up a write slot 30 MCLK
 #: after its read and takes the one 46 after (the boot's third long transfer), so the
 #: delay from the board's read, 3 MCLK before the die's, is more than 32 and at most
-#: 48; any of 33-48 gives the same boot ("The DMA's read into room"). Die-derived; 0
-#: commits at the next slot.
-FIFO_COMMIT_DELAY_MCLK = 40
+#: 48 ("The DMA's read into room"); a transfer at +5,228,195, in the slow pixels around
+#: the sync, passes up the slot 40 after its first read, so more than 40: 41-48 give the
+#: same boot ("The first read in the slow pixels"). Die-derived; 0 commits at the next
+#: slot.
+FIFO_COMMIT_DELAY_MCLK = 44
 #: A 68000-to-VDP transfer reads the 68000's memory at its own pace, into the FIFO
 #: while it has room, not only at an access slot: on Nuked-MD a 1-word transfer in the
 #: active display costs 11 cycles beyond its write (the hold, the start-up and one read)
@@ -1601,7 +1609,12 @@ class VDP:
         self._read_inc = DMA_READ_MCLK
         source = "ram" if self.registers[23] & 0x40 else "rom"  # $E00000 up: work RAM
         if self._dma_die:
-            first = self._dma_tick_after(written + DMA_FIRST_READ_DIE_MCLK[source] - 1)
+            # A pixel clock's length after the write is over (slower around the sync),
+            # then master clocks.
+            start = written
+            for _ in range(DMA_FIRST_READ_DIE_PIXELS[source]):
+                start += self._pixels_after(start, 1) - self._pixels_after(start, 0)
+            first = self._dma_tick_after(start + DMA_FIRST_READ_DIE_MCLK[source] - 1)
         else:
             first = written + DMA_STARTUP_MCLK
         self.transfer_next_read = first - self._read_inc
