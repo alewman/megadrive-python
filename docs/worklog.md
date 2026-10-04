@@ -6295,3 +6295,38 @@ bus-arbiter loop's figures, by a hundredth), the arms window (100 of 100), the Z
 picture the die shows once, at 7,052), the one frame of the window not found within three
 of the die's. Handovers 0 and 1 are now -1 and -15 MCLK (exact before): they come 15.7M
 MCLK after the reset, past the judge's first difference.
+
+### The refresh half a period out
+
+The judge's difference at +3,076,143: a work-RAM write at +3,076,094 that the die holds 21
+MCLK for the work-RAM refresh and the board does not. It ends the boot's longest stretch
+without a work-RAM access, +2,007,761 to +3,075,982 (just over a PAL frame), spent in the
+CRAM readback loop: cartridge fetches, 2,432 data-port reads (most held 98-189 MCLK) and
+38 CRAM read commands ($0000, $0020), no transfers, no interrupts. The stretch begins
+right after a 64-word CRAM transfer from the cartridge, whose 68000 resume agrees on both
+machines; the board restarts its refresh 245 after the transfer's last read
+(+2,007,772) and runs its chain from there to a due time of +3,076,560. The die's hold
+puts its due time in +3,075,997-3,076,094: about half a period (450-550 MCLK) away.
+
+The die test (`scripts/run_ram_refresh.py`) reproduces every ingredient and none moves it:
+
+- **Idle** in ROM, 285,000 to 1,423,000 MCLK, NTSC and PAL: the first held read is on the
+  931-MCLK chain every time (+0, +28, +49, +7, +42 into the window).
+- **Held data-port reads** (`--vdp`, 3 to 400 CRAM reads with the display on): no restart;
+  the chain runs on through them (out to 98 periods).
+- **A 64-word CRAM transfer with the display on, then idle** (`--dma 64 --cram
+  --display-on --idle-after N`, up to 1,067,000 MCLK after it, NTSC and PAL, V28 and
+  V30): the chain restarts 238 after the last select and runs on exactly (1,146 periods
+  + 55 at the longest).
+
+So the rule holds in every case built so far, and something in the boot not yet
+reproduced resets or delays the die's refresh timer during that frame. Open.
+
+On how close the board's read timing is to the die's (Aubrey's question), three measures:
+in the boot, every in-step data-port read agrees with the die at every slot
+(`od2_read_slots.py`); against each machine's own HV counter, 91 % of the board's waiting
+reads land where the die's do (`run_slot_hv.py read`; the die itself puts 92 % on its
+commonest values); and on the read sweep cartridge run on both, line by line, 67 % of the
+reads wait exactly as long as the die's, nearly all the rest one 68000 clock longer or
+shorter in about equal numbers (1,233 and 1,163) -- the two machines' clocks meeting the
+VDP at different phases in that cartridge, which nothing lines up, rather than a rule.
