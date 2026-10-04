@@ -6259,3 +6259,39 @@ on line $1FF; with the release moved to match, every phase gives the same 5,469 
 The boot's offsets do not reach the window's edges; a die test sweeping a read's start
 across $140-$142 in single master clocks is the next step. No model change in this
 round.
+
+### The die sweep at $140/$142, and the refresh waiting for its end
+
+A die-only sweep (`scripts/run_read_window.py`): the read sweep cartridge's back-to-back
+CRAM reads, placed in the board's line by the die's /HSYNC fall (board offset 327, as the
+boot measures it), the die's wait tabulated by the read's start against a slot. Against
+the slot at H $140 (board offset 3340), with F the slot:
+
+- reads already waiting when the slot fills are let go at about F+53 (they end at
+  3393-3397 whatever their start), the board's release;
+- reads starting F+35 to F+39 wait not at all; F+43-44 wait; F+45-47 mostly not; F+48-51
+  a clock; from F+53 not at all.
+
+So a read can find the word before a pending one is let go. Against the slot at H $002
+there is no such island: the wait shrinks steadily to nothing at F+53. The boot's offsets
+(the last section) put the island at 43-47, the sweep a clock or two later, within its
+placement; the boot's reads are lined up directly, so `vdp.READ_EARLY_MCLK` = (43, 47)
+for reads filled at `READ_EARLY_SLOT_H` = $140. With it every slot agrees on every in-step
+read of the boot (`od2_read_slots.py`), and the judge agrees to +1,446,200.
+
+There the difference was the cartridge refresh again: a ROM read after a long data-port
+read, due 112 MCLK before it, held 14 on the die where the last round's rule gave 7. With
+the reads now right, the boot's 1,020 refreshes that fall due during a held data-port read
+read, by how long before the next cartridge read they fell due: up to 112, 14; 119, 7;
+from 126, nothing (none out of line). That is a refresh running by itself from 112 to 126
+and an access that starts while it runs waiting for its end, on the 68000's clock, not a
+flat half. With that (`board.CART_REFRESH_SELF_MCLK` unchanged at 112, the wait now to its
+end) the judge agrees to **+3,076,143** (from +1,446,200).
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery (but the
+bus-arbiter loop's figures, by a hundredth), the arms window (100 of 100), the Z80 reads
+(187). Frames 6,981-7,200: **199 at the expected frame** (75 before); the slip now runs
+7,053-7,073 and ends on a repeat of the die's transition frame (the board's 7,073 is the
+picture the die shows once, at 7,052), the one frame of the window not found within three
+of the die's. Handovers 0 and 1 are now -1 and -15 MCLK (exact before): they come 15.7M
+MCLK after the reset, past the judge's first difference.

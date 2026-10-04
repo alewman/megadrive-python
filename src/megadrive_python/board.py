@@ -51,11 +51,12 @@ if TYPE_CHECKING:
 #: (die-derived) in four probe loops, 670 of 670 ticks each (docs/worklog.md).
 CART_REFRESH_MCLK = 896
 CART_REFRESH_STALL = 14
-#: ... unless the bus was free long enough for it to run by itself: one that fell due at
-#: least this long before the access plus its own 14 costs it nothing, and one due from
-#: this long before costs half. Nuked-MD (die-derived): in Overdrive 2's boot, a refresh
-#: that falls due during a long held data-port read costs the next cartridge read 14 MCLK
-#: when due up to 105 before it, 7 at 112-119 and nothing from 126 (1,000 of them); and
+#: ... unless the bus was free long enough for it to run by itself, from this long after
+#: it fell due for its 14 MCLK: an access that starts while it runs waits for its end,
+#: and one after it pays nothing. Nuked-MD (die-derived): in Overdrive 2's boot, a
+#: refresh that falls due during a long held data-port read costs the next cartridge
+#: read 14 MCLK when due up to 112 before it, 7 at 119 and nothing from 126 (1,000 of
+#: them, none out of line); and
 #: on a test cartridge whose 68000 spends 70 clocks in a ``mulu`` between bursts of
 #: cartridge reads, the read after the gap is held 14 up to 112 and not at all from 126
 #: (the die's own refresh grid, placed from its held reads; docs/worklog.md, "The
@@ -399,7 +400,10 @@ class Board:
             elif address < 0x800000:
                 stretch = CART_REFRESH_STALL
                 if late >= CART_REFRESH_SELF_MCLK:
-                    stretch = CART_REFRESH_STALL // 2  # under way when the access came
+                    # Under way when the access came: it waits for the end, on the
+                    # 68000's clock.
+                    left = CART_REFRESH_SELF_MCLK + CART_REFRESH_STALL - late
+                    stretch = -(-left // M68K_DIVIDER) * M68K_DIVIDER
             elif address >> 16 == 0xA0 and late >= Z80_REFRESH_LATE:
                 stretch = Z80_REFRESH_STALL
             if stretch:
