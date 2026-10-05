@@ -6422,3 +6422,48 @@ to +9,512,769 but for the one-cycle refresh at +5,233,109.
 
 Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's
 output, the arms window (99 of 100) and frames 6,981-7,200 (183 at the expected frame).
+
+### The refresh timer's pause, edge by edge
+
+The judge's step at +9,512,769: the board's work-RAM write took a refresh the die's did not.
+Matching every die refresh to the board's nearest (`scripts/od2_refresh_events.py`, and a
+scratchpad `offsteps.py` that prints where the offset between the two chains changes)
+showed the board's chain moving against the die's once a frame from +2.0M on, at each
+frame's transfers: +7, -3, -47, -61, -21, -35, -34, -43 MCLK, until at +9.51M a refresh
+fell on the wrong side of a write. The transfers themselves agree (first read, last read
+and the 68000's resume). Only the length of the timer's pause did not.
+
+The die says exactly how long. Its refresh trace gives the count the counter reached at
+each reset, so a refresh-to-refresh interval less 7 per clock counted is the time it stood
+still. Its /BGACK (traced already, `NMD_TRACE_MASK` bit 2, signal 3) is the counter's own
+gate: vdp.c's `dff23`-`dff29` count while `w64` = not `t3`, and `o_bgack` is `w64` too.
+Over the boot's 25 transfers to +9.5M /BGACK falls 40 MCLK after the /AS of the write that
+starts the transfer, every time (41 once), and rises 15-16 after the board's last read;
+the board paused from 49 to 14, counting master clocks. Three changes, each needed:
+
+- **Whole clocks.** The pause is the 68000 clock edges between its ends, not the master
+  clocks (`board.ram_refresh_paused`). Without it the judge stops at +9,512,797.
+- **A self-run under way goes ahead.** At +928,786 the die's counter had reached its
+  self-run count as /BGACK fell; the refresh ran 30 MCLK into the transfer and the counter
+  started again from it. The board held that refresh until after the transfer and lost
+  the run of four transfers there. Now a self-run that began up to 14 MCLK into the pause
+  runs, and only the pause in the 112 clocks after it delays the next
+  (`RAM_REFRESH_COUNT_MCLK`). Without it the judge stops at +933,737.
+- **The ends, on the edges.** Which edges the die skips depends on where /BGACK falls
+  against the clock, so the ends were fitted over every edge phase: 147 pairs, start 34-40
+  by tail 9-15, three margins. Start 35 and tail 9 alone keep the board's refreshes within
+  one 68000 clock of the die's from the reset to +9.54M (self/self offsets 7, 0, -7 only,
+  where they had wandered to -61). Both are 5 short of the /BGACK edges on the trace's
+  clock, consistent with the board's anchor putting its edges a master clock from the
+  die's.
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+12,712,161**, and the
+one-cycle refresh at +5,233,109 is gone. The refresh tool to +9.51M: die 9,969, board
+9,968, kinds differing at 3 (all before +0.72M).
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures. The arms window:
+**100 of 100** (99). VDPFIFOTesting: 0 fail that pass on hardware on every machine; the
+intermittent "FIFO Wait States" passes on the Mega Drive machines again. Frames
+6,981-7,200: all 220 within three frames of the die's (219), but **75 at the expected one**
+(183): the step at 7,053 is the same, and where the board came back at 7,090 it now parts
+again three frames later -- far downstream of where the Z80 parts from the die.

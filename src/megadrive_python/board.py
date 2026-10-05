@@ -30,6 +30,7 @@ from .arbiter import (
     BUSACK_PROPAGATION_MCLK,
     CUTOFF_MCLK,
     IDLE_GRANT_MCLK,
+    M68K_EDGE_PHASE,
     z80_access_wait,
 )
 from .cartridge import Cartridge
@@ -91,6 +92,9 @@ RAM_REFRESH_AFTER_MCLK = 819
 RAM_REFRESH_TRIGGER_MCLK = 98
 RAM_REFRESH_SELF_MCLK = 112
 RAM_REFRESH_HIDDEN = True
+#: The clocks the timer counts from a refresh to the next falling due (vdp.c's
+#: ``dff23``-``dff29`` reaching 112), in master clocks.
+RAM_REFRESH_COUNT_MCLK = 112 * 7
 #: Every 68000 access to the Z80's space costs one extra 68000 clock. Nothing hardware
 #: covers the question, so the tier rule lets a die-derived model answer it: Nuked-MD
 #: holds all 68 of the FM probe's $A0xxxx accesses 7 MCLK where the board held none
@@ -143,16 +147,22 @@ def ram_refresh(due: int, t: int) -> tuple[int, int]:
     return wait, began + RAM_REFRESH_AFTER_MCLK
 
 
-def ram_refresh_paused(due: int, start: int, end: int) -> int:
+def ram_refresh_paused(due: int, start: int, end: int, began_by: int) -> int:
     """The work-RAM refresh due time after the VDP held the bus from ``start`` to ``end``
     for a transfer: the refresh timer stops meanwhile and goes on from where it was
-    (:data:`RAM_REFRESH_PAUSES`). The refreshes that ran by themselves before ``start``
-    are counted first."""
-    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
-    if start >= due + ran:
+    (:data:`RAM_REFRESH_PAUSES`). It counts 68000 clocks, so the pause is the clock
+    edges in [``start``, ``end``). A self-run that began by ``began_by`` goes ahead
+    under the pause, and the timer counts its 112 clocks to the next from after it, so
+    only the pause from then on holds that one up."""
+    if began_by >= due + RAM_REFRESH_SELF_MCLK:
         period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
-        due += ((start - due - ran) // period + 1) * period
-    return due + max(0, end - start)
+        due += ((began_by - due - RAM_REFRESH_SELF_MCLK) // period + 1) * period
+        start = max(start, due - RAM_REFRESH_COUNT_MCLK)
+
+    def edges_before(t: int) -> int:
+        return -(-(t - M68K_EDGE_PHASE) // M68K_DIVIDER)
+
+    return due + M68K_DIVIDER * max(0, edges_before(end) - edges_before(start))
 
 
 #: A held 68000 bus cycle lasts whole 68000 clocks: /DTACK is sampled on a clock edge,
