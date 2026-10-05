@@ -159,6 +159,9 @@ class System:
         #: The instruction the Z80 is part way through while its bus is held: its start
         #: and the clock from which its remaining accesses wait (:meth:`_z80_resume`).
         self._z80_partial: tuple[int, int] | None = None
+        #: Clocks of this instruction's holds already added to the 68000's clock (for
+        #: the E clock at an interrupt acknowledge, :meth:`_acknowledge`).
+        self._stall_credited = 0
         #: The reset button has been pressed and the 68000 not yet reset
         #: (:meth:`press_reset`), and the clock it was pressed at.
         self.reset_pressed = False
@@ -177,6 +180,14 @@ class System:
         answers; every level is autovectored (MAME's ``cpu_space_map`` as a
         detector; the Manual, PDF page 19, gives the levels)."""
         self.vdp.acknowledge(level)
+        # The acknowledge waits for the E clock, which the core reads from its clock
+        # count: bring the holds of this instruction so far into it (the PC push
+        # before the acknowledge may have been held). Die-derived: Nuked-MD's
+        # acknowledge after a push held by a refresh (docs/worklog.md, "The E clock
+        # after a held push").
+        credit = self.board.stall // M68K_DIVIDER - self._stall_credited
+        self.m68k.clock += credit
+        self._stall_credited += credit
         return AUTOVECTOR
 
     def _z80_reset_line(self, held: bool) -> None:
@@ -494,6 +505,7 @@ class System:
         start = self.mclk
         board.step_start = start
         board.stall = 0
+        self._stall_credited = 0
         board.z80_space_stall = 0
         if board.m68k_accesses:
             board.m68k_accesses.clear()
@@ -503,7 +515,8 @@ class System:
         stall = board.stall
         elapsed = clocks * M68K_DIVIDER + stall
         if stall:
-            cpu.clock += stall // M68K_DIVIDER  # keeps the E-clock phase in step
+            # Keeps the E-clock phase in step (what an acknowledge already took aside).
+            cpu.clock += stall // M68K_DIVIDER - self._stall_credited
         self.mclk = start + elapsed
         self.m68k_instructions += 1
         board.m68k_step_end = self.mclk

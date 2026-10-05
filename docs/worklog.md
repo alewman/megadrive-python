@@ -6490,3 +6490,24 @@ output, frames 6,981-7,200 (all 220 within three frames, 75 at the expected one)
 arms window: 98 of 100 (100): frames 5,769 and 5,800 each one pixel off, the kind of
 single dot frame 5,805 had two rounds ago -- far past the judge's reach and where the
 Z80 parts from the die.
+
+### The E clock after a held push
+
+The judge's step at +14,245,189: the boot's level-6 interrupt entered 21 MCLK late on the
+board. On the die the PC push at +14,245,042 is held 21 MCLK (a work-RAM refresh), then
+the acknowledge cycle at $FFFFFC is held 42 for the E clock, and the SR push follows at
++14,245,189; the board's SR push came at +14,245,210. The core times an autovectored
+acknowledge from its own clock count (`M68000CPU.clock` plus the instruction's clocks so
+far, mod 10), and the board, which holds bus cycles out of band (`board.stall`), adds
+those clocks to `clock` only when the instruction ends -- so an acknowledge after a held
+push saw the E clock 3 clocks behind. The boot's one earlier interrupt entry (+390,635)
+had no hold before it and agreed. `System._acknowledge` now credits the instruction's
+holds so far before the core reads the clock (and the step adds only the rest).
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+15,263,346**.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's
+output. Frames 6,981-7,200: **182 at the expected frame** (75); 219 within three frames
+(220): frame 7,090, where the board comes back in step after the step at 7,053, now
+changes part way down, matching none. The arms window: 99 of 100 (98), frame 5,806 a
+single pixel.
