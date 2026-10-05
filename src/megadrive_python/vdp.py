@@ -546,12 +546,13 @@ DMA_STARTUP_MCLK = 39
 #: before the die's, so 33-36 here, and the boot's third transfer narrows it to 33-34
 #: (docs/worklog.md, "The DMA's read into room"). The 21 and 45 this replaced were
 #: fitted while the board still read a word ahead. From the cartridge the first read
-#: waits two pixel clocks' lengths after the write is over, less 8 MCLK -- 8 in ordinary
-#: pixels, 12 in the slow ones around the sync: five of the boot's transfers want 8-9 in
-#: ordinary pixels (one at most 9, one more than 7) and one at +5,228,195, in the slow
-#: pixels, more than 11; a flat figure or one pixel's length plus a constant fits one
-#: side or the other (docs/worklog.md, "The first read in the slow pixels").
-DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": -8}
+#: waits two pixel clocks' lengths after the write is over, less 7 MCLK -- 9 in ordinary
+#: pixels, 13 in the slow ones around the sync: the boot's transfers want exactly 9 in
+#: ordinary pixels (one at most 9; one more than 7; and at +12,710,922 one that passes up
+#: the tick 8 after) and one at +5,228,195, in the slow pixels, more than 11; a flat
+#: figure or one pixel's length plus a constant fits one side or the other
+#: (docs/worklog.md, "The first read in the slow pixels", "The tick 8 after").
+DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": -7}
 DMA_FIRST_READ_DIE_PIXELS = {"ram": 0, "rom": 2}
 DMA_RESUME_DIE_MCLK = 34
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks

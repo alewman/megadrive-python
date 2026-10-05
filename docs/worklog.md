@@ -6467,3 +6467,26 @@ intermittent "FIFO Wait States" passes on the Mega Drive machines again. Frames
 6,981-7,200: all 220 within three frames of the die's (219), but **75 at the expected one**
 (183): the step at 7,053 is the same, and where the board came back at 7,090 it now parts
 again three frames later -- far downstream of where the Z80 parts from the die.
+
+### The tick 8 after
+
+The judge's step at +12,712,161: the boot's 68000 resumed 14 MCLK early after the
+line-227 transfer from the cartridge to CRAM (64 words) that every frame makes, all of
+whose reads came 16 MCLK (one tick) early on the board. The same transfer had been exact
+in the frames before. Placed in its line (a scratchpad listing of each transfer's start,
+the board's earliest first-read point and the tick it reads at), the trigger write began
+at 167 MCLK into the line; at 165 and 166 in earlier frames the earliest point fell 1-2
+MCLK short of the tick at 224, and this time on it. The board read there; the die passed
+it up and read at the next. In the terms of "The first read in the slow pixels" this is a
+tick 8 MCLK after the write is over that the die skips -- more than 8, with at most 9
+from before: exactly 9 in ordinary pixels. So the cartridge's first read waits two pixel
+lengths less 7, not 8 (`vdp.DMA_FIRST_READ_DIE_MCLK`); in the slow pixels that is 13, still
+more than the 11 the +5,228,195 transfer wants. No other transfer of the boot moves.
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+14,245,189**.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's
+output, frames 6,981-7,200 (all 220 within three frames, 75 at the expected one). The
+arms window: 98 of 100 (100): frames 5,769 and 5,800 each one pixel off, the kind of
+single dot frame 5,805 had two rounds ago -- far past the judge's reach and where the
+Z80 parts from the die.
