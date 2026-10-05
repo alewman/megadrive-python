@@ -6511,3 +6511,29 @@ output. Frames 6,981-7,200: **182 at the expected frame** (75); 219 within three
 (220): frame 7,090, where the board comes back in step after the step at 7,053, now
 changes part way down, matching none. The arms window: 99 of 100 (98), frame 5,806 a
 single pixel.
+
+### Under the /REF pulse
+
+The judge's step at +15,263,346: the boot copies bytes into Z80 RAM in a loop (a
+cartridge read, then a write to $A0xxxx), every write held 7 MCLK on both machines, but
+at +15,263,304 the die held the write 14. The cartridge read before it, at +15,263,262,
+took a refresh on both (held 14; on the board it fell due exactly at the read's /AS).
+With the die's cartridge refresh pin traced (`NMD_TRACE_MASK` bit 2, signal 4, the
+arbiter's `ext_ref`), the /REF pulse of a refresh that stretches a cartridge access runs
+from 39 to 46 MCLK after the refresh fell due; the stretched access lasts 42 when the
+refresh fell due at its /AS, so the next access starts under the pulse. In the boot to
++15.26M that happened before thousands of cartridge accesses, never held, and once
+before a write to the Z80's space -- this one, held a clock more. After a refresh due a
+clock before /AS the pulse ends 3 MCLK before the next access, and the one such write
+in the boot is held 7. So a Z80-space access starting under the pulse waits a 68000 clock,
+as one the refresh falls on does (`board.CART_REFRESH_PULSE_END_MCLK`). One instance in
+the boot: the rule is the pin's timing, not a fit to it.
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+15,729,329**; 5 steps
+in the 16M MCLK span.
+
+Unchanged: the suites (148, CPython and PyPy), Nemesis's HV captures, the battery's
+output. The arms window: 99 of 100 (frame 5,830 a single pixel). Frames 6,981-7,200: all
+220 within three frames (219), **75 at the expected one** (182) -- the window has
+swung between 75 and 183 on four of the last five rounds, each fix far upstream of it:
+the board comes back in step after the step at 7,053, or does not, on a knife edge.

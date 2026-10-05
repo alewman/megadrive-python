@@ -74,6 +74,16 @@ CART_REFRESH_SELF_MCLK = 112
 #: one (docs/worklog.md, "The one-frame slip").
 Z80_REFRESH_STALL = 7
 Z80_REFRESH_LATE = 7
+#: A refresh that stretches a cartridge access pulses the cartridge's /REF from 39 to
+#: this long after it fell due -- past the end of the stretched access when it fell due
+#: at its /AS (42 MCLK), so the next access starts under the pulse. A cartridge access
+#: there is not held; one to the Z80's space waits a 68000 clock (as when the refresh
+#: falls on it). Die-derived: Nuked-MD's Overdrive 2 boot, the write to Z80 RAM after a
+#: cartridge read stretched at +15,263,262, held 14 where every write of the loop is
+#: held 7, under the pulse at +15,263,301-308; after a refresh due a clock before /AS
+#: the pulse has ended and the write is held 7 (docs/worklog.md, "Under the /REF
+#: pulse").
+CART_REFRESH_PULSE_END_MCLK = 46
 #: The work-RAM refresh (Kabuto: "RAM accesses get their own further slowdowns"). It
 #: falls due :data:`RAM_REFRESH_AFTER_MCLK` after the last one began. A work-RAM access
 #: starting within :data:`RAM_REFRESH_TRIGGER_MCLK` of that takes it, and waits 3
@@ -255,6 +265,8 @@ class Board:
         #: The two refreshes that slow the 68000 (``_bus_cycle``); their power-on phases
         #: are unknown, so a caller may set them (the capture harness fits them).
         self.cart_refresh_due = CART_REFRESH_MCLK
+        #: When the last stretching refresh's /REF pulse ends (:data:`CART_REFRESH_PULSE_END_MCLK`).
+        self.cart_refresh_pulse_end = 0
         #: The refresh tick a Z80 access over the 68000's bus last took (``_bank_delay``).
         self.z80_refresh_taken = -1
         self.ram_refresh_due = RAM_REFRESH_AFTER_MCLK
@@ -421,6 +433,7 @@ class Board:
                 pass  # it ran by itself while the bus was free
             elif address < 0x800000:
                 stretch = CART_REFRESH_STALL
+                self.cart_refresh_pulse_end = t - late + CART_REFRESH_PULSE_END_MCLK
                 if late >= CART_REFRESH_SELF_MCLK:
                     # Under way when the access came: it waits for the end, on the
                     # 68000's clock.
@@ -433,6 +446,12 @@ class Board:
                 t += stretch
                 if grid is not None:
                     grid[-1][1] += stretch
+        elif address >> 16 == 0xA0 and t < self.cart_refresh_pulse_end:
+            # Started under the /REF pulse of the refresh that stretched the access
+            # before.
+            self.stall += Z80_REFRESH_STALL
+            if grid is not None:
+                grid[-1][1] += Z80_REFRESH_STALL
         if address >= 0xE00000:
             wait, self.ram_refresh_due = ram_refresh(self.ram_refresh_due, t)
             if wait:
