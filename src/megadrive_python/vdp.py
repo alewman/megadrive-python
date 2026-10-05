@@ -583,11 +583,24 @@ DMA_READS_INTO_ROOM = True
 #: after a frame of CRAM readback lands where the die's does (docs/worklog.md, "The
 #: refresh timer stops for a transfer"). Die-derived; False lets the timer run on.
 RAM_REFRESH_PAUSES = True
-#: ... until this long after the transfer's last read (``t3``, which stops the counter,
-#: is cleared after the transfer ends): with 14 the boot's 68000 bus stream agrees with
-#: the die's to +5,229,301; 17 and 20 miss the refresh after its run of four transfers at
-#: +933,688, and 54-81 miss more. Die-derived.
-RAM_REFRESH_PAUSE_TAIL_MCLK = 14
+#: The pause runs from this long after the /AS of the write that starts the transfer
+#: (the die's /BGACK falls 40 after it, every time in Overdrive 2's boot) ...
+RAM_REFRESH_PAUSE_FROM_MCLK = 35
+#: ... to this long after the transfer's last read (/BGACK rises 15-16 after the
+#: board's), and covers the 68000 clock edges between. Both are 5 short of /BGACK on the
+#: trace's clock: the die's counter and /BGACK share ``w64``, and the board's anchor puts
+#: its edges a master clock from the die's. Of the 147 pairs over every edge phase (34-40
+#: by 9-15), 35 and 9 alone keep the board's refreshes within one 68000 clock of the
+#: die's from the reset to +9.54M; the boot's 68000 bus stream then agrees with the
+#: die's to +12,712,161, where 49 and 14 counted in master clocks reached +9,512,769
+#: with a refresh blip at +5,233,109 (docs/worklog.md, "The refresh timer's pause, edge
+#: by edge"). Die-derived.
+RAM_REFRESH_PAUSE_TAIL_MCLK = 9
+#: A self-run that began up to this long after the pause starts still runs: the die's
+#: counter reached 127 30 MCLK after /BGACK fell at +928,786, and the board, which
+#: held that refresh until after the transfer, lost the run of four transfers there
+#: (+933,737). 14 and 28 agree; 0 loses it. Die-derived.
+RAM_REFRESH_PAUSE_BEGAN_MCLK = 14
 #: On an active line the die's strobe comes this long after the board's external slot
 #: (49 MCLK, its select 51), so the read waits for it. Only the transfer's reads wait:
 #: the word leaves the FIFO at the slot, where the die's stalled 68000 writes end against
@@ -1647,10 +1660,13 @@ class VDP:
         if RAM_REFRESH_PAUSES:
             from .board import ram_refresh_paused  # board imports this module
 
-            # From the end of the write that started the transfer to a little after its
-            # last read.
-            end = self.mclk + RAM_REFRESH_PAUSE_TAIL_MCLK
-            board.ram_refresh_due = ram_refresh_paused(board.ram_refresh_due, written, end)
+            # While the VDP holds the bus: from just after the write that started the
+            # transfer to just after its last read.
+            start = mclk + RAM_REFRESH_PAUSE_FROM_MCLK
+            board.ram_refresh_due = ram_refresh_paused(
+                board.ram_refresh_due, start, self.mclk + RAM_REFRESH_PAUSE_TAIL_MCLK,
+                start + RAM_REFRESH_PAUSE_BEGAN_MCLK,
+            )
         return back
 
     # -- the Z80's side (byte accesses through $7F00 or its bank) ---------------------------

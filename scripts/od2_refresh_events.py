@@ -68,8 +68,12 @@ def board_refreshes(span: int, reset_mclk: int) -> tuple[list[tuple[int, str]], 
                 began.append((start, "taken" if start == t else "self"))
         return wait, next_due
 
-    def logged_paused(due: int, start: int, end: int) -> int:
-        return paused(self_runs(due, start), start, end)
+    def logged_paused(due: int, start: int, end: int, began_by: int) -> int:
+        ran_by = self_runs(due, start)
+        while began_by >= ran_by + self_mclk:  # one that began goes ahead under the pause
+            began.append((ran_by + self_mclk, "self"))
+            ran_by += period
+        return paused(due, start, end, began_by)
 
     board_module.ram_refresh = logged_refresh
     board_module.ram_refresh_paused = logged_paused
