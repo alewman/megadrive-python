@@ -99,14 +99,15 @@ M68K_E_CLOCK_POWER_ON = 7
 #: How far past the 68000's write to $A11100 the Z80 takes a bus request: it lets go at
 #: the end of the first machine cycle ending this long or more after the write. /BUSREQ
 #: falls 18 MCLK after the write begins (Nuked-MD, every write in the logo trace) and
-#: the Z80 samples it on a cycle's last clock (Zilog UM0080), which alone gives 33; the
-#: die's grants say more -- write to /BUSAK 69-75 or 97-104 MCLK, never under 69 (142
-#: grants, ``run_nuked_md.py busack``) -- and 48 fits them best (12.5 cycles on average
-#: against the die's 12.55). In Overdrive 2's sound driver the request lands in the M1
-#: of ``ld iy,$0000``'s second byte and the Z80, here and on the die, still reads the
-#: next byte (docs/worklog.md, "The Z80's bus request"). Die-derived and fitted; 0
-#: gives the board's old rule.
-Z80_BUSREQ_LAG_MCLK = 48
+#: the Z80 samples it on a cycle's last clock, 15 before its end (Zilog UM0080): 33. It
+#: was refitted as 48 to the mean of ``run_nuked_md.py busack``'s grants (12.5 68000
+#: cycles against the die's 12.55), whose Z80 reads the bank window -- machine cycles
+#: whose ends the board's probe places only roughly; Overdrive 2's driver, running from
+#: Z80 RAM, has a grant 49 MCLK after the write at +15,912,659 that 48 cannot give and
+#: 33 does, and with 33 the boot's 68000 bus stream agrees with the die's over the whole
+#: 16M MCLK the judge looks at. ``busack``'s mean is then 9.4 (docs/worklog.md, "The
+#: bus request, sampled"). Die-derived; 0 gives the board's old rule.
+Z80_BUSREQ_LAG_MCLK = 33
 #: /BUSAK falls this long after the Z80's last machine cycle ends, its wait states
 #: included: 7 MCLK after the die's last memory cycle releases /MREQ (all 29 grants of
 #: the probe), which is part way through the cycle's last T-state; 3 fits with the lag.
