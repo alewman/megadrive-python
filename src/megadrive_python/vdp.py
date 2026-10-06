@@ -583,22 +583,27 @@ DMA_STARTUP_MCLK = 39
 #: (``NMD_TRACE_MASK`` bit 3; docs/worklog.md "The DMA's reads on the die"): the reads
 #: on the line's DMA ticks (``_dma_ticks``), which give its fast pace, 2.47 cycles a
 #: word, where Kabuto measured 2.4; the first read on the first tick this long after
-#: the trigger write is over, from work RAM or from the cartridge (74 and 50-59 MCLK
-#: from the write's start on the die); and the 68000's next cycle on its first clock
+#: the trigger write is over (below); and the 68000's next cycle on its first clock
 #: edge this long after the last read, from either source. On the die that edge comes
 #: 30-33 MCLK after the read (both of the Overdrive 2 boot's long transfers, 33 and 36
 #: to the edge; the probe's work-RAM transfers, 33); the board's reads come 3 MCLK
 #: before the die's, so 33-36 here, and the boot's third transfer narrows it to 33-34
 #: (docs/worklog.md, "The DMA's read into room"). The 21 and 45 this replaced were
-#: fitted while the board still read a word ahead. From the cartridge the first read
-#: waits two pixel clocks' lengths after the write is over, less 7 MCLK -- 9 in ordinary
+#: fitted while the board still read a word ahead. The first read waits two pixel
+#: clocks' lengths after the write is over, less 7 MCLK -- 9 in ordinary
 #: pixels, 13 in the slow ones around the sync: the boot's transfers want exactly 9 in
 #: ordinary pixels (one at most 9; one more than 7; and at +12,710,922 one that passes up
 #: the tick 8 after) and one at +5,228,195, in the slow pixels, more than 11; a flat
 #: figure or one pixel's length plus a constant fits one side or the other
-#: (docs/worklog.md, "The first read in the slow pixels", "The tick 8 after").
-DMA_FIRST_READ_DIE_MCLK = {"ram": 25, "rom": -7}
-DMA_FIRST_READ_DIE_PIXELS = {"ram": 0, "rom": 2}
+#: (docs/worklog.md, "The first read in the slow pixels", "The tick 8 after"). From
+#: work RAM the same: a 16-word transfer to CRAM repeated at every phase of a line, with
+#: the display off and on, reads first 63-78 MCLK after the trigger's /AS on the die and
+#: 58-73 on the board, the die's selects 5 MCLK after the board's ticks as for every
+#: cartridge transfer of the boot; the 25 MCLK flat the work RAM had, from one probe at
+#: 74, read one tick late at the boot's first work-RAM transfer, +16,094,134
+#: (docs/worklog.md, "The first read from work RAM").
+DMA_FIRST_READ_DIE_MCLK = -7
+DMA_FIRST_READ_DIE_PIXELS = 2
 DMA_RESUME_DIE_MCLK = 34
 #: The 68000's write that starts a 68000-to-VDP transfer is itself held 3 clocks
 #: longer: on Nuked-MD every such write holds /AS 39 MCLK where an ordinary one holds 18
@@ -1696,14 +1701,13 @@ class VDP:
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
         written = mclk + WRITE_CYCLE_MCLK + DMA_TRIGGER_HOLD_MCLK  # the write is over
         self._read_inc = DMA_READ_MCLK
-        source = "ram" if self.registers[23] & 0x40 else "rom"  # $E00000 up: work RAM
         if self._dma_die:
             # A pixel clock's length after the write is over (slower around the sync),
             # then master clocks.
             start = written
-            for _ in range(DMA_FIRST_READ_DIE_PIXELS[source]):
+            for _ in range(DMA_FIRST_READ_DIE_PIXELS):
                 start += self._pixels_after(start, 1) - self._pixels_after(start, 0)
-            first = self._dma_tick_after(start + DMA_FIRST_READ_DIE_MCLK[source] - 1)
+            first = self._dma_tick_after(start + DMA_FIRST_READ_DIE_MCLK - 1)
         else:
             first = written + DMA_STARTUP_MCLK
         self.transfer_next_read = first - self._read_inc

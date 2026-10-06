@@ -6606,3 +6606,25 @@ every machine, frames 6,981-7,200 (all 220 within three frames, 75 at the expect
 one), the arms window (100 of 100). Changed: MoD's `gen_test_z80_bus` prints its "Delay
 with 6T M-cycle" counter 0000 (0001; "BUSACK delay" stays 0001) -- no hardware value is
 published for either (docs/undocumented-behavior.md, item 8).
+
+### The first read from work RAM
+
+The judge now looks past 16M: `reference/z80-reset/t.bin` (the die from the reset, every
+68000 cycle) runs to +58,793,791 after the anchor, so `--span 58700000` (7 minutes on
+PyPy). Its first step was at +16,094,512: the boot's first transfer from work RAM, 16
+words to CRAM on blank line $1DC, after which the board's 68000 resumed 14 MCLK late,
+its reads all one DMA tick late. The work RAM's first read had a flat 25 MCLK after the
+trigger write is over, from one probe at 74 MCLK from the write's /AS -- a memory
+select, which on the die comes 5 MCLK after the board's DMA tick for the same read.
+
+`scripts/run_dma_first_read.py` starts a 16-word transfer from $FF0000 to CRAM again and
+again, the delay before each one pass longer, so the trigger walks every phase: the
+die's first select comes 63-110 MCLK after the trigger's /AS, the board's first read with
+the cartridge's rule (two pixel lengths less 7 after the write is over) 58-105, the
+same 5 MCLK apart over the whole range, display off and on. One rule for both sources
+now (`vdp.DMA_FIRST_READ_DIE_MCLK` = -7, `DMA_FIRST_READ_DIE_PIXELS` = 2).
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+16,099,013** (the old
+16M window clean, as before). Unchanged: the suites (150, CPython and PyPy), Nemesis's
+HV captures, the battery's output, the arms window (100 of 100), frames 6,981-7,200 (all
+220 within three frames, 75 at the expected one).
