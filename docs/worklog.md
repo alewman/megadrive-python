@@ -6580,3 +6580,29 @@ ties of the boot go the die's way.
 Unchanged: the suites (150 with the two new checks, CPython and PyPy), Nemesis's HV
 captures, the battery's output, frames 6,981-7,200 (all 220 within three frames, 75 at
 the expected one). The arms window: **100 of 100** (99).
+
+### The bus request, sampled
+
+The judge's step at +15,912,792: the 68000 asks for the Z80's bus at +15,912,659 and
+writes Z80 RAM at +15,912,757; the die holds the write 7 MCLK (the Z80-space clock), the
+board 14 -- it had not yet let the 68000 have the bus. On the die (`NMD_TRACE_MASK` 7:
+signals and Z80 bus cycles) /BUSREQ falls at +15,912,677, the Z80's write cycle at
++15,912,686 ends at +15,912,701 and /BUSAK changes at +15,912,708: 49 MCLK from the
+write, under the 69 the `busack` probe's 142 grants never went below. The board's Z80 had
+run that instruction to +15,912,701, 42 MCLK after the request, and with
+`Z80_BUSREQ_LAG_MCLK` = 48 waited for the next instruction's first cycle end
+(+15,912,761).
+
+33 is the figure the die's /BUSREQ (18 after the write) and the Z80's last-clock
+sampling (15 before a cycle's end) give; 48 was a refit to the mean of the `busack`
+probe's grants, a Z80 reading the bank window, whose cycle ends the board's probe places
+only roughly ("The Z80's bus grant": the shape was never the die's). Back to 33: the
+boot's 68000 bus stream agrees with the die's over the whole 16M MCLK the judge looks at
+-- no step at all. `busack`'s board mean goes from 12.5 68000 cycles to 9.4 (the die's
+12.55): the bank reads' cycle ends in the probe are the open question there.
+
+Unchanged: the suites (150, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting on
+every machine, frames 6,981-7,200 (all 220 within three frames, 75 at the expected
+one), the arms window (100 of 100). Changed: MoD's `gen_test_z80_bus` prints its "Delay
+with 6T M-cycle" counter 0000 (0001; "BUSACK delay" stays 0001) -- no hardware value is
+published for either (docs/undocumented-behavior.md, item 8).
