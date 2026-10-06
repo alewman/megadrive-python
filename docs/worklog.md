@@ -6537,3 +6537,46 @@ output. The arms window: 99 of 100 (frame 5,830 a single pixel). Frames 6,981-7,
 220 within three frames (219), **75 at the expected one** (182) -- the window has
 swung between 75 and 183 on four of the last five rounds, each fix far upstream of it:
 the board comes back in step after the step at 7,053, or does not, on a knife edge.
+
+### The tie at 112
+
+The judge's step at +15,729,329: the die's read of $FFFFEE took a work-RAM refresh the
+board's took one access later. The board's refresh chain holds within ±7 MCLK of the
+die's through +15.74M, so the chain was not it; nor was the interval after a taken
+refresh, or an allowance for a late take: each fixed this step and broke +391,419.
+
+The harness now says where the take is decided (`NMD_TRACE_MASK` bit 6: at each work-RAM
+/AS the refresh counter, the count a half-MCLK step before, the VDP's H and V counters,
+how long H has held its value, the half-MCLK since the dot clock last changed, and
+`dff13`; and `dff13` setting). In the boot every access that sees 111 misses the refresh
+and every one that sees 113 takes it; at 112 two take it and two do not, and in all four
+the counter steps from 111 to 112 in the very half-MCLK the /AS falls in. `dff13` latches
+"count >= 112" on the /AS, and Nuked-MD evaluates the VDP's logic -- the counter and
+`dff13` with it -- only on the edges of the dot clock the FC1004 feeds it (`fc1004.c`
+calls `VDP_ClockDCLK2` with phi1/phi2 only when `mclk_dclk` changes). So which of the two
+it sees first is the dot clock's business.
+
+`scripts/run_refresh_tie.py` runs a loop of NOPs (and an `exg`) from work RAM, every bus
+cycle a work-RAM access, with a Z80-RAM write for an odd clock (bus cycles are an even
+number of clocks apart, so without one the count at every /AS keeps one parity and never
+meets the step), over 48 loop shapes, display on and off. Of 37,840 ties, every one is
+taken when the dot clock changed in the /AS's half-MCLK (20,797) and none when it last
+changed 1 or 2 MCLK before (17,043). Mapped back, the dot clock changes every 2 MCLK but
+in each run of long pixels runs at MCLK/5: two windows of 30 edges 3 and 2 MCLK apart,
+4 and 87 MCLK into each run (1,680 edges on an H40 line, the die's every one). Those are
+on the VDP's internal H counter, 15 MCLK behind the H the board's line follows (the HV
+counter as read): at the boot's tie at +391,391 the die's counter reads $106 5 MCLK in
+where the board is at $108 4 MCLK in.
+
+The nuked-md machine now takes a refresh due 7 MCLK after an access's /AS (the tie, in
+the board's terms) when the dot clock changes at the /AS (`board.RAM_REFRESH_TIE_MCLK`,
+`vdp.dot_clock_edge`, `DOT_CLOCK_SLOW_WINDOWS`, `DOT_CLOCK_LINE_LAG_MCLK`); the other
+machines keep the board's rule, a tie being an artifact of the die-derived model's
+evaluation order. In H32 the dot clock is not mapped; there a tie is not taken.
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+15,912,792**; all four
+ties of the boot go the die's way.
+
+Unchanged: the suites (150 with the two new checks, CPython and PyPy), Nemesis's HV
+captures, the battery's output, frames 6,981-7,200 (all 220 within three frames, 75 at
+the expected one). The arms window: **100 of 100** (99).

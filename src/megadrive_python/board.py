@@ -105,6 +105,14 @@ RAM_REFRESH_HIDDEN = True
 #: The clocks the timer counts from a refresh to the next falling due (vdp.c's
 #: ``dff23``-``dff29`` reaching 112), in master clocks.
 RAM_REFRESH_COUNT_MCLK = 112 * 7
+#: A refresh due this long after a work-RAM access's /AS is the die's tie: its counter
+#: steps to 112 in the half-MCLK the /AS falls in, and dff13, which latches "count >=
+#: 112" on the /AS, sees the step or not by the order Nuked-MD evaluates the two in --
+#: it clocks the VDP's logic only on its dot clock's edges, and the access takes the
+#: refresh exactly when one falls at the /AS (37,840 ties in scripts/run_refresh_tie.py,
+#: every one; :meth:`VDP.dot_clock_edge`). Taken by the nuked-md machine only (an
+#: artifact of the die-derived model; docs/worklog.md, "The tie at 112").
+RAM_REFRESH_TIE_MCLK = 7
 #: Every 68000 access to the Z80's space costs one extra 68000 clock. Nothing hardware
 #: covers the question, so the tier rule lets a die-derived model answer it: Nuked-MD
 #: holds all 68 of the FM probe's $A0xxxx accesses 7 MCLK where the board held none
@@ -133,12 +141,14 @@ Z80_VDP_ARBITRATED = True
 Z80_GRANT_OVERLAPS_IDLE = True
 
 
-def ram_refresh(due: int, t: int) -> tuple[int, int]:
+def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
     """The work-RAM refresh for a work-RAM access starting at ``t`` with the next
     refresh due at ``due``: the MCLK the access waits, and when the next falls due
-    (:data:`RAM_REFRESH_HIDDEN`'s rule, or the old one). The board and the harnesses
-    that model its refresh (``run_hv_captures``, ``run_nuked_md``) share it."""
-    if t < due:
+    (:data:`RAM_REFRESH_HIDDEN`'s rule, or the old one). ``tie``: the access takes a
+    refresh due one clock after its /AS (:data:`RAM_REFRESH_TIE_MCLK`). The board and
+    the harnesses that model its refresh (``run_hv_captures``, ``run_nuked_md``) share
+    it."""
+    if t < due and not tie:
         return 0, due
     if not RAM_REFRESH_HIDDEN:
         return RAM_REFRESH_STALL, t + 805
@@ -453,7 +463,9 @@ class Board:
             if grid is not None:
                 grid[-1][1] += Z80_REFRESH_STALL
         if address >= 0xE00000:
-            wait, self.ram_refresh_due = ram_refresh(self.ram_refresh_due, t)
+            due = self.ram_refresh_due
+            tie = due - t == RAM_REFRESH_TIE_MCLK and self.vdp.dot_clock_edge(t)
+            wait, self.ram_refresh_due = ram_refresh(due, t, tie)
             if wait:
                 self.stall += wait
                 if grid is not None:

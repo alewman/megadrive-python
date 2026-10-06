@@ -260,7 +260,52 @@ def _h40(short_1de: bool, long_9f: bool) -> HMode:
     return HMode("H40", 0x16C, 0x1C9, 0x14A, 0x166, 0x00B, _h40_pixels(short_1de, long_9f))
 
 
+#: The dot clock the FC1004 feeds the VDP (``mclk_dclk``) changes every 2 MCLK, but in
+#: each run of long pixels it runs at MCLK/5: two windows of 30 edges, 3 and 2 MCLK apart
+#: by turns, starting this far into the run, each spanning 73 MCLK. Measured on Nuked-MD
+#: (``scripts/run_refresh_tie.py``, whose ties map every edge of an H40 line; the runs at
+#: $1CD and $1DE give windows at 316 and 399, 482 and 565 MCLK into the line).
+DOT_CLOCK_SLOW_WINDOWS = (4, 87)
+DOT_CLOCK_SLOW_EDGES = 30
+#: Those offsets are on the VDP's internal H counter (``vdp.c`` l106), which runs this
+#: far behind the H the board's line follows (the HV counter as read, Nemesis's
+#: captures): at the Overdrive 2 boot's tie at +391,391 the die's counter reads $106 5
+#: MCLK in where the board's line is at $108 4 MCLK in. Die-derived.
+DOT_CLOCK_LINE_LAG_MCLK = 15
+
+
+def _dot_clock_edges(mode: HMode) -> frozenset[int]:
+    """The line offsets (MCLK from the line start) of the dot clock's edges."""
+    ends = mode.starts[1:] + [mode.length]
+    windows = []
+    i = 0
+    while i < len(mode.hvals):
+        if ends[i] - mode.starts[i] > 8:  # a run of long pixels
+            start = mode.starts[i]
+            windows += [start + w for w in DOT_CLOCK_SLOW_WINDOWS]
+            while i < len(mode.hvals) and ends[i] - mode.starts[i] > 8:
+                i += 1
+        else:
+            i += 1
+    edges, t = [], 0
+    for window in windows:
+        while t < window:
+            edges.append(t)
+            t += 2
+        t = window  # the windows start on the 2-MCLK grid
+        for k in range(DOT_CLOCK_SLOW_EDGES):
+            edges.append(t)
+            t += 3 if k % 2 == 0 else 2
+        t -= 3 if (DOT_CLOCK_SLOW_EDGES - 1) % 2 == 0 else 2  # back to the last edge
+        t += 2
+    while t < mode.length:
+        edges.append(t)
+        t += 2
+    return frozenset(edges)
+
+
 H40_VSYNC = _h40(True, True)
+_DOT_CLOCK_EDGES: dict[int, frozenset[int]] = {}
 H40_LONG = _h40(False, True)  # 3,450 MCLK
 H40_SHORT = _h40(True, False)  # 3,390 MCLK
 _H40_LINES = {(False, False): H40, (True, True): H40_VSYNC, (False, True): H40_LONG,
@@ -834,6 +879,21 @@ class VDP:
             or (cd5 and (dmd < 2 or dmd == 3 or self.fill_running))
             or ((self.code & 0x13) == 0 and not self.read_available)
         )
+
+    def dot_clock_edge(self, mclk: int) -> bool:
+        """Whether the dot clock changes at ``mclk`` (:data:`DOT_CLOCK_SLOW_WINDOWS`), on
+        the die-figures machine in H40; False otherwise."""
+        if not self._dma_die:
+            return False
+        self.sync(mclk)
+        mode = self.hmode
+        if mode.name != "H40":
+            return False
+        edges = _DOT_CLOCK_EDGES.get(id(mode))
+        if edges is None:
+            edges = _DOT_CLOCK_EDGES[id(mode)] = _dot_clock_edges(mode)
+        offset = mclk - self.line_start - DOT_CLOCK_LINE_LAG_MCLK
+        return (offset % mode.length if offset < 0 else offset) in edges
 
     def sync(self, mclk: int) -> None:
         """Bring the VDP to ``mclk``: slot work, then line events on the way."""

@@ -229,3 +229,39 @@ def test_the_work_ram_refresh_is_hidden_when_the_ram_is_idle():
     assert stall_at(1133, 1000) == (0, 1931)  # it ran by itself, unseen
     assert stall_at(1931 + 931 * 3, 1000) == (21, 1931 + 931 * 3 + 819)
     assert stall_at(1000, 1000, address=0xC00000) == (0, 1000)  # not the RAM
+
+
+def test_the_dot_clock_runs_slow_in_h40s_long_pixels():
+    """Nuked-MD (scripts/run_refresh_tie.py, docs/worklog.md "The tie at 112"): the dot
+    clock the VDP's logic runs on changes every 2 MCLK but in two windows of 30 edges in
+    each run of long pixels, 3 and 2 MCLK apart -- 1,680 edges on an H40 line, the
+    windows at 316, 399, 482 and 565 MCLK into it."""
+    from megadrive_python.vdp import _dot_clock_edges
+
+    edges = sorted(_dot_clock_edges(H40))
+    assert len(edges) == 1680
+    gaps = [b - a for a, b in zip(edges, edges[1:])]
+    assert gaps.count(3) == 60 and set(gaps) == {2, 3}
+    assert [a for a, b in zip(edges, edges[1:]) if b - a == 3][::15] == [316, 399, 482, 565]
+    assert len(_dot_clock_edges(H40_VSYNC)) == 1680  # the second run moved, not changed
+
+
+def test_a_refresh_due_a_clock_after_the_as_is_taken_on_a_dot_clock_edge():
+    """The die's tie: a refresh due 7 MCLK after a work-RAM access's /AS is taken by it
+    when the dot clock changes at the /AS (the nuked-md machine only)."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    for name, expected in (("nuked-md", True), ("genesis", False)):
+        board = System(MACHINES[name], Cartridge(bytes(0x10000))).board
+        board.arbiter_enabled = False
+        board.cart_refresh_due = 1 << 62
+        vdp = board.vdp
+        taken = {}
+        for edge in (True, False):
+            vdp.dot_clock_edge = lambda t, edge=edge: edge and vdp._dma_die
+            board.ram_refresh_due, board.stall = 1007, 0
+            board.m68k_access_clock = lambda: 1000
+            board._bus_cycle(0xFF0000)
+            taken[edge] = board.stall == 21
+        assert taken == {True: expected, False: False}

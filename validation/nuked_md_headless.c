@@ -46,7 +46,9 @@
  *   NMD_TRACE_MASK=<n>    bit 0: 68000/VDP bus cycles.  bit 1: Z80 bus cycles.
  *                         bit 2: the signal changes below.  bit 3: work-RAM and
  *                         cartridge selects (type 4).  bit 4: VRAM write strobes
- *                         (type 5).  bit 5: work-RAM refreshes (type 6).  Default 7.
+ *                         (type 5).  bit 5: work-RAM refreshes (type 6).  bit 6 (with
+ *                         bit 5): where a work-RAM access takes the refresh (types
+ *                         7 and 8).  Default 7.
  *   NMD_DUMP_RAM=<path>   68000 work RAM (64 KB) at the stop.
  *   NMD_DUMP_ZRAM=<path>  Z80 RAM (8 KB) at the stop.
  *   NMD_DUMP_VRAM=<path>  Nuked-MD's own vram_save() blob at the stop.
@@ -80,6 +82,16 @@
  *                 counts 68000 clocks while the VDP does not hold the bus) going back
  *                 to 0, i.e. a refresh: data the count it reached; flags bit 0 a
  *                 work-RAM access had taken it (dff13), 1 it ran by itself (dff15).
+ *                 type 7: a work-RAM access's /AS (the edge on which dff13 latches
+ *                 "count >= 112"): data the count; addr bits 0-6 the count a
+ *                 half-MCLK step before, bits 8-16 the VDP's H counter (vdp.c l106),
+ *                 bits 17-25 its V counter (l105);
+ *                 length the half-MCLK steps the H counter has held its value (the
+ *                 phase in the pixel; raw, not halved); flags bit 0 dff13 then,
+ *                 bits 1-5 the half-MCLK steps since the dot clock the FC1004 feeds
+ *                 the VDP (mclk_dclk, whose edges clock the VDP's logic, the refresh
+ *                 counter and dff13 among it) last changed (31 at most), bit 6 it.
+ *                 type 8: dff13 setting (the refresh taken): data the count.
  *   uint16 pad
  *
  * A "bus cycle" on the 68000's bus is /AS low to /AS high; on the Z80's bus it is
@@ -260,7 +272,8 @@ typedef struct {
 } nmd_event;
 #pragma pack(pop)
 
-enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4, EV_VRAM = 5, EV_REFRESH = 6 };
+enum { EV_M68K = 1, EV_Z80 = 2, EV_SIGNAL = 3, EV_MEM = 4, EV_VRAM = 5, EV_REFRESH = 6,
+       EV_RAM_AS = 7, EV_PENDING = 8 };
 
 /* Signal numbers for EV_SIGNAL records.  These are the board-level lines milestone 5
    models and has no hardware judge for: the Z80's bus handover, its reset, the
@@ -821,6 +834,39 @@ void Audio_Update(void)
                     | (ym.vdp.dff27.l2 & 1) << 4 | (ym.vdp.dff28.l2 & 1) << 5
                     | (ym.vdp.dff29.l2 & 1) << 6;
         kind |= (ym.vdp.dff13.l2 & 1) | (ym.vdp.dff15.l2 & 1) << 1;
+        if (trace_mask & 64) {
+            /* Where a work-RAM access takes the refresh: dff13 latches "count >= 112"
+             * on the access's /AS.  At each work-RAM /AS: the count then and a step
+             * before, the VDP's H counter (vdp.c l106) and how many half-MCLK it has
+             * held its value (the phase in the pixel), and dff13 then; and dff13
+             * setting. */
+            static int prev_sel, prev13, prev_h = -1, prev_dclk = -1;
+            static uint64_t h_since, dclk_since;
+            int h = ym.vdp.l106[1] & 511;
+            int dclk = ym.vdp.prescaler.mclk_dclk & 1;
+            uint64_t since;
+            if (dclk != prev_dclk) {
+                prev_dclk = dclk;
+                dclk_since = mcycles;
+            }
+            since = mcycles - dclk_since;
+            int sel = !(ym.vdp.input.i_as & 1) && (ym.vdp.io_address & 0x700000) == 0x700000;
+            int p13 = ym.vdp.dff13.l2 & 1;
+            if (h != prev_h) {
+                prev_h = h;
+                h_since = mcycles;
+            }
+            if (tracing && sel && !prev_sel)
+                emit(EV_RAM_AS, mcycles, zclk_edges,
+                     (uint32_t)(prev_count & 127) | (uint32_t)h << 8
+                         | (uint32_t)(ym.vdp.l105[1] & 511) << 17,
+                     (uint16_t)count, (uint16_t)(mcycles - h_since),
+                     (uint8_t)(p13 | (since > 31 ? 31 : since) << 1 | dclk << 6));
+            if (tracing && p13 && !prev13)
+                emit(EV_PENDING, mcycles, zclk_edges, 0, (uint16_t)count, 0, 0);
+            prev_sel = sel;
+            prev13 = p13;
+        }
         if (count == 0 && prev_count > 1) {
             if (tracing)
                 emit(EV_REFRESH, mcycles, zclk_edges, 0, (uint16_t)prev_count, 0,

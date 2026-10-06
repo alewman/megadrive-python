@@ -58,6 +58,10 @@ AS_LOW = 18
 
 EVENT = struct.Struct("<QIIHHBBH")
 EV_M68K, EV_Z80, EV_SIGNAL, EV_MEM, EV_VRAM, EV_REFRESH = 1, 2, 3, 4, 5, 6
+#: A work-RAM /AS with the refresh counter (``NMD_TRACE_MASK`` bit 6; its ``length``,
+#: halved by :func:`read_trace` like every length, is the MCLK the VDP's H counter
+#: has held its value), and the refresh taken.
+EV_RAM_AS, EV_PENDING = 7, 8
 
 #: ``validation/nuked_md_headless.c``'s signal numbers.
 SIG_BUSREQ, SIG_BUSACK, SIG_ZRESET, SIG_BGACK = 0, 1, 2, 3
