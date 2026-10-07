@@ -6721,3 +6721,30 @@ The script now gives both.
 Unchanged: the suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting, the
 arms window (100 of 100), frames 6,981-7,200 (all 220 within three frames, 75 at the
 expected one). `busack`'s board mean 9.71 (9.39).
+
+### Each access arbitrated at its own time
+
+The last round left the arbiter experiments' `pop` a little further from the die's: a
+Z80 instruction runs only once every access of it is before the 68000's clock less the
+cut-off, so the first of a `pop`'s two bank reads was settled when the second's time had
+come, the 68000 cycles in between already run without it. z80-python steps whole
+instructions, so the instruction itself cannot be split.
+
+`system.Z80_ARBITRATE_PER_ACCESS`: where the catch-up leaves an instruction for later,
+its accesses over the 68000's bus that begin before the horizon are arbitrated now, at
+their own time (`System._prearbitrate`, the instruction probed once for where they fall
+-- the probe's machine-cycle start plus a T-state, the access-timing table's place), and
+the instruction takes their recorded waits when it runs (`Board._bank_delay`, the
+arbitration itself now `Board._arbitrate`). The probe is skipped when no access past the
+opcode's own fetches comes before the horizon, so the judge's run is no slower.
+
+`run_nuked_md.py arbiter`, the board against the die: the 68000 stopped, unchanged (2.49;
+2.25); the `jmp (a0)` loop with the Z80 reading, unchanged to the count (2.86; 2.74);
+the Z80 popping, **3.17** (2.57; the die's 3.27), the first read **2.96** (2.59; 2.95),
+the second **3.37** (2.56; 3.60, and MoD's hardware "at least 4", mean 3.5).
+`run_bus_arbiter.py`'s pop: the 68000's delay 10.94 cycles a read (9.80).
+
+Unchanged: the judge (+16,143,617, 116 steps over 58.7M), the Z80s' 7,833 reads, the
+suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting. Frames
+6,981-7,200: **217 at the expected frame** (75), 219 within three frames (frame 7,055
+changes part way). The arms window: 99 of 100 (frame 5,771 a single pixel).

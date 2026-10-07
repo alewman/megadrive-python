@@ -108,6 +108,13 @@ M68K_E_CLOCK_POWER_ON = 7
 #: 16M MCLK the judge looks at. ``busack``'s mean is then 9.4 (docs/worklog.md, "The
 #: bus request, sampled"). Die-derived; 0 gives the board's old rule.
 Z80_BUSREQ_LAG_MCLK = 33
+#: A Z80 instruction whose accesses fall both before and past the 68000's clock is left
+#: for a later catch-up, but its accesses over the 68000's bus before it are arbitrated
+#: at their own time (``System._prearbitrate``): the first read of a ``pop`` from the
+#: bank window was settled only once the second's time had come, the 68000 cycles in
+#: between already run. Die-derived (``run_nuked_md.py arbiter``; docs/worklog.md,
+#: "Each access arbitrated at its own time"); False settles them all when it runs.
+Z80_ARBITRATE_PER_ACCESS = 1
 #: /BUSAK falls this long after the Z80's last machine cycle ends, its wait states
 #: included: 7 MCLK after the die's last memory cycle releases /MREQ (all 29 grants of
 #: the probe), which is part way through the cycle's last T-state; 3 fits with the lag.
@@ -258,18 +265,62 @@ class System:
                 if offsets and self.z80_mclk + offsets[-1] >= mclk and not board.z80_hold:
                     # An access of this instruction would fall past the 68000's clock,
                     # where the arbiter cannot yet see the 68000's bus: it runs at the
-                    # next catch-up, which reaches past it (``Board._bank_delay``).
+                    # next catch-up, which reaches past it (``Board._bank_delay``). Its
+                    # accesses over the 68000's bus that come before are settled now.
+                    if Z80_ARBITRATE_PER_ACCESS and board.arbiter_enabled:
+                        self._prearbitrate(mclk)
                     break
                 board.z80_access = 0
+                board.z80_bus_access = 0
                 board.step_start = self.z80_mclk
                 board.z80_stall = 0
                 hold = board.z80_hold[1] if board.z80_hold else 0
                 self.z80_mclk += z80.step() * Z80_DIVIDER + board.z80_stall + hold
                 board.z80_hold = None
+                board.z80_prearbitrated = None
                 self.z80_instructions += 1
         finally:
             self._in_z80 = False
             board.step_start = self.mclk
+
+    def _prearbitrate(self, mclk: int) -> None:
+        """The Z80's next instruction is left for a later catch-up, but its accesses
+        over the 68000's bus that begin before ``mclk`` are arbitrated now, at their own
+        time, so the 68000 cycle they hold is the one the die's is
+        (:data:`Z80_ARBITRATE_PER_ACCESS`); the instruction takes their waits when it
+        runs (``Board._bank_delay``). Where the accesses fall comes from a probe of the
+        instruction, made once."""
+        board = self.board
+        offsets = board.z80_offsets
+        if offsets is None or board.z80_hold or self._z80_partial is not None:
+            return  # an interrupt's acceptance, or a held or split instruction
+        start = self.z80_mclk
+        done = board.z80_prearbitrated
+        if done is None or done[0] != start:
+            # Nothing to settle unless an access past the opcode's own fetches comes
+            # before mclk (a prefix is fetched first), or the code runs from the
+            # 68000's side of the bus: then the probe, which runs the instruction, is
+            # spared.
+            before = sum(1 for at in offsets if start + at < mclk)
+            pc = self.z80.pc
+            fetched = 2 if board.z80_peek(pc) in (0xCB, 0xDD, 0xED, 0xFD) else 1
+            if before <= fetched and pc < 0x4000:
+                return
+            self.z80_probe()
+            bus = sorted(at for _end, at in self._probe_bus_ends)
+            done = board.z80_prearbitrated = (start, [], bus)
+        waits, bus = done[1], done[2]
+        extra = sum(wait for wait, _ in waits) * Z80_DIVIDER
+        for at in bus[len(waits):]:
+            # The probe gives the machine cycle's first T-state; the access-timing table,
+            # by which the access is placed when it runs (``Board._z80_access_time``),
+            # puts it a T-state on (75 MCLK for the read in T-state 4).
+            t = start + (at + 1) * Z80_DIVIDER + extra
+            if t >= mclk:  # as an instruction runs only with every access before mclk
+                break
+            settled = board._arbitrate(t)
+            waits.append(settled)
+            extra += settled[0] * Z80_DIVIDER
 
     def _z80_resume(self, t: int, reset: bool) -> None:
         """The 68000's write at ``t`` has given the Z80 its bus back, or released its
