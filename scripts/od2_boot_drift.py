@@ -93,8 +93,9 @@ def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss
         # The cycle starts before any refresh stretches it: stamped first.
         before, start = self.stall, self.m68k_access_clock()
         bus_cycle(self, address)
-        log.append([start, address & 0xFFFFFE, "w" if writing["flag"] else "r",
-                    self.stall - before, 0])  # fmt: skip
+        waited = getattr(self, "grant_wait", 0)  # for the Z80's grant, before /AS
+        log.append([start + waited, address & 0xFFFFFE, "w" if writing["flag"] else "r",
+                    self.stall - before - waited, 0])  # fmt: skip
 
     def wrapped(original, byte):
         def wrap(self, address, value):

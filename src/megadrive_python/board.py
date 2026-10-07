@@ -144,6 +144,14 @@ Z80_VDP_ARBITRATED = True
 #: (Nuked-MD's 68000 trace from its frame-5,750 save; docs/worklog.md "The ninja's arm
 #: colours"); MoD's ``jmp (a0)`` loop, always on the bus, costs the same either way.
 Z80_GRANT_OVERLAPS_IDLE = True
+#: The Z80 is brought up to each 68000 bus cycle before it starts, so a bank access
+#: the Z80 makes part way through a 68000 instruction holds that instruction's next bus
+#: cycle, as on the die, rather than being owed to the next instruction. Overdrive 2's
+#: boot, +16,099,290: the die's arbiter takes the 68000's bus for 49 MCLK and its next
+#: cycle, in the same instruction, waits 70 MCLK; the board charged the 70 one instruction
+#: later (docs/worklog.md, "The Z80's grant inside an instruction"). Die-derived; False
+#: owes every such hold to the next instruction.
+Z80_CATCH_UP_EACH_CYCLE = 1
 
 
 def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
@@ -304,6 +312,9 @@ class Board:
         #: inside has already been executed -- ``System.step``).
         self.z80_stall = 0
         self.m68k_pending_stall = 0
+        #: How long the 68000's last bus cycle waited for the Z80 to give the bus back
+        #: before it began (:data:`Z80_CATCH_UP_EACH_CYCLE`).
+        self.grant_wait = 0
         #: The master clock the 68000's last instruction ended at (``System.step``).
         self.m68k_step_end = 0
         #: Totals for ``scripts/run_bus_arbiter.py``: bank accesses and the cycles they
@@ -440,8 +451,24 @@ class Board:
         """
         t = self.m68k_access_clock()
         grid = self.m68k_accesses if self.arbiter_enabled else None
+        self.grant_wait = 0
         if grid is not None:
             grid.append([t, AS_LOW_MCLK])
+            if Z80_CATCH_UP_EACH_CYCLE and self.z80_running:
+                # The Z80's accesses that win the bus before this cycle, and what they
+                # hold it for: the arbiter moves this cycle back in the grid as it moves
+                # any 68000 cycle past a grant, so a second Z80 access waits behind it.
+                # One asked for within the cut-off of this cycle's start loses to it and
+                # is settled at the next cycle, this one then in the grid.
+                self.catch_up_z80(t - CUTOFF_MCLK)
+                owed = self.m68k_pending_stall
+                if owed:
+                    self.m68k_pending_stall = 0
+                    self.stall += owed
+                    t += owed
+                # The 68000 drives /AS only once it has the bus back: the cycle begins
+                # after this wait rather than being held by it (for logs that stamp it).
+                self.grant_wait = owed
         if t >= self.cart_refresh_due:
             late = t - self.cart_refresh_due
             self.cart_refresh_due += (
