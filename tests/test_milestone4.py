@@ -164,6 +164,21 @@ def test_fm_is_held_by_the_z80s_reset_line() -> None:
     assert chip.writes == 1
 
 
+def test_an_ic_write_restarts_the_slot_counter_only_7_to_27_mclk_into_a_slot() -> None:
+    """Nuked-MD (scripts/run_fm_ic.py, docs/worklog.md "The FM's restart, swept"): an
+    /IC driven by a write to $A11200 whose bus cycle begins 7-27 MCLK into the FM's slot
+    restarts the slot counter at 0; at 0-6 and 28-41 it only pauses it, the count going
+    on."""
+    from megadrive_python.ym2612 import IC_WRITE_SLOT_LAG
+
+    for position in range(42):
+        chip = YM2612(FM_DISCRETE)
+        chip.mclk, chip.cycles = 4200, 10
+        chip.reset_line(True, 4200 + position, IC_WRITE_SLOT_LAG)
+        restarted = chip.cycles == 0
+        assert restarted == (7 <= position < 28), position
+
+
 def test_audio_path_mixes_and_resamples() -> None:
     path = AudioPath(MACHINES["genesis"], sample_rate=44_100)
     fm = [(100, -100)] * 5000

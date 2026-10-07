@@ -6628,3 +6628,53 @@ The judge: the boot's 68000 bus stream agrees with the die's to **+16,099,013** 
 16M window clean, as before). Unchanged: the suites (150, CPython and PyPy), Nemesis's
 HV captures, the battery's output, the arms window (100 of 100), frames 6,981-7,200 (all
 220 within three frames, 75 at the expected one).
+
+### The timer flag on the die
+
+The judge's step at +16,099,013 was the Z80's: the board's Z80, in step with the die's
+read for read and MCLK for MCLK from the driver's start (+15.73M), left its Timer A
+wait one poll (255 MCLK) early at read 190 (+15,740,246), went another way, and at
++16,099,031 read the 68000's bus where the die's did not -- 70 MCLK the board charged
+its 68000. The board's status showed the flag where the die's did not yet.
+
+`scripts/run_fm_timer.py` takes the Z80's bus and, over and over, sets Timer A to $3FF
+(or `--timer`), loads it ($27 = $15), polls the status, resets the flag with $27 again
+and polls again, a delay growing each pass so the writes walk the FM's sample; and a
+scratchpad comparison took the exact times on both (the die's `NMD_FMSIG` latch, the
+board's flag), each against its own FM slot. The load raises the flag in the same slot
+and MCLK on both, at every slot but one: a load written in slot 1 rises a whole sample
+later on the die. That is the die's register write taking effect later than the board's
+(the YM3438 core's write path is not the ASIC's): with $27's timer bits two cycles later
+on the die-figures machine (`ym2612.TIMER_CONTROL_DELAY_CYCLES`) all 325 loads match,
+where nine came a sample early; the resets now show 133-147 MCLK after the write against
+the die's 126-196 (they were 70-147). Timer A at $3FE, Overdrive 2's, matches the same.
+
+None of it moved Overdrive 2's read 190: the timer was right, the FM's sample clock was
+not -- see the next section.
+
+### The FM's restart, swept
+
+Against the die's slot-23 markers the board's FM is in step all through the console
+reset and five slots (209 MCLK) ahead after the boot's last, short /IC pulse
+(+14,519,124-726, a write to $A11200 each way): the board restarted its slot counter
+where the die's only paused.
+
+`scripts/run_fm_ic.py` asserts /IC by a write to $A11200, holds it 0.2, 0.6, 2.3 or 8.8k
+MCLK, releases it and lets the FM settle, the walk putting the assertion at every phase;
+the FM's phase is taken before and after, on the die from its markers, on the board from
+its slot counter. The answer does not depend on the pulse's length. By where the write's
+bus cycle begins in the FM's slot: at 0-6 MCLK a pause (the sample shifts 84), 7-27 a
+restart (slot 0 125 MCLK after the write), 28-41 a pause (70 and 77). The board had the
+restart one FM clock late, 14-34: its sampling lag (`IC_SLOT_LAG` = 3) is the console
+button's, and a write's is 0 (`ym2612.IC_WRITE_SLOT_LAG`, the pause's look-ahead taken
+from the same sampling point). Every cell of the sweep now agrees.
+
+Overdrive 2: the board's FM is in step after the pulse, and the two Z80s agree for
+**6,968 reads** (190 before), to +16,141,646. The judge's first step is +16,099,363: the
+die's arbiter takes the 68000's bus for a Z80 access to it (/BGACK low 49 MCLK), and the
+board charges the same 70 MCLK one instruction later (its rule of charging the Z80's bank
+accesses at the 68000's next step) -- the streams are back in step at +16,099,461.
+
+Unchanged: the suites (151 with the new check, CPython and PyPy), Nemesis's HV captures,
+the battery's output, the arms window (100 of 100). Frames 6,981-7,200: **110 at the
+expected frame** (75), 218 within three frames (frames 7,054 and 7,091 change part way).
