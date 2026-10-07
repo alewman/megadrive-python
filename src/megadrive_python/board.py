@@ -275,6 +275,11 @@ class Board:
         #: them it has made so far.
         self.z80_offsets: tuple[int, ...] | None = None
         self.z80_access = 0
+        #: The Z80 instruction's accesses over the 68000's bus so far, and those settled
+        #: before it ran: (its start, [(the Z80's wait, the 68000's) for each], their offsets in
+        #: T-states) (``system.Z80_ARBITRATE_PER_ACCESS``).
+        self.z80_bus_access = 0
+        self.z80_prearbitrated: tuple[int, list[tuple[int, int]], list[int]] | None = None
         #: Master clocks the 68000 has been held during the current step (stalls).
         self.stall = 0
         #: How much of ``stall`` is the Z80-space hold (:data:`Z80_SPACE_STALL`), for
@@ -546,7 +551,24 @@ class Board:
         taken to want the bus again at once, the usual gap after its last cycle (or
         at the cut-off, if the request found it idle), and waits from there.
         """
-        t = self._z80_access_time()
+        index = self.z80_bus_access
+        self.z80_bus_access += 1
+        done = self.z80_prearbitrated
+        if done is not None and done[0] == self.step_start and index < len(done[1]):
+            # Settled before the instruction ran, at its own time (``System``'s
+            # ``_prearbitrate``): only the Z80's wait remains to be taken.
+            wait, m68k_cycles = done[1][index]
+        else:
+            wait, m68k_cycles = self._arbitrate(self._z80_access_time())
+        self.z80_stall += wait * Z80_DIVIDER
+        self.bank_accesses += 1
+        self.bank_z80_cycles += wait
+        self.bank_m68k_cycles += m68k_cycles
+
+    def _arbitrate(self, t: int) -> tuple[int, int]:
+        """A Z80 access over the 68000's bus at ``t``: the 68000's share charged (owed,
+        and its later cycles in the grid moved past the grant), the refresh it takes;
+        returns the Z80's wait states and the 68000's, in their own clocks."""
         # The cartridge refresh grid (``_bus_cycle``): the last tick due by the end of
         # the Z80's grant window, owed if no 68000 cycle since took it and the Z80 has
         # not already.
@@ -582,11 +604,8 @@ class Board:
             for cycle in self.m68k_accesses:
                 if cycle[0] > t + CUTOFF_MCLK:
                     cycle[0] += m68k_cycles * M68K_DIVIDER
-        self.z80_stall += wait * Z80_DIVIDER
         self.m68k_pending_stall += m68k_cycles * M68K_DIVIDER
-        self.bank_accesses += 1
-        self.bank_z80_cycles += wait
-        self.bank_m68k_cycles += m68k_cycles
+        return wait, m68k_cycles
 
     # -- the sound chips -----------------------------------------------------
 
