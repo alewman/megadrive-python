@@ -38,9 +38,9 @@ from m68000_python import AUTOVECTOR, M68000CPU
 from z80_python import Z80CPU
 from z80_python.timing import instruction_timing
 
-from .arbiter import BUSACK_PROPAGATION_MCLK, busack_grant, z80_access_wait
+from .arbiter import BUSACK_PROPAGATION_MCLK, CUTOFF_MCLK, busack_grant, z80_access_wait
 from .audio import AudioPath
-from .board import CART_REFRESH_MCLK, Board
+from .board import CART_REFRESH_MCLK, Z80_CATCH_UP_EACH_CYCLE, Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
 
@@ -521,7 +521,10 @@ class System:
         self.mclk = start + elapsed
         self.m68k_instructions += 1
         board.m68k_step_end = self.mclk
-        self.catch_up_z80(self.mclk)
+        # Not into the arbiter's cut-off before the 68000's next cycle, which may win
+        # the bus from a Z80 access asked for there (``board.Z80_CATCH_UP_EACH_CYCLE``).
+        lead = CUTOFF_MCLK if Z80_CATCH_UP_EACH_CYCLE and board.arbiter_enabled else 0
+        self.catch_up_z80(self.mclk - lead)
         return elapsed
 
     def run_frame(self) -> None:

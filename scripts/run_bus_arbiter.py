@@ -64,6 +64,9 @@ Z80_READ = bytes.fromhex("2100807ec30300")
 #: ``ld sp,$8002`` / ``pop hl`` / ``jp $0003``: two bank reads in one machine-cycle
 #: pair, which is the case MoD measured on the sound drivers.
 Z80_POP = bytes.fromhex("310280e1c30300")
+#: ``jr $``: a Z80 that never leaves its own RAM, so the 68000 pays only the refreshes
+#: (and the Z80-space clock it never uses here).
+Z80_IDLE = bytes.fromhex("18fe")
 
 
 def _rom(z80_program: bytes, m68k_loop: bytes) -> bytes:
@@ -127,12 +130,17 @@ def report(name: str, log: list[tuple[int, int]], expected: str) -> None:
     print(f"  hardware        : {expected}")
 
 
-def cycles_per_line(cartridge: str | None, machine: str, frames: int) -> tuple[float, str]:
+def cycles_per_line(cartridge: str | None, machine: str, frames: int,
+                    z80: bytes = Z80_READ) -> tuple[float, str]:  # fmt: skip
     """The 68000 clocks a raster line leaves for instructions, after every stall the
     board charges: 3,420 / 7 master clocks a line less the stalls (Kabuto's "roughly
-    480 cycles per raster line instead of the theoretical 488+4/7")."""
+    480 cycles per raster line instead of the theoretical 488+4/7"). A step's stalls
+    are its own (``board.stall``) and what it was owed for the Z80's bank accesses
+    in the last one's wake, which it begins by paying (``m68k_pending_stall``); the
+    owed part was once counted as its change from step to step, which sums to
+    nothing (docs/worklog.md, "The Z80's grant inside an instruction")."""
     if cartridge is None:
-        image, name = _rom(Z80_READ, M68K_SPIN), "the jmp (a0) harness"
+        image, name = _rom(z80, M68K_SPIN), "the jmp (a0) harness"
     else:
         image, name = load_image(cartridge), Path(cartridge).stem
     system = System(MACHINES[machine], Cartridge.from_image(image))
@@ -144,9 +152,9 @@ def cycles_per_line(cartridge: str | None, machine: str, frames: int) -> tuple[f
             pad.pressed = START
         lines = system.vdp.frame
         while system.vdp.frame == lines:
-            before = system.board.m68k_pending_stall
+            owed = system.board.m68k_pending_stall
             system.step()
-            stalled += system.board.stall + system.board.m68k_pending_stall - before
+            stalled += system.board.stall + owed
     lines_run = frames * system.machine.lines_per_frame
     per_line = (MCLK_PER_LINE - stalled / lines_run) / M68K_DIVIDER
     return per_line, name
@@ -176,11 +184,17 @@ def main() -> int:
         'MoD: "the second read from the POP seems to always have at least 4 wait '
         'states ... The average across 10 reads was 3.5 cycles"',
     )
-    per_line, name = cycles_per_line(args.cartridge, args.machine, args.frames)
-    print(f"the 68000's rate on {name} ({args.frames} frames): {per_line:.1f} clocks a "
-          f"raster line for instructions, of 488.6")  # fmt: skip
+    for z80, what in ((Z80_IDLE, "the Z80 in its own RAM"),
+                      (Z80_READ, "the Z80 reading the bank window")):  # fmt: skip
+        per_line, name = cycles_per_line(args.cartridge, args.machine, args.frames, z80)
+        if args.cartridge:
+            what = "the cartridge's own Z80 program"
+        print(f"the 68000's rate on {name}, {what} ({args.frames} frames): {per_line:.1f} "
+              f"clocks a raster line for instructions, of 488.6")  # fmt: skip
+        if args.cartridge:
+            break
     print('  hardware        : Kabuto, "roughly 480 cycles per raster line instead of '
-          'the theoretical 488+4/7 ones"')  # fmt: skip
+          'the theoretical 488+4/7 ones" (the refreshes; the Z80 off the bus)')  # fmt: skip
     print(f"{sys.implementation.name} {sys.version.split()[0]}")
     return 0
 

@@ -6678,3 +6678,46 @@ accesses at the 68000's next step) -- the streams are back in step at +16,099,46
 Unchanged: the suites (151 with the new check, CPython and PyPy), Nemesis's HV captures,
 the battery's output, the arms window (100 of 100). Frames 6,981-7,200: **110 at the
 expected frame** (75), 218 within three frames (frames 7,054 and 7,091 change part way).
+
+### The Z80's grant inside an instruction
+
+The judge's step at +16,099,363: the die's Z80 asks for the 68000's bus at +16,099,241
+(a read of the VDP's HV counter through $7F08); the 68000's cycle at +16,099,251 starts
+within the arbiter's cut-off and goes first; /BGACK is low from +16,099,290 to 339; the
+68000's next cycle, in the same instruction, waits 70 MCLK. The board ran the Z80 only
+after each 68000 instruction and owed the 70 to the next instruction.
+
+`board.Z80_CATCH_UP_EACH_CYCLE`: before each 68000 bus cycle at t the cycle goes into the
+arbiter's grid and the Z80 is brought up to t less the cut-off (21 MCLK), so a Z80
+access asked for before then wins the bus and moves this cycle back as the arbiter moves
+any 68000 cycle past a grant (a second Z80 access then waits behind it), and one asked
+for within the cut-off loses to this cycle and is settled at the next. The end-of-step
+catch-up stops at the cut-off too (+16,123,466: the die's 68000 cycle 12 MCLK after the
+Z80's request goes first). The 68000 drives /AS only once it has the bus back, so the
+judge stamps such a cycle at its new start (`board.grant_wait`).
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+16,143,617**; 116
+steps over the 58.7M MCLK window (187). The two Z80s agree for **7,833 reads** (6,968),
+to +16,194,026.
+
+The cost, on `run_nuked_md.py arbiter`'s die figures: the 68000 stopped, unchanged
+(2.49, the die's 2.25); the `jmp (a0)` loop with the Z80 reading, mean unchanged (2.86,
+the die's 2.74) but 2/3/4 waits 27/63/7 % against the die's 38/49/12 (39/40/18 before);
+the pop's first read 2.59 (2.82; the die's 2.95), its second 2.56 (2.55; 3.60). The
+reason: a Z80 instruction still runs only once its last access is past the cut-off, so
+an early bank access in an instruction of several (the pop's first read) is still
+settled late. Arbitrating each access by the access-timing table's offsets before the
+instruction runs is what remains.
+
+**And a correction.** `run_bus_arbiter.py`'s 68000 rate summed each step's
+`stall + owed after - owed before`, which over a run is the stalls alone: the Z80's
+holds, all owed until now, were never counted, and the 481.0 "with every stall the
+board charges" quoted against Kabuto's "roughly 480" (docs/timing.md, validation.md)
+was the refreshes alone. Counting each step's own stalls and the owed it begins with:
+481.0 with the Z80 in its own RAM -- the comparison Kabuto's figure supports -- and
+357.8 with it reading the bank window, the same before this change (360.5) and after.
+The script now gives both.
+
+Unchanged: the suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting, the
+arms window (100 of 100), frames 6,981-7,200 (all 220 within three frames, 75 at the
+expected one). `busack`'s board mean 9.71 (9.39).
