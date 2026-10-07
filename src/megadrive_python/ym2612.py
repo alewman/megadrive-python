@@ -181,6 +181,14 @@ EG_ATTACK, EG_DECAY, EG_SUSTAIN, EG_RELEASE = 0, 1, 2, 3
 
 #: Master clocks per internal cycle, and internal cycles per output sample.
 MCLK_PER_CYCLE = 42
+#: On the die-figures machine register $27's timer bits (load, enable, reset) take
+#: effect at the start of the cycle this many after the one that takes the write on the
+#: board: Timer A loaded in every slot of the sample, the flag rises where Nuked-MD's does
+#: in all 325 loads of ``scripts/run_fm_timer.py``'s cartridge (a load in slot 1 a whole
+#: sample later), where without it nine come a sample early. Resets still show on the
+#: die 20-60 MCLK later than here (docs/worklog.md, "The timer flag on the die").
+#: Die-derived.
+TIMER_CONTROL_DELAY_CYCLES = 2
 
 #: Internal cycles the chip stands still after /IC is asserted. Nuked-MD's FM (``fm.c``
 #: ``FM_Prescaler``) stops its prescaler while ``ic_check`` holds -- /IC high now but
@@ -205,6 +213,12 @@ IC_FSM_HOLD = 3
 #: the die's slots begin 24 MCLK after this model's cycles.
 IC_PAUSE_POSITIONS = (0, 4, 5)
 IC_SLOT_LAG = 3
+#: The same for an /IC driven by a write to $A11200, from the write's bus cycle: 0. With
+#: the button's 3 a write sampled 7-13 MCLK into a slot paused the board's counter and
+#: one 28-34 restarted it, where Nuked-MD restarts for 7-27 and pauses for 0-6 and 28-41,
+#: whatever the pulse's length (``scripts/run_fm_ic.py``: 4 lengths, 0.2-8.8k MCLK, each
+#: position; docs/worklog.md, "The FM's restart, swept"). Die-derived.
+IC_WRITE_SLOT_LAG = 0
 IC_RESUME_LOOKAHEAD = 11
 IC_PAUSE_CARRY = 1
 CYCLES_PER_SAMPLE = 24
@@ -235,6 +249,10 @@ class YM2612:
         #: Master clocks of the next internal cycle, and the chip's own cycle count.
         self.mclk = 0
         self.cycles_run = 0
+        #: Cycles register $27's timer bits wait (:data:`TIMER_CONTROL_DELAY_CYCLES` on
+        #: the die-figures machine), and a write waiting: [data, cycles to go].
+        self.control_delay = 0
+        self._pending_27: list[int] | None = None
         #: /RESET is shared with the Z80 and is driven by the board; a chip made on
         #: its own (a referee comparison, a test) starts running.
         self.in_reset = False
@@ -403,7 +421,7 @@ class YM2612:
 
     # -- the board's side ---------------------------------------------------------
 
-    def reset_line(self, held: bool, mclk: int | None = None) -> None:
+    def reset_line(self, held: bool, mclk: int | None = None, lag: int = IC_SLOT_LAG) -> None:
         """The YM2612 shares /RESET with the Z80: "For as long as the Z80 is reset,
         the YM2612 cannot be used" (CMD ``gen-hw.txt`` 2.2).
 
@@ -419,8 +437,11 @@ class YM2612:
             start = self.mclk if mclk is None else max(mclk, self.mclk)
             phase = start - self.mclk  # into the cycle under way (the caller synced)
             self.reset()
-            if ((phase - IC_SLOT_LAG) // 7) % 6 in IC_PAUSE_POSITIONS:
-                ahead = (phase + IC_RESUME_LOOKAHEAD) // MCLK_PER_CYCLE + IC_PAUSE_CARRY
+            # Where /IC is sampled, on the button's terms (its lag is the one the other
+            # constants were measured with).
+            sampled = phase - lag + IC_SLOT_LAG
+            if ((sampled - IC_SLOT_LAG) // 7) % 6 in IC_PAUSE_POSITIONS:
+                ahead = (sampled + IC_RESUME_LOOKAHEAD) // MCLK_PER_CYCLE + IC_PAUSE_CARRY
                 self.cycles = (cycles + ahead) % CYCLES_PER_SAMPLE
             self.mclk, self.cycles_run, self.writes = start, cycles_run, writes
             self._ic_hold = IC_FSM_HOLD
@@ -512,6 +533,12 @@ class YM2612:
     def cycle(self) -> None:
         """One internal cycle: the whole chip, in the order the die runs it
         (``ym3438.c`` ``OPN2_Clock``, lines 1209-1341)."""
+        pending = self._pending_27
+        if pending is not None:
+            pending[1] -= 1
+            if pending[1] < 0:
+                self._pending_27 = None
+                self._timer_control(pending[0])
         if not self.enabled:
             self._quiet_cycle()
             return
@@ -742,14 +769,10 @@ class YM2612:
         elif address == 0x26:  # timer B
             self.timer_b_reg = data & 0xFF
         elif address == 0x27:  # channel 3 mode, CSM, timer control
-            self.mode_ch3 = (data & 0xC0) >> 6
-            self.mode_csm = 1 if self.mode_ch3 == 2 else 0
-            self.timer_a_load = data & 1
-            self.timer_a_enable = (data >> 2) & 1
-            self.timer_a_reset = (data >> 4) & 1
-            self.timer_b_load = (data >> 1) & 1
-            self.timer_b_enable = (data >> 3) & 1
-            self.timer_b_reset = (data >> 5) & 1
+            if self.control_delay:
+                self._pending_27 = [data, self.control_delay - 1]
+            else:
+                self._timer_control(data)
         elif address == 0x28:  # key on/off
             for i in range(4):
                 self.mode_kon_operator[i] = (data >> (4 + i)) & 1
@@ -768,6 +791,17 @@ class YM2612:
             # notes is reached (docs/undocumented-behavior.md, "The YM2612" item 3).
             self.dacdata = (self.dacdata & 0x1FE) | self.mode_test_2c[3]
             self.eg_custom_timer = 1 if not self.mode_test_2c[7] and self.mode_test_2c[6] else 0
+
+    def _timer_control(self, data: int) -> None:
+        """Register $27: channel 3's mode, CSM and the timers' controls."""
+        self.mode_ch3 = (data & 0xC0) >> 6
+        self.mode_csm = 1 if self.mode_ch3 == 2 else 0
+        self.timer_a_load = data & 1
+        self.timer_a_enable = (data >> 2) & 1
+        self.timer_a_reset = (data >> 4) & 1
+        self.timer_b_load = (data >> 1) & 1
+        self.timer_b_enable = (data >> 3) & 1
+        self.timer_b_reset = (data >> 5) & 1
 
     # -- the timers ----------------------------------------------------------------
 

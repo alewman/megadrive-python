@@ -38,7 +38,12 @@ from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
 from .psg import PSG
 from .vdp import VDP
-from .ym2612 import YM2612
+from .ym2612 import (
+    IC_SLOT_LAG,
+    IC_WRITE_SLOT_LAG,
+    TIMER_CONTROL_DELAY_CYCLES,
+    YM2612,
+)
 
 if TYPE_CHECKING:
     from m68000_python import M68000CPU
@@ -233,6 +238,8 @@ class Board:
         #: which is held at power-on ("For as long as the Z80 is reset, the YM2612
         #: cannot be used", CMD ``gen-hw.txt`` 2.2).
         self.fm = YM2612(machine.fm)
+        if machine.dma_figures == "die":
+            self.fm.control_delay = TIMER_CONTROL_DELAY_CYCLES
         self.fm.reset_line(True)
         #: The PSG lives inside the VDP and is written at $C00011 or $7F11; reading
         #: its port locks up a real console (CMD).  It is not held by the Z80's reset.
@@ -347,16 +354,18 @@ class Board:
             return self.tmss_cartridge
         return self.cartridge
 
-    def set_z80_reset(self, held: bool, t: int, fm_t: int | None = None) -> None:
+    def set_z80_reset(self, held: bool, t: int, fm_t: int | None = None,
+                      write: bool = False) -> None:  # fmt: skip
         """Drive ZRES, the Z80's and YM2612's shared reset line, at MCLK ``t``: from a
-        write to $A11200, or from the console's reset button (``System.press_reset``).
-        ``fm_t``: when the YM2612's /IC sees it, if not at ``t``."""
+        write to $A11200 (``write``), or from the console's reset button
+        (``System.press_reset``). ``fm_t``: when the YM2612's /IC sees it, if not at
+        ``t``."""
         self.catch_up_z80(t, stopping=held and self.z80_running)
         if held != self.z80_reset:
             self.z80_reset = held
             fm_t = t if fm_t is None else fm_t
             self.sound_sync(fm_t)
-            self.fm.reset_line(held, fm_t)
+            self.fm.reset_line(held, fm_t, IC_WRITE_SLOT_LAG if write else IC_SLOT_LAG)
             self.on_z80_reset(held)
             if not held:
                 self.on_z80_resume(t, True)
@@ -844,7 +853,7 @@ class Board:
                 self.on_z80_resume(t, False)
         elif offset & 0xFF00 == 0x1200:
             t = self.m68k_access_clock()
-            self.set_z80_reset(not high & 1, t, t + ZRES_PIN_MCLK)
+            self.set_z80_reset(not high & 1, t, t + ZRES_PIN_MCLK, write=True)
         elif offset & 0xFF00 == 0x3000:
             self.cartridge.write_time(address | 1, low)
         elif offset & 0xFF00 == 0x4100:
