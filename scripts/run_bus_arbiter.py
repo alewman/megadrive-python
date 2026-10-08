@@ -134,11 +134,11 @@ def cycles_per_line(cartridge: str | None, machine: str, frames: int,
                     z80: bytes = Z80_READ) -> tuple[float, str]:  # fmt: skip
     """The 68000 clocks a raster line leaves for instructions, after every stall the
     board charges: 3,420 / 7 master clocks a line less the stalls (Kabuto's "roughly
-    480 cycles per raster line instead of the theoretical 488+4/7"). A step's stalls
-    are its own (``board.stall``) and what it was owed for the Z80's bank accesses
-    in the last one's wake, which it begins by paying (``m68k_pending_stall``); the
-    owed part was once counted as its change from step to step, which sums to
-    nothing (docs/worklog.md, "The Z80's grant inside an instruction")."""
+    480 cycles per raster line instead of the theoretical 488+4/7"). Counted from the
+    other side: each step's own clocks are its time less its stalls, and whatever of
+    the run's time they do not fill was lost -- holds paid inside a step and those owed
+    between steps alike (a count of the owed part as its change from step to step
+    summed to nothing; docs/worklog.md, "The Z80's grant inside an instruction")."""
     if cartridge is None:
         image, name = _rom(z80, M68K_SPIN), "the jmp (a0) harness"
     else:
@@ -146,17 +146,16 @@ def cycles_per_line(cartridge: str | None, machine: str, frames: int,
     system = System(MACHINES[machine], Cartridge.from_image(image))
     system.board.fm.enabled = False
     pad = system.board.io.ports[0].device
-    stalled = 0
+    own = 0  # the 68000's own clocks, in master clocks
+    start = system.mclk
     for frame in range(frames):
         if frame == frames // 4:
             pad.pressed = START
         lines = system.vdp.frame
         while system.vdp.frame == lines:
-            owed = system.board.m68k_pending_stall
-            system.step()
-            stalled += system.board.stall + owed
-    lines_run = frames * system.machine.lines_per_frame
-    per_line = (MCLK_PER_LINE - stalled / lines_run) / M68K_DIVIDER
+            elapsed = system.step()
+            own += elapsed - system.board.stall
+    per_line = own / (system.mclk - start) * MCLK_PER_LINE / M68K_DIVIDER
     return per_line, name
 
 

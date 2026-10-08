@@ -6748,3 +6748,33 @@ Unchanged: the judge (+16,143,617, 116 steps over 58.7M), the Z80s' 7,833 reads,
 suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting. Frames
 6,981-7,200: **217 at the expected frame** (75), 219 within three frames (frame 7,055
 changes part way). The arms window: 99 of 100 (frame 5,771 a single pixel).
+
+### The grant over the 68000's own clocks
+
+The judge's step at +16,143,617: the die's Z80 asks for the bus at +16,143,521 (a read of
+$7F08), just after the 68000's last cycle of a taken branch began; that cycle goes first,
+the Z80 has the bus from +16,143,544 to 593, and the 68000's next fetch comes at
++16,143,617. The board settled the access at the end of the 68000's instruction and owed
+the 70 MCLK from the next one's start -- where the 68000 first spends two clocks inside
+itself, so its fetch came 14 MCLK late.
+
+`system.OWED_AT_FIRST_CYCLE`: a hold owed from a Z80 access settled after an instruction
+is now a time the bus is the Z80's until (`board.m68k_resume_at`), which the 68000's
+next bus cycle waits for; its own clocks before that overlap the wait. Not bringing the
+Z80 up at the end of an instruction at all, settling it at the next instruction's first
+cycle instead, was tried: the same judge, but the `pop` back to 2.92 (first read 2.80,
+second 3.04) where this keeps 3.17 (2.96, 3.37) -- so the end-of-instruction catch-up
+stays.
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+16,155,720**; **52
+steps** over the 58.7M MCLK window (116). The two Z80s still agree for 7,833 reads.
+
+`run_bus_arbiter.py`'s rate now counts the 68000's own clocks (each step's time less its
+stalls) and takes the rest of the run as lost, whichever way a hold was paid: 480.9 a
+line with the Z80 in its own RAM, 357.3 with it reading the bank window (481.0 and
+357.8 as counted before).
+
+Unchanged: the arbiter experiments' figures (`run_nuked_md.py arbiter`, to the count),
+the suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting, the arms
+window (100 of 100). Frames 6,981-7,200: all 220 within three frames, 75 at the expected
+one (217) -- the same knife edge downstream, the other way again.

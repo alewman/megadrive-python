@@ -115,6 +115,14 @@ Z80_BUSREQ_LAG_MCLK = 33
 #: between already run. Die-derived (``run_nuked_md.py arbiter``; docs/worklog.md,
 #: "Each access arbitrated at its own time"); False settles them all when it runs.
 Z80_ARBITRATE_PER_ACCESS = 1
+#: A hold the arbiter owes the 68000 from a Z80 access settled after its instruction is
+#: a time the bus is the Z80's until, which its next bus cycle waits for, rather than an
+#: amount added before its next instruction, where it may first spend clocks inside
+#: itself: +16,143,521, the Z80's read of $7F08 holds the bus to +16,143,593 and the
+#: 68000's next fetch, two clocks into a taken branch, comes at +16,143,617 on the die
+#: and came 14 MCLK later here (docs/worklog.md, "The grant over the 68000's own
+#: clocks"). Die-derived.
+OWED_AT_FIRST_CYCLE = 1
 #: /BUSAK falls this long after the Z80's last machine cycle ends, its wait states
 #: included: 7 MCLK after the die's last memory cycle releases /MREQ (all 29 grants of
 #: the probe), which is part way through the cycle's last T-state; 3 fits with the lag.
@@ -547,7 +555,12 @@ class System:
             self.catch_up_z80(self.mclk)
             return elapsed
         owed = board.m68k_pending_stall
-        if owed:
+        if owed and OWED_AT_FIRST_CYCLE and Z80_CATCH_UP_EACH_CYCLE and board.arbiter_enabled:
+            # The bus is the Z80's until then: the 68000's first bus cycle waits for it,
+            # and the clocks it spends inside itself before that overlap the wait.
+            board.m68k_pending_stall = 0
+            board.m68k_resume_at = self.mclk + owed
+        elif owed:
             # What the arbiter charged the 68000 for Z80 bank accesses made in the wake
             # of its last instruction: the Z80 runs behind it, so the delay is added
             # here rather than inside the instruction it really fell in (arbiter.py).

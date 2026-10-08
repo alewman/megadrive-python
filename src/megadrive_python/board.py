@@ -320,6 +320,8 @@ class Board:
         #: How long the 68000's last bus cycle waited for the Z80 to give the bus back
         #: before it began (:data:`Z80_CATCH_UP_EACH_CYCLE`).
         self.grant_wait = 0
+        #: Until when the bus is the Z80's for the 68000's next cycle (0: not).
+        self.m68k_resume_at = 0
         #: The master clock the 68000's last instruction ended at (``System.step``).
         self.m68k_step_end = 0
         #: Totals for ``scripts/run_bus_arbiter.py``: bank accesses and the cycles they
@@ -457,6 +459,14 @@ class Board:
         t = self.m68k_access_clock()
         grid = self.m68k_accesses if self.arbiter_enabled else None
         self.grant_wait = 0
+        if self.m68k_resume_at:
+            # A grant to the Z80 settled after the last instruction (``System.step``).
+            if self.m68k_resume_at > t:
+                waited = self.m68k_resume_at - t
+                self.stall += waited
+                t += waited
+                self.grant_wait = waited
+            self.m68k_resume_at = 0
         if grid is not None:
             grid.append([t, AS_LOW_MCLK])
             if Z80_CATCH_UP_EACH_CYCLE and self.z80_running:
@@ -473,7 +483,7 @@ class Board:
                     t += owed
                 # The 68000 drives /AS only once it has the bus back: the cycle begins
                 # after this wait rather than being held by it (for logs that stamp it).
-                self.grant_wait = owed
+                self.grant_wait += owed
         if t >= self.cart_refresh_due:
             late = t - self.cart_refresh_due
             self.cart_refresh_due += (

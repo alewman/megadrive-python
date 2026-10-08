@@ -326,10 +326,10 @@ of a `pop`'s reads land at almost the same clock, where MoD saw the 68000 "sneak
 bus operation" between them ([undocumented-behavior.md](undocumented-behavior.md),
 open item 14; a core change would settle it, [polish.md](polish.md)).
 
-**The 68000's own rate**, with every stall the board charges: **481.0** of a raster
+**The 68000's own rate**, with every stall the board charges: **480.9** of a raster
 line's 488.6 clocks are left for instructions in the `jmp (a0)` harness with the Z80 in
 its own RAM -- the refreshes -- against Kabuto's "roughly 480 cycles per raster line
-instead of the theoretical 488+4/7 ones"; with the Z80 reading the bank window, 357.8.
+instead of the theoretical 488+4/7 ones"; with the Z80 reading the bank window, 357.3.
 (The 481.0 once quoted for the latter left out the Z80's holds, owed to the next
 instruction, which the old count summed to nothing; worklog, "The Z80's grant inside an
 instruction".)
