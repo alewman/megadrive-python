@@ -159,6 +159,15 @@ Z80_CATCH_UP_EACH_CYCLE = 1
 #: as Kabuto has it for the 68000's own VDP writes (``CART_REFRESH_STALL``). The board had
 #: the Z80's cycle take it, and the 68000's take it again. Die-derived.
 Z80_REFRESH_CARTRIDGE_ONLY = 1
+#: Whatever it goes to, a Z80 cycle over the 68000's bus uses up a cartridge refresh
+#: that fell due by its start: the 68000's next cartridge access is not held. Due after
+#: the Z80's cycle began, the 68000's next cartridge access takes it (14). Die-derived:
+#: Nuked-MD's Overdrive 2 boot over +58.7M, the refresh grid placed from the 68000's
+#: held reads, 1,809 Z80 cycles with a tick from 28 before to 35 after them and a
+#: cartridge access next, every one so
+#: (docs/worklog.md, "The refresh a Z80 cycle uses up"). The board had a VDP access
+#: leave it for the 68000.
+Z80_REFRESH_USED_UP = 1
 
 
 def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
@@ -596,10 +605,13 @@ class Board:
         )
         taken = tick == self.z80_refresh_taken or any(
             tick <= begin <= t + CUTOFF_MCLK for begin, _span in self.m68k_accesses
-        ) or (Z80_REFRESH_CARTRIDGE_ONLY and not cartridge)
-        wait, resume, own = z80_access_wait(t, self.m68k_accesses, None if taken else tick)
+        )
+        stretched = not taken and (cartridge or not Z80_REFRESH_CARTRIDGE_ONLY)
+        wait, resume, own = z80_access_wait(t, self.m68k_accesses, tick if stretched else None)
         if not taken and tick <= own:
             self.z80_refresh_taken = tick
+            if Z80_REFRESH_USED_UP and self.cart_refresh_due <= tick:
+                self.cart_refresh_due = tick + CART_REFRESH_MCLK
         wanted = t + CUTOFF_MCLK + 1
         nxt = None
         for begin, _span in self.m68k_accesses:

@@ -6810,3 +6810,42 @@ counts), the pop 3.16 (3.17), its reads 2.96 and 3.36. `run_bus_arbiter.py`: the
 rate with the Z80 on the bank window 360.3 (357.3). Unchanged: the suites (151, CPython
 and PyPy), Nemesis's HV captures, VDPFIFOTesting, the arms window (100 of 100), frames
 6,981-7,200 (all 220 within three frames, 75 at the expected one).
+
+### The refresh a Z80 cycle uses up
+
+The judge's step at +16,179,975: the die's Z80 reads the HV counter through $7F08 at
++16,179,836; /BGACK is low from 860 to 909, the Z80's cycle on the 68000's bus begins at
+870, and the 68000's next read, of the cartridge at 933, is not held. A cartridge refresh
+fell due at 870 -- the die's grid, placed from the 68000's held cartridge reads over the
+whole window, puts its ticks in a 7-MCLK bracket ending there. The board's Z80 cycle let
+it pass (a VDP access is not stretched by it, `Z80_REFRESH_CARTRIDGE_ONLY`), and the
+68000's read took it: held 14, its next 14 late.
+
+`scripts/od2_z80_refresh.py` counts, for every Z80 cycle on the 68000's bus over the
++58.7M window with a tick from 28 MCLK before to 35 after its start, the 68000's next
+access and its hold. Of the 1,809 with a cartridge access next, every one goes the same
+way, whether the Z80's cycle is a cartridge read (1,528) or an HV read (281): a tick due
+by the Z80 cycle's start is used up by it, and the 68000's next cartridge access is not
+held; one due after it began falls on the 68000's next cartridge access, held 14. That
+is the +16,155,720 case (due 14 after the Z80's start, the 68000 held) and this one (due
+at its start, not held) in one rule, and the same "next bus cycle" rule Kabuto gives for
+the 68000's own accesses.
+
+`board.Z80_REFRESH_USED_UP`: a Z80 cycle that begins at or after a tick still owed now
+moves the refresh on (`cart_refresh_due`), so the 68000 does not take it again; a cartridge
+access is stretched by it as before, a VDP access is not. The board had, besides this
+case, let the 68000 take again a tick a Z80 cartridge cycle had already been stretched by.
+
+The judge: the boot's 68000 bus stream agrees with the die's over the whole +58.7M MCLK
+window the referee trace covers -- **no step** (22), the 476,359 aligned cycles every one
+at the die's time. The two Z80s agree for **9,521 reads** (8,033), to +16,308,956, where
+the die's Z80 reads the FM's status as $01 and the board's, 45 MCLK ahead by then, $00.
+
+`run_nuked_md.py arbiter`: the 68000 stopped 2.49 (the same counts); the `jmp (a0)` loop
+2.74 (2.86), the die's 2.74; the pop 2.93 (3.16) where the die has 3.27, its reads 2.77
+and 3.09 (2.96 and 3.36; the die's 2.95 and 3.60). The double hold had stood in for some
+of the pop's second-read wait; what the die's second read waits on beyond this is open.
+`run_bus_arbiter.py`: 480.9 and 360.3 a line, unchanged. Unchanged: the suites (151,
+CPython and PyPy), Nemesis's HV captures, the rest of the test-ROM battery, the arms
+window (100 of 100), frames 6,981-7,200 (all 220 within three frames, 75 at the expected
+one).
