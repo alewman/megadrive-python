@@ -329,7 +329,7 @@ open item 14; a core change would settle it, [polish.md](polish.md)).
 **The 68000's own rate**, with every stall the board charges: **480.9** of a raster
 line's 488.6 clocks are left for instructions in the `jmp (a0)` harness with the Z80 in
 its own RAM -- the refreshes -- against Kabuto's "roughly 480 cycles per raster line
-instead of the theoretical 488+4/7 ones"; with the Z80 reading the bank window, 357.3.
+instead of the theoretical 488+4/7 ones"; with the Z80 reading the bank window, 360.3.
 (The 481.0 once quoted for the latter left out the Z80's holds, owed to the next
 instruction, which the old count summed to nothing; worklog, "The Z80's grant inside an
 instruction".)

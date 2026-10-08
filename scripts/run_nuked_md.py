@@ -514,9 +514,9 @@ def board_bank_delays(rom: bytes, accesses: int) -> list[tuple[int, int]]:
     log: list[tuple[int, int]] = []
     charged = board._bank_delay
 
-    def record() -> None:
+    def record(*args: bool) -> None:
         before = (board.bank_z80_cycles, board.bank_m68k_cycles)
-        charged()
+        charged(*args)
         log.append(
             (
                 board.bank_z80_cycles - before[0],
