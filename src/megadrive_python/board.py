@@ -152,6 +152,13 @@ Z80_GRANT_OVERLAPS_IDLE = True
 #: later (docs/worklog.md, "The Z80's grant inside an instruction"). Die-derived; False
 #: owes every such hold to the next instruction.
 Z80_CATCH_UP_EACH_CYCLE = 1
+#: The cartridge refresh stretches a Z80 access over the 68000's bus only if it goes to
+#: the cartridge: a read of the VDP through $7F00-$7F1F is not held by it, and the refresh
+#: falls on the 68000's next cycle (the die's +16,155,626: the Z80's VDP cycle lasts 29
+#: MCLK with a refresh due inside it, and the 68000's read after the grant is held 14),
+#: as Kabuto has it for the 68000's own VDP writes (``CART_REFRESH_STALL``). The board had
+#: the Z80's cycle take it, and the 68000's take it again. Die-derived.
+Z80_REFRESH_CARTRIDGE_ONLY = 1
 
 
 def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
@@ -548,7 +555,7 @@ class Board:
                 return self.cartridge.read_byte(full)
         return 0xFF
 
-    def _bank_delay(self) -> None:
+    def _bank_delay(self, cartridge: bool = True) -> None:
         """What one Z80 access over the 68000's bus -- the bank window, or the VDP --
         costs both CPUs (:func:`~megadrive_python.arbiter.z80_access_wait`).
 
@@ -569,16 +576,17 @@ class Board:
             # ``_prearbitrate``): only the Z80's wait remains to be taken.
             wait, m68k_cycles = done[1][index]
         else:
-            wait, m68k_cycles = self._arbitrate(self._z80_access_time())
+            wait, m68k_cycles = self._arbitrate(self._z80_access_time(), cartridge)
         self.z80_stall += wait * Z80_DIVIDER
         self.bank_accesses += 1
         self.bank_z80_cycles += wait
         self.bank_m68k_cycles += m68k_cycles
 
-    def _arbitrate(self, t: int) -> tuple[int, int]:
+    def _arbitrate(self, t: int, cartridge: bool = True) -> tuple[int, int]:
         """A Z80 access over the 68000's bus at ``t``: the 68000's share charged (owed,
-        and its later cycles in the grid moved past the grant), the refresh it takes;
-        returns the Z80's wait states and the 68000's, in their own clocks."""
+        and its later cycles in the grid moved past the grant), the refresh it takes
+        (only an access to the cartridge, :data:`Z80_REFRESH_CARTRIDGE_ONLY`); returns
+        the Z80's wait states and the 68000's, in their own clocks."""
         # The cartridge refresh grid (``_bus_cycle``): the last tick due by the end of
         # the Z80's grant window, owed if no 68000 cycle since took it and the Z80 has
         # not already.
@@ -588,7 +596,7 @@ class Board:
         )
         taken = tick == self.z80_refresh_taken or any(
             tick <= begin <= t + CUTOFF_MCLK for begin, _span in self.m68k_accesses
-        )
+        ) or (Z80_REFRESH_CARTRIDGE_ONLY and not cartridge)
         wait, resume, own = z80_access_wait(t, self.m68k_accesses, None if taken else tick)
         if not taken and tick <= own:
             self.z80_refresh_taken = tick
@@ -936,7 +944,8 @@ class Board:
             return self.z80_ram[address & 0x1FFF]
         if address >= 0x8000:
             if self.arbiter_enabled:
-                self._bank_delay()  # the arbiter holds both CPUs for this access
+                # the arbiter holds both CPUs for this access
+                self._bank_delay((self.bank | (address & 0x7FFF)) < 0x800000)
             return self._z80_bank_read(self.bank | (address & 0x7FFF))
         if address < 0x6000:
             return self._fm_read(address & 3, self._z80_access_time())
@@ -944,7 +953,7 @@ class Board:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
             if self.arbiter_enabled and Z80_VDP_ARBITRATED:
-                self._bank_delay()  # the VDP is on the 68000's bus
+                self._bank_delay(False)  # the VDP is on the 68000's bus
             return self.vdp.z80_read(address & 0x1F, self._z80_access_time())
         return 0xFF  # the bank register and $6100-$7EFF (CMD 2.1)
 
@@ -954,7 +963,7 @@ class Board:
             self.z80_ram[address & 0x1FFF] = value
         elif address >= 0x8000:
             if self.arbiter_enabled:
-                self._bank_delay()
+                self._bank_delay((self.bank | (address & 0x7FFF)) < 0x800000)
             self._z80_bank_write(self.bank | (address & 0x7FFF), value)
         elif address < 0x6000:
             self.sound_sync(self._z80_access_time())
@@ -965,7 +974,7 @@ class Board:
             if address >= 0x7F20:
                 raise Lockup(f"Z80 access to ${address:04X} (beyond the VDP's $7F00-$7F1F)")
             if self.arbiter_enabled and Z80_VDP_ARBITRATED:
-                self._bank_delay()
+                self._bank_delay(False)
             self.vdp.z80_write(address & 0x1F, value, self._z80_access_time())
 
     def _z80_bank_read(self, address: int) -> int:

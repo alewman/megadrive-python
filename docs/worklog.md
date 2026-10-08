@@ -6778,3 +6778,35 @@ Unchanged: the arbiter experiments' figures (`run_nuked_md.py arbiter`, to the c
 the suites (151, CPython and PyPy), Nemesis's HV captures, VDPFIFOTesting, the arms
 window (100 of 100). Frames 6,981-7,200: all 220 within three frames, 75 at the expected
 one (217) -- the same knife edge downstream, the other way again.
+
+### The Z80's cycle a master clock shorter
+
+The judge's step at +16,155,720: the die's Z80 reads the VDP's HV counter through $7F08
+at +16,155,626; the 68000's cycle 3 MCLK later goes first; /BGACK is low from 654 to
+696, the Z80's cycle on the 68000's bus +16,155,664-693, and the 68000's next read comes
+at 720, held 14 by the cartridge refresh. The board's came at 734 -- two things:
+
+- **The refresh.** One fell due inside the Z80's cycle (+16,155,678), and the board let
+  that cycle take it, 14 MCLK longer, and then the 68000's read took it again. On the
+  die a Z80 access to the VDP is not held by the refresh and the 68000's next cycle
+  takes it, as the 68000's own VDP accesses go unheld. `board.Z80_REFRESH_CARTRIDGE_ONLY`:
+  only a Z80 access that lands on the cartridge (the bank window below $800000) takes
+  it; the probe now records each bus access's target for the per-access arbitration.
+  Without it the judge parts at +16,179,933 on just such a double hold.
+- **The Z80's own cycle.** The arbiter lets the 68000 have the bus back 25 MCLK after
+  the Z80's wait runs out, at the first of its clocks at or past the end of its own
+  cycle (start plus `arbiter.OWN_CYCLE_MCLK`). With 30 that end fell at 694, one master
+  clock past the die's 693, and cost a whole Z80 clock (resume 733). 29 fits both this
+  grant and the 38-MCLK one at +16,099,290 (24-29 do), and leaves the arbiter
+  experiments as they were (27 and below move them). Taking the resume from the Z80's
+  own cycle instead, tried, breaks the earlier grants (223 steps).
+
+The judge: the boot's 68000 bus stream agrees with the die's to **+16,179,975**; **22
+steps** over the 58.7M MCLK window (52). The two Z80s agree for **8,033 reads** (7,833),
+to +16,206,146.
+
+`run_nuked_md.py arbiter`: the 68000 stopped 2.49, the `jmp (a0)` loop 2.86 (the same
+counts), the pop 3.16 (3.17), its reads 2.96 and 3.36. `run_bus_arbiter.py`: the 68000's
+rate with the Z80 on the bank window 360.3 (357.3). Unchanged: the suites (151, CPython
+and PyPy), Nemesis's HV captures, VDPFIFOTesting, the arms window (100 of 100), frames
+6,981-7,200 (all 220 within three frames, 75 at the expected one).

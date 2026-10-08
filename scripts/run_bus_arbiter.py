@@ -106,9 +106,9 @@ def run(z80_program: bytes, m68k_loop: bytes, accesses: int) -> list[tuple[int, 
     log: list[tuple[int, int]] = []
     charged = board._bank_delay  # the script watches the board's own model
 
-    def record() -> None:
+    def record(*args: bool) -> None:
         before = (board.bank_z80_cycles, board.bank_m68k_cycles)
-        charged()
+        charged(*args)
         log.append((board.bank_z80_cycles - before[0], board.bank_m68k_cycles - before[1]))
 
     board._bank_delay = record  # type: ignore[method-assign]

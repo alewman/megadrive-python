@@ -115,7 +115,15 @@ BUSACK_PROPAGATION_MCLK = 57
 CUTOFF_MCLK = 21
 GRANT_GAP_MCLK = 17
 IDLE_GRANT_MCLK = 29
-OWN_CYCLE_MCLK = 30
+#: (``OWN_CYCLE_MCLK``: 29 from 30. The Z80's wait runs to the first of its clocks at
+#: or past the end of its own cycle on the 68000's bus, so a cycle a master clock too
+#: long cost a whole Z80 clock: at +16,155,626 the die's cycle, the Z80's read of the
+#: VDP, ends at +16,155,693 and the 68000 resumes at 720; with 30 the board's ended at
+#: 694, the Z80 waited a clock more and the 68000 resumed at 733. Both that and the
+#: +16,099,290 grant, a 38-MCLK cycle, want 24-29; the arbiter experiments are unmoved
+#: at 29 and move at 27 and below. Die-derived; docs/worklog.md, "The Z80's cycle a
+#: master clock shorter".)
+OWN_CYCLE_MCLK = 29
 RELEASE_MCLK = 37
 RESUME_MCLK = 25
 MIN_WAIT = 2

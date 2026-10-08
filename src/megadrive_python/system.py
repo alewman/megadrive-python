@@ -315,18 +315,18 @@ class System:
             if before <= fetched and pc < 0x4000:
                 return
             self.z80_probe()
-            bus = sorted(at for _end, at in self._probe_bus_ends)
+            bus = sorted(zip((at for _end, at in self._probe_bus_ends), self._probe_bus_cart))
             done = board.z80_prearbitrated = (start, [], bus)
         waits, bus = done[1], done[2]
         extra = sum(wait for wait, _ in waits) * Z80_DIVIDER
-        for at in bus[len(waits):]:
+        for at, cartridge in bus[len(waits):]:
             # The probe gives the machine cycle's first T-state; the access-timing table,
             # by which the access is placed when it runs (``Board._z80_access_time``),
             # puts it a T-state on (75 MCLK for the read in T-state 4).
             t = start + (at + 1) * Z80_DIVIDER + extra
             if t >= mclk:  # as an instruction runs only with every access before mclk
                 break
-            settled = board._arbitrate(t)
+            settled = board._arbitrate(t, cartridge)
             waits.append(settled)
             extra += settled[0] * Z80_DIVIDER
 
@@ -450,6 +450,7 @@ class System:
         offsets: list[int] = []
         ends: list[int] = []
         self._probe_bus_ends = bus_ends = []  # machine cycles over the 68000's bus
+        self._probe_bus_cart = bus_cart = []  # ... and whether each is to the cartridge
         written: dict[int, int] = {}
         clock = 0
         fetching = True
@@ -476,6 +477,8 @@ class System:
                 clock += 3
                 if address >= 0x8000 or 0x7F00 <= address < 0x7F20:
                     bus_ends.append((clock, offsets[-1]))
+                    bus_cart.append(address >= 0x8000
+                                    and (board.bank | (address & 0x7FFF)) < 0x800000)  # fmt: skip
             ends.append(clock)
             return value
 
@@ -487,6 +490,8 @@ class System:
             clock += 3
             if address >= 0x8000 or 0x7F00 <= address < 0x7F20:
                 bus_ends.append((clock, offsets[-1]))
+                bus_cart.append(address >= 0x8000
+                                and (board.bank | (address & 0x7FFF)) < 0x800000)  # fmt: skip
             ends.append(clock)
 
         z80.read_byte, z80.write_byte = probe_read, probe_write

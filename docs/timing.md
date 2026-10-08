@@ -330,7 +330,7 @@ quoted beside them. The slopes did not move.
   With every stall the board charges, a 68000 in a `jmp (a0)` loop keeps **480.9** of
   a raster line's 488.6 clocks for its own instructions with the Z80 in its own RAM,
   which is Kabuto's "roughly 480 cycles per raster line instead of the theoretical
-  488+4/7 ones", and 357.3 with the Z80 reading the bank window (the 481.0 once quoted
+  488+4/7 ones", and 360.3 with the Z80 reading the bank window (the 481.0 once quoted
   for that left out the Z80's holds; `scripts/run_bus_arbiter.py`, `--cartridge`;
   the six lockstep games, which also pay VDP stalls, run at 468 to 475).
 - **VDP stalls**: a 68000 write to a full FIFO, or a read of VRAM/CRAM/VSRAM,
