@@ -16,6 +16,10 @@ Two things the board cannot know are set from the referee, as the probe comparis
   at which the two VDPs, each running from power-on, are at the same point in their
   frame (``system.Z80_CLOCK_PHASE``'s note; docs/worklog.md, "The VDPs' offset") and
   the 68000's and Z80's clock edges fall where the referee's do against its VDP.
+- **The E clock.** The board's 68000 counts its E clock from the clocks it has run;
+  moving the clock on moves that count with it, as a 68000 clocked from power-on
+  through the referee's reset hold would have it (Sonic's first VINT, +55,151,173:
+  its autovectored acknowledge waited 7 clocks fewer than the referee's without it).
 - **The refresh phases.** Both refreshes run from a power-on phase nothing models. The
   cartridge refresh runs free, so every held cartridge access brackets its phase (due
   after the access before, by the held one's /AS); the tick is placed at the
@@ -44,7 +48,7 @@ import od2_boot_drift as judge  # noqa: E402
 import run_nuked_md  # noqa: E402
 
 from megadrive_python.cartridge import Cartridge, load_image  # noqa: E402
-from megadrive_python.machine import MACHINES  # noqa: E402
+from megadrive_python.machine import M68K_DIVIDER, MACHINES  # noqa: E402
 from megadrive_python.system import System  # noqa: E402
 
 #: The vector fetches and the first prefetch: the walk starts at the cycle after them.
@@ -115,6 +119,9 @@ def main() -> int:
     system.mclk += offset
     system.z80_mclk += offset
     system.board.step_start = system.mclk
+    # The 68000's E clock runs from power-on, through the referee's reset hold; the core
+    # counts it from the clocks it has run (``M68000CPU.clock``).
+    system.m68k.clock += offset // M68K_DIVIDER
     system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK
     system.board.ram_refresh_due = ram_due - VDP_OFFSET_MCLK
     while system.mclk < until - VDP_OFFSET_MCLK:
