@@ -63,6 +63,11 @@ BOARD_FIRST_MCLK = 284
 #: clock (docs/worklog.md, "A second title").
 VDP_OFFSET_MCLK = 240_277
 CART_PERIOD = run_nuked_md.CART_PERIOD
+#: The referee's E clock against a 68000 clocked from power-on: two clocks behind it at
+#: the walk's start. Read from Gunstar Heroes' first autovectored acknowledge
+#: (+96,673,913: with it the SR push and the vector fetch fall at the referee's MCLK,
+#: without it 56 late) and the same in Sonic's and Streets of Rage 2's.
+E_CLOCK_SHIFT = -2
 REFRESH_FIT_MCLK = 5_000_000
 SAMPLE_MCLK = 24 * 42
 #: Where the referee's slot-23 marker (``fsm_sel23`` rising) falls against the board's
@@ -146,7 +151,7 @@ def main() -> int:
     system.board.step_start = system.mclk
     # The 68000's E clock runs from power-on, through the referee's reset hold; the core
     # counts it from the clocks it has run (``M68000CPU.clock``).
-    system.m68k.clock += offset // M68K_DIVIDER
+    system.m68k.clock += offset // M68K_DIVIDER + E_CLOCK_SHIFT
     shift = align_fm(system, run.fm_markers, run.fm_ic, events[FIRST].t)
     print(f"the FM's sample phase moved {shift} MCLK onto the referee's")
     system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK

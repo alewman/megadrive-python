@@ -7056,3 +7056,27 @@ end at 2,030 against the die's 2,009.
 Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (155, CPython and PyPy),
 Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
 6,981-7,200 (all 220 within three frames, 75 at the expected one).
+
+### The first interrupt
+
+Each title's first step was its first interrupt: the 68000 pushes its PC, makes the
+autovectored acknowledge, pushes SR -- and between the two pushes the board took 56 MCLK
+longer than the die in Gunstar Heroes and Streets of Rage 2 (8 68000 clocks), 14 shorter
+in Sonic. The acknowledge waits for the E clock, ten clocks a period: +8 and -2 are the
+same phase two clocks out. The board keeps its E clock in step with time over the run
+(every hold is credited to the core's clock count after each instruction), so this is
+where it starts, and that is `cold_boot_drift`'s to set, not the board's: it moved the
+count on by the clocks of the die's reset hold, which leaves it two ahead of the die's.
+`cold_boot_drift.E_CLOCK_SHIFT` = -2, read from Gunstar's first acknowledge (from a
+snapshot just before it, -2 puts its SR push and vector fetch at the die's MCLK; -1 and
+-3 are 63 and 7 out) and right for the other two as they stand:
+
+| Cartridge | agrees with the die to | the paths part |
+| --- | ---: | --- |
+| Streets of Rage 2 (USA) | +139,354,306 | +139,528,893 |
+| Gunstar Heroes (USA) | +97,726,153, no step | +97,726,181 |
+| Sonic The Hedgehog (USA, Europe) | +55,297,851 | +55,978,328 |
+
+In all three the paths now part on an interrupt the board's 68000 takes an instruction
+before the die's does -- the next question, and one the Overdrive 2 judge does not
+reach before +16.98M.
