@@ -6899,11 +6899,13 @@ Two things the board cannot know are set from the die, as `run_nuked_md.py`'s pr
 comparisons have always set them, and nothing else is:
 
 - **The clock.** The die holds its 68000 in reset for about 693,000 MCLK after power-on
-  and the board's starts at once; the board's clock is put on the die's so that the
-  first walked cycle falls at the same MCLK on both (693,426 for all three: the board's
-  at 284 from its power-on, so 693,142 is added -- the 693,230 `run_nuked_md.py` adds
-  leaves it 88 late). That puts both VDPs at the same point in their frame and the
-  68000's clock edges on the die's phase.
+  and the board's starts at once. The board's clock is moved on so that the first walked
+  cycle falls 240,277 MCLK before the die's (453,149 against 693,426): the relation at
+  which the two VDPs, each running from power-on, line up ("The VDPs' offset", every
+  one of the Overdrive 2 boot's 16,427 HBlank flags), and the 68000's and Z80's clock
+  edges fall where the die's do against its VDP. Put equal at first, the two clocks
+  left the VDPs 70 lines and 877 MCLK apart, which nothing before each game's first
+  interrupt showed but the status reads' HBlank bit and Sonic's first refresh tie.
 - **The refresh phases.** The cartridge refresh runs free, so every held cartridge
   access brackets its phase: due after the access before, by the held one's /AS.
   `run_nuked_md.referee_refresh` takes the first phase with no miss -- the bracket's
@@ -6926,24 +6928,24 @@ the judged window. Test: `test_a_request_made_in_reset_is_granted_after_the_firs
 
 With it, from power-on:
 
-| Cartridge | agrees with the die to | 68000 cycles | the paths part |
+| Cartridge | agrees with the die to | 68000 cycles walked | the paths part |
 | --- | ---: | ---: | --- |
-| Sonic The Hedgehog (USA, Europe) | +51,210,089 | about 1.5M | +55,387,710, a poll of the FM's busy flag |
-| Gunstar Heroes (USA) | +96,437,957 | about 2.8M | +96,496,561, a poll of the FM's busy flag |
-| Streets of Rage 2 (USA) | +30M, the whole span run | 937,324 | not within it |
+| Streets of Rage 2 (USA) | +139,046,873 | 4,359,546 | +139,528,893: the board's 68000 takes a level-6 interrupt 112 MCLK before the die's |
+| Gunstar Heroes (USA) | +96,496,519, no step | 2,839,693 | +96,496,561: the FM's busy flag, read at the same MCLK, busy on the die, not on the board |
+| Sonic The Hedgehog (USA, Europe) | +51,931,635 | 1,621,466 | +55,396,404: the same FM read |
 
 Sonic and Gunstar run a ROM checksum first (a four-word loop over the ROM, both still
-in it at +30M), so it is past that that the rules are being tested:
-the start-up of each game's sound driver, its first frames, Gunstar's first DMA-heavy
-scenes. Nothing found on Overdrive 2 had to change for them.
+in it at +30M), and none of the three takes an interrupt before +55M (Sonic), +96.7M
+(Gunstar): it is past those that the rules are being tested -- the start-up of each
+game's sound driver, its first frames, Gunstar's first DMA-heavy scenes. Nothing found
+on Overdrive 2 had to change for them.
 
-What the walk's data comparison shows besides: in Streets of Rage 2, with the display
-off in H40 (+2.65M-2.87M), the board raises the status register's HBLANK bit over line
-phases 784-1421 MCLK and the die over 1715-2352 -- the same width, 931 MCLK apart. The
-board's flag is placed by Nemesis's hardware captures (the status words of
-`run_hv_captures.py`, all but one of PAL H40V30's 276,480 agreeing), which were most
-likely taken with the display on. Which is right with it off is open; a timing judge
-does not see it.
+The Streets of Rage 2 HBlank bits a first version of this section left open (the board's
+flag 931 MCLK from the die's with the display off) were the VDPs set 877 MCLK apart in
+the line, not a question for hardware: with the 240,277 relation Streets of Rage 2's
+status words with a different HBlank bit fall from 374 to 33, and Sonic's from 2,079
+to 181 (most of those now bit 9, the FIFO's empty flag: $088B on the die, $0A8B here).
+Both are left for a later look; no judge sees them.
 
 Unchanged: the judge over Overdrive 2 (+16,244,508, 2,105 steps, the paths part at
 +16,982,364), the suites (153 with the new test, CPython and PyPy), Nemesis's HV

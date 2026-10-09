@@ -11,10 +11,11 @@ Two things the board cannot know are set from the referee, as the probe comparis
 ``run_nuked_md.py`` set them, and nothing else is:
 
 - **The clock.** Nuked-MD holds its 68000 in reset for about 693,000 MCLK after
-  power-on; the board's starts at once. The board's clock is put on the referee's so
-  that the walk's first cycle falls at the same master clock on both, which puts both
-  VDPs at the same point in their frame and the 68000's clock edges on the referee's
-  phase.
+  power-on; the board's starts at once. The board's clock is moved on so that the
+  walk's first cycle falls :data:`VDP_OFFSET_MCLK` before the referee's: the relation
+  at which the two VDPs, each running from power-on, are at the same point in their
+  frame (``system.Z80_CLOCK_PHASE``'s note; docs/worklog.md, "The VDPs' offset") and
+  the 68000's and Z80's clock edges fall where the referee's do against its VDP.
 - **The refresh phases.** Both refreshes run from a power-on phase nothing models. The
   cartridge refresh runs free, so every held cartridge access brackets its phase (due
   after the access before, by the held one's /AS); the tick is placed at the
@@ -50,6 +51,13 @@ from megadrive_python.system import System  # noqa: E402
 FIRST = 6
 #: The board's clock at that cycle, from power-on.
 BOARD_FIRST_MCLK = 284
+#: The board's VDP lines up with Nuked-MD's when the board's clock is this far behind
+#: the referee's (every one of 16,427 HBlank flags of the Overdrive 2 boot; the judge's
+#: anchors there are as far apart). Putting the two clocks equal instead leaves the
+#: VDPs 70 lines and 877 MCLK apart, which nothing the three titles do before their
+#: first interrupt shows but their status reads' HBlank bit and the refresh tie's dot
+#: clock (docs/worklog.md, "A second title").
+VDP_OFFSET_MCLK = 240_277
 CART_PERIOD = run_nuked_md.CART_PERIOD
 REFRESH_FIT_MCLK = 5_000_000
 
@@ -103,20 +111,21 @@ def main() -> int:
     log = judge.log_bus()
     system = System(MACHINES["nuked-md"], Cartridge.from_image(load_image(args.rom)))
     system.board.fm.enabled = True
-    offset = events[FIRST].t - BOARD_FIRST_MCLK
+    offset = events[FIRST].t - VDP_OFFSET_MCLK - BOARD_FIRST_MCLK
     system.mclk += offset
     system.z80_mclk += offset
     system.board.step_start = system.mclk
-    system.board.cart_refresh_due = cart_due
-    system.board.ram_refresh_due = ram_due
-    while system.mclk < until:
+    system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK
+    system.board.ram_refresh_due = ram_due - VDP_OFFSET_MCLK
+    while system.mclk < until - VDP_OFFSET_MCLK:
         system.step()
     ours = [tuple(c) for c in log]
     a_b = judge.reset_anchor(ours, -1) + FIRST
-    if ours[a_b][0] != theirs[FIRST][0]:
+    if ours[a_b][0] != theirs[FIRST][0] - VDP_OFFSET_MCLK:
         raise SystemExit(f"the board's first cycle is at {ours[a_b][0]}, the referee's at "
                          f"{theirs[FIRST][0]}: BOARD_FIRST_MCLK has moved")  # fmt: skip
-    print(f"board: {len(ours):,} 68000 cycles; both walk from MCLK {theirs[FIRST][0]:,}")
+    print(f"board: {len(ours):,} 68000 cycles; the walk starts at MCLK {theirs[FIRST][0]:,} "
+          f"on the referee, {ours[a_b][0]:,} on the board")
     if args.save:
         import pickle
 
