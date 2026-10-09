@@ -284,3 +284,30 @@ def test_data_port_reads_end_where_the_die_lets_them_go() -> None:
             if address == run_slot_hv.DATA and held > 0 and nxt[0] == run_slot_hv.HV]  # fmt: skip
     assert len(ends) > 1000
     assert sum(h in die for h in ends) >= 0.85 * len(ends)
+
+
+@pytest.mark.parametrize("after_reset", [True, False])
+def test_a_request_made_in_reset_is_granted_after_the_first_m1(
+        monkeypatch: pytest.MonkeyPatch, after_reset: bool) -> None:  # fmt: skip
+    """Sonic the Hedgehog's start-up on Nuked-MD: the bus is asked for while the Z80 is
+    held in reset, the reset is released, and the 68000's first poll of $A11100 reads
+    "busy" -- the die's Z80 fetches its first opcode after the release and lets go only
+    at that M1 cycle's end (docs/worklog.md, "A second title"). Without the rule the
+    request made in reset is granted already."""
+    import megadrive_python.system as system_module
+    from run_vscroll_latch import _w, nuked_md_cartridge
+
+    monkeypatch.setattr(system_module, "Z80_BUSACK_AFTER_RESET", int(after_reset))
+    code = _w(0x46FC, 0x2700)  # move.w #$2700,sr
+    code += bytes.fromhex("23fc5345474100a14000")  # move.l #'SEGA',$A14000
+    code += _w(0x43F9, 0x00A1, 0x1100)  # lea $A11100,a1
+    code += _w(0x33FC, 0x0100, 0x00A1, 0x1100)  # move.w #$0100,$A11100: ask for the bus
+    code += _w(0x33FC, 0x0100, 0x00A1, 0x1200)  # move.w #$0100,$A11200: release the reset
+    code += _w(0x3011)  # move.w (a1),d0: the first poll, straight after, as Sonic's
+    code += _w(0x33C0, 0x00FF, 0x0000)  # move.w d0,$FF0000
+    code += _w(0x60FE)  # bra.s *
+    system = System(MACHINES["nuked-md"], Cartridge(nuked_md_cartridge(code)))
+    while system.mclk < 20_000:
+        system.step()
+    busy = system.board.ram[0] & 1
+    assert busy == after_reset

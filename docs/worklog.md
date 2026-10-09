@@ -6838,7 +6838,9 @@ case, let the 68000 take again a tick a Z80 cartridge cycle had already been str
 
 The judge: the boot's 68000 bus stream agrees with the die's over the whole +58.7M MCLK
 window the referee trace covers -- **no step** (22), the 476,359 aligned cycles every one
-at the die's time. The two Z80s agree for **9,521 reads** (8,033), to +16,308,956, where
+at the die's time. (Wrong: the board's stream ended at +16.2M; the judge agrees to
++16,244,508 -- "The judge's reach, corrected" below.) The two Z80s agree for **9,521
+reads** (8,033), to +16,308,956, where
 the die's Z80 reads the FM's status as $01 and the board's, 45 MCLK ahead by then, $00.
 
 `run_nuked_md.py arbiter`: the 68000 stopped 2.49 (the same counts); the `jmp (a0)` loop
@@ -6849,3 +6851,106 @@ of the pop's second-read wait; what the die's second read waits on beyond this i
 CPython and PyPy), Nemesis's HV captures, the rest of the test-ROM battery, the arms
 window (100 of 100), frames 6,981-7,200 (all 220 within three frames, 75 at the expected
 one).
+
+### The judge's reach, corrected
+
+The judge has not looked past +16.2M since it was "extended to +58.7M". `--span` was
+raised, but the board's run length, `--until`, kept its default of 42.8M MCLK from
+power-on -- about +16.2M after the reset anchor -- so the board's stream ended there,
+and difflib aligned what it had against the die's whole window and reported nothing
+past it. Every figure "over the 58.7M window" from "The first read from work RAM" on
+(187, 116, 52, 22 steps, and "no step") counted steps over about +16.2M; the rules those
+sections found stand on their own die evidence, the window does not. The 476,359
+"aligned" cycles, the same in every run, were about the board's stream's length.
+
+- `--until` now follows the span (past the reset and the span, 1M MCLK to spare), and
+  the judge says when a stream ends short of it.
+- difflib's alignment is gone. Over the real window it ran for hours: once the two
+  streams take different paths, its search goes quadratic. `scripts/drift_walk.py`
+  walks the two streams together from their anchors, prints every step as before, and
+  stops at the first cycle where they part in address or kind -- the place a path
+  difference is named, and the last place the two can be compared one to one. It steps
+  over the die's interrupt acknowledges (a read with A23-A4 high), which the board does
+  not log as bus cycles. It also counts the cycles whose data differ, which no judge
+  looked at before. `--save` keeps both streams for another look without a rerun.
+
+The judge over the real window: the boot's 68000 bus stream agrees with the die's to
+**+16,244,508**, where the board's 68000 resumes 14 MCLK late after the die's Z80 reads
+the HV counter through $7F08 (/BGACK low +16,244,442-484, the die's next read at 508, the
+board's at 522; no refresh in it). 2,105 steps follow, and the paths part at
++16,982,364: a status poll for vblank, the board 147 MCLK behind by then, leaves its
+loop a pass before the die's.
+
+The data the walk compares: the board's status reads have zeros in bits 15-10 where the
+die's carry the open bus ($6609 against $0009), and on a byte access the die logs the
+byte on both halves of the data bus where the board's log has it on one -- the second a
+logging difference, the first not yet looked at.
+
+### A second title
+
+Everything since the narrowing (2026-10-03) was judged on one boot. To see whether
+it is the machine that has been learnt or Overdrive 2, three other cartridges from the
+local No-Intro set run from power-on on both, judged the same way:
+`scripts/cold_boot_drift.py ROM --span N` (Nuked-MD from power-on, PAL; the board's
+nuked-md machine; the streams walked from the cycle after the vectors and the first
+prefetch).
+
+Two things the board cannot know are set from the die, as `run_nuked_md.py`'s probe
+comparisons have always set them, and nothing else is:
+
+- **The clock.** The die holds its 68000 in reset for about 693,000 MCLK after power-on
+  and the board's starts at once; the board's clock is put on the die's so that the
+  first walked cycle falls at the same MCLK on both (693,426 for all three: the board's
+  at 284 from its power-on, so 693,142 is added -- the 693,230 `run_nuked_md.py` adds
+  leaves it 88 late). That puts both VDPs at the same point in their frame and the
+  68000's clock edges on the die's phase.
+- **The refresh phases.** The cartridge refresh runs free, so every held cartridge
+  access brackets its phase: due after the access before, by the held one's /AS.
+  `run_nuked_md.referee_refresh` takes the first phase with no miss -- the bracket's
+  start, 518 for Sonic -- and the die's /REF pulse at +51,141,633 (39 MCLK after the
+  tick) puts it at 524, the bracket's end, on a held read's /AS; with 518 the board
+  missed the pulse's extra 68000 clock on the Z80-RAM write after it. The tick is now
+  placed at the bracket's end. The work RAM's refresh, which transfers pause, is fitted
+  over the first 5M MCLK only; fitted over the whole run it misplaced 39,438 of
+  Gunstar Heroes' ticks and put the start out.
+
+One rule was missing, and the first of them found it at once. **A bus request made
+while the Z80 is held in reset** is granted only after the reset is released and the
+Z80's first M1 cycle has run: Sonic asks for the bus at +6,850, releases the reset at
++6,906, the die's Z80 fetches at +6,945 and /BUSAK falls at +6,997, so the 68000's
+first poll of $A11100 reads "busy" and it goes round once more. The board already ran
+that M1 cycle (`System._z80_resume`) but kept the grant the request made in reset (57
+MCLK on), and its poll read "granted". `system.Z80_BUSACK_AFTER_RESET`: the grant moves
+to that M1 cycle's end, 3 MCLK on, as at any other. Overdrive 2 does not do this inside
+the judged window. Test: `test_a_request_made_in_reset_is_granted_after_the_first_m1`.
+
+With it, from power-on:
+
+| Cartridge | agrees with the die to | 68000 cycles | the paths part |
+| --- | ---: | ---: | --- |
+| Sonic The Hedgehog (USA, Europe) | +51,210,089 | about 1.5M | +55,387,710, a poll of the FM's busy flag |
+| Gunstar Heroes (USA) | +96,437,957 | about 2.8M | +96,496,561, a poll of the FM's busy flag |
+| Streets of Rage 2 (USA) | +30M, the whole span run | 937,324 | not within it |
+
+Sonic and Gunstar run a ROM checksum first (a four-word loop over the ROM, both still
+in it at +30M), so it is past that that the rules are being tested:
+the start-up of each game's sound driver, its first frames, Gunstar's first DMA-heavy
+scenes. Nothing found on Overdrive 2 had to change for them.
+
+What the walk's data comparison shows besides: in Streets of Rage 2, with the display
+off in H40 (+2.65M-2.87M), the board raises the status register's HBLANK bit over line
+phases 784-1421 MCLK and the die over 1715-2352 -- the same width, 931 MCLK apart. The
+board's flag is placed by Nemesis's hardware captures (the status words of
+`run_hv_captures.py`, all but one of PAL H40V30's 276,480 agreeing), which were most
+likely taken with the display on. Which is right with it off is open; a timing judge
+does not see it.
+
+Unchanged: the judge over Overdrive 2 (+16,244,508, 2,105 steps, the paths part at
++16,982,364), the suites (153 with the new test, CPython and PyPy), Nemesis's HV
+captures, VDPFIFOTesting on every machine, the arbiter experiments, the arms window (100
+of 100), frames 6,981-7,200 (all 220 within three frames, 75 at the expected one).
+Changed: MoD's `gen_test_z80_bus` prints its "Delay with 6T M-cycle" counter 0001 again
+(0000), on every machine -- the rule is the Z80's, not the nuked-md machine's. No hardware
+value is published for it, and the die cannot give one: on Nuked-MD the ROM's 68000
+makes no bus cycle at all from about +2.5M MCLK, once its Z80 tests begin, and nothing is
+printed.
