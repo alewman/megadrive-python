@@ -170,6 +170,26 @@ Z80_REFRESH_CARTRIDGE_ONLY = 1
 Z80_REFRESH_USED_UP = 1
 
 
+#: The refresh tie is judged against the refresh due by the access, after the ones no
+#: access took have run by themselves: Sonic the Hedgehog from power-on, +51,931,586,
+#: the die's counter steps to 112 at a work-RAM /AS after a run of self-run refreshes
+#: and the access takes it; the board judged the tie against the due before those
+#: self-runs, 7 not being the distance, and missed it (docs/worklog.md, "The tie after
+#: the self-runs"). Die-derived. False judges it against the due as it was stored.
+RAM_REFRESH_TIE_AFTER_SELF_RUNS = 1
+
+
+def ram_refresh_self_runs(due: int, t: int) -> int:
+    """The work-RAM refresh due at ``t`` once those nobody took since ``due`` have run
+    by themselves (:data:`RAM_REFRESH_SELF_MCLK` after each fell due, the next due
+    :data:`RAM_REFRESH_AFTER_MCLK` after it began)."""
+    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
+    if RAM_REFRESH_HIDDEN and t >= due + ran:
+        period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+        due += ((t - due - ran) // period + 1) * period
+    return due
+
+
 def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
     """The work-RAM refresh for a work-RAM access starting at ``t`` with the next
     refresh due at ``due``: the MCLK the access waits, and when the next falls due
@@ -181,12 +201,10 @@ def ram_refresh(due: int, t: int, tie: bool = False) -> tuple[int, int]:
         return 0, due
     if not RAM_REFRESH_HIDDEN:
         return RAM_REFRESH_STALL, t + 805
-    ran = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_STALL
-    if t >= due + ran:
-        # Nobody took the ones that fell due since: each ran by itself.
-        period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
-        due += ((t - due - ran) // period + 1) * period
-        if t < due:
+    rolled = ram_refresh_self_runs(due, t)
+    if rolled != due:
+        due = rolled
+        if t < due and not tie:
             return 0, due
     if t < due + RAM_REFRESH_TRIGGER_MCLK:
         return RAM_REFRESH_STALL, t + RAM_REFRESH_AFTER_MCLK
@@ -531,6 +549,8 @@ class Board:
                 grid[-1][1] += Z80_REFRESH_STALL
         if address >= 0xE00000:
             due = self.ram_refresh_due
+            if RAM_REFRESH_TIE_AFTER_SELF_RUNS:
+                due = ram_refresh_self_runs(due, t)
             tie = due - t == RAM_REFRESH_TIE_MCLK and self.vdp.dot_clock_edge(t)
             wait, self.ram_refresh_due = ram_refresh(due, t, tie)
             if wait:

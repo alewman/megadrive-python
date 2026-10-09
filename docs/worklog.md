@@ -6956,3 +6956,38 @@ Changed: MoD's `gen_test_z80_bus` prints its "Delay with 6T M-cycle" counter 000
 value is published for it, and the die cannot give one: on Nuked-MD the ROM's 68000
 makes no bus cycle at all from about +2.5M MCLK, once its Z80 tests begin, and nothing is
 printed.
+
+### The tie after the self-runs
+
+Sonic's step at +51,931,635: the die's work-RAM read at +51,931,586 is held 21 and the
+board's is not. The die's refresh counter, at that /AS (the harness's mask bit 6), steps
+from 111 to 112 as the dot clock changes: a tie, and taken (the rule of "The tie at
+112"). The board's due there, +51,931,593, was the die's to the MCLK -- 7 after the /AS
+-- but only once the refreshes that had run by themselves since its last access were
+counted in (the RAM had been left alone for 7,800 MCLK, eight self-runs). The tie was
+judged before that, against the due as last stored (+51,924,145), so it was never even
+tried. `board.RAM_REFRESH_TIE_AFTER_SELF_RUNS`: the self-runs are counted first
+(`board.ram_refresh_self_runs`, which `ram_refresh` now uses too), then the tie. Test:
+`test_the_tie_is_judged_after_the_self_runs`. Overdrive 2's work RAM is never idle that
+long before a tie, so its judge did not see it.
+
+On the way, Sonic's run tabulated the die's counter at every work-RAM /AS from +45M to
++60M (61,826 accesses) against what each one waited: 113-126 taken, 21; 127, 35 (the
+self-run about to start); 0, 1, 2, 3 after it began, 28, 21, 14, 7; 112 either way, the
+tie. The board's windows give every one of those, reading its due as the step to 113.
+After a take the counter starts again so that 113 falls 819 MCLK after the taking /AS,
+as `RAM_REFRESH_AFTER_MCLK` has it.
+
+Sonic now agrees with the die to +55,151,173, its first interrupt. There the board's
+autovectored acknowledge was 49 MCLK shorter: `cold_boot_drift` moved the board's clock
+on without the 68000's own count of clocks, from which the core keeps its E clock. A
+68000 clocked from power-on through the die's reset hold has run those 64,695 clocks
+too, and with them counted the acknowledge's wait comes out 14 MCLK shorter instead:
+the board's SR push 14 early, its vector fetch at the die's MCLK. Where those two clocks
+go inside the exception is the next question. The paths still part at +55,387,710, on a
+read of the FM's busy flag at the same MCLK on both, "not busy" on the die and "busy" on
+the board.
+
+Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (154, CPython and PyPy),
+Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
+6,981-7,200 (all 220 within three frames, 75 at the expected one).

@@ -265,3 +265,33 @@ def test_a_refresh_due_a_clock_after_the_as_is_taken_on_a_dot_clock_edge():
             board._bus_cycle(0xFF0000)
             taken[edge] = board.stall == 21
         assert taken == {True: expected, False: False}
+
+
+def test_the_tie_is_judged_after_the_self_runs():
+    """Sonic the Hedgehog from power-on on Nuked-MD: after a run of refreshes that ran
+    by themselves, the one now due is 7 MCLK after a work-RAM /AS on a dot clock edge,
+    and the access takes it -- the tie is judged against the due those self-runs leave,
+    not the one stored before them (docs/worklog.md, "The tie after the self-runs")."""
+    import megadrive_python.board as board_module
+    from megadrive_python.board import RAM_REFRESH_AFTER_MCLK, RAM_REFRESH_SELF_MCLK
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    period = RAM_REFRESH_SELF_MCLK + RAM_REFRESH_AFTER_MCLK
+    stored = 1000
+    access = stored + 8 * period - 7  # the eighth due after it, 7 MCLK on
+    taken = {}
+    for rule in (1, 0):
+        board_module.RAM_REFRESH_TIE_AFTER_SELF_RUNS = rule
+        try:
+            board = System(MACHINES["nuked-md"], Cartridge(bytes(0x10000))).board
+            board.arbiter_enabled = False
+            board.cart_refresh_due = 1 << 62
+            board.vdp.dot_clock_edge = lambda t: True
+            board.ram_refresh_due, board.stall = stored, 0
+            board.m68k_access_clock = lambda: access
+            board._bus_cycle(0xFF0000)
+            taken[rule] = board.stall == RAM_REFRESH_STALL
+        finally:
+            board_module.RAM_REFRESH_TIE_AFTER_SELF_RUNS = 1
+    assert taken == {1: True, 0: False}
