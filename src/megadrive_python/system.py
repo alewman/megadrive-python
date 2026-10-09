@@ -135,6 +135,13 @@ Z80_BUSACK_AT_CYCLE_END = True
 Z80_BUSACK_AFTER_MCLK = 3
 Z80_RESUME_MCLK = 42
 Z80_RESET_RESUME_MCLK = 57
+#: A bus request made while the Z80 is held in reset is granted only after its reset
+#: is released and the M1 cycle it starts with has run (the request is sampled at that
+#: cycle's end, as at any other): Nuked-MD, Sonic the Hedgehog from power-on requests
+#: the bus at +6,850, releases the reset at +6,906, the die's Z80 fetches at +6,945 and
+#: /BUSAK falls at +6,997, so the 68000's first poll reads "busy" (docs/worklog.md,
+#: "A second title"). Die-derived. False keeps the grant the request made in reset.
+Z80_BUSACK_AFTER_RESET = 1
 
 
 class System:
@@ -343,6 +350,10 @@ class System:
             start = edge - Z80_DIVIDER
             self.z80_mclk = start
             self._z80_partial = (start, start + 4 * Z80_DIVIDER)
+            if Z80_BUSACK_AFTER_RESET and board.arbiter_enabled:
+                # The grant asked for during the reset comes after that M1 cycle.
+                board.busack_at = max(board.busack_at, start + 4 * Z80_DIVIDER
+                                      + Z80_BUSACK_AFTER_MCLK)  # fmt: skip
             return
         if self._z80_partial is None:
             self.z80_mclk = max(self.z80_mclk, edge - Z80_DIVIDER)

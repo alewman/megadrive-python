@@ -2,10 +2,10 @@
 """Where the board's 68000 gets ahead of the referee's, bus cycle by bus cycle.
 
 Overdrive 2's boot, from the Z80's final start (the 68000's write releasing the bus
-after the sound driver is loaded) to a later point, runs on both machines; this lines
-up their 68000 bus cycles by address and kind and reports the time difference as it
+after the sound driver is loaded) to a later point, runs on both machines; this walks
+their 68000 bus cycles together (``drift_walk``) and reports the time difference as it
 goes, so the first cycle where the board runs ahead is named rather than guessed
-(docs/worklog.md, "The boot offset").
+(docs/worklog.md, "The boot offset"), and where the two first take different paths.
 
 The referee's cycles come from a Nuked-MD bus trace (``validation/nuked_md_headless.c``
 ``NMD_TRACE``) covering the window, the board's from :meth:`Board._bus_cycle`, which
@@ -14,7 +14,7 @@ referee reports version 1 at $A10001 (a TMSS Model 1, its README's VA7), and Ove
 takes a different path at boot on a version 0 console (docs/worklog.md, "The console
 model"). Both are anchored at the same event: the 68000's
 second write of $0000 to $A11100 after the final $A11200 release (the Z80's start).
-For each aligned cycle the report gives the referee's time since the anchor, the
+For each cycle walked the report gives the referee's time since the anchor, the
 difference (board minus referee, MCLK), and what the two held the 68000 for; a line
 is printed wherever the difference changes.
 
@@ -24,13 +24,13 @@ is printed wherever the difference changes.
 from __future__ import annotations
 
 import argparse
-import difflib
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 
+import drift_walk  # noqa: E402
 import nuked_md  # noqa: E402
 
 from megadrive_python.board import Board  # noqa: E402
@@ -78,13 +78,10 @@ def referee(trace: Path) -> list[tuple]:
             if e.type == nuked_md.EV_M68K and e.by_m68k]  # fmt: skip
 
 
-def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss",
-          refresh_restart: bool = True) -> list[tuple]:  # fmt: skip
-    """The same for the board, from power-on to ``until`` MCLK, reset pressed at
-    ``reset_mclk`` as in docs/worklog.md Session 13's aligned run."""
-    import megadrive_python.system
-
-    megadrive_python.system.RESET_RESTARTS_REFRESH = refresh_restart  # A or B, Session 14
+def log_bus() -> list[list]:
+    """Patch :class:`Board` (before a system is built: the 68000 keeps the bound methods
+    it is given) so that every 68000 bus cycle is logged as ``[t, word address, r/w,
+    held MCLK, data]``; return the log, which fills as the system runs."""
     log: list[list] = []
     bus_cycle = Board._bus_cycle
     writing = {"flag": False}
@@ -109,7 +106,6 @@ def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss
 
         return wrap
 
-    # Patched before the system is built: the 68000 keeps the bound methods it is given.
     Board._bus_cycle = logged
     Board.write_word = wrapped(Board.write_word, False)
     Board.write_byte = wrapped(Board.write_byte, True)
@@ -126,6 +122,17 @@ def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss
 
     Board.read_word = read_logged(Board.read_word, False)
     Board.read_byte = read_logged(Board.read_byte, True)
+    return log
+
+
+def board(rom: Path, reset_mclk: int, until: int, machine: str = "megadrive-tmss",
+          refresh_restart: bool = True) -> list[tuple]:  # fmt: skip
+    """The same for the board, from power-on to ``until`` MCLK, reset pressed at
+    ``reset_mclk`` as in docs/worklog.md Session 13's aligned run."""
+    import megadrive_python.system
+
+    megadrive_python.system.RESET_RESTARTS_REFRESH = refresh_restart  # A or B, Session 14
+    log = log_bus()
     # The last instruction boundary before the press, from a first run (the press is
     # made there, at the exact clock: ``System.press_reset(at=...)``).
     probe = System(MACHINES[machine], Cartridge.from_image(load_image(rom)))
@@ -157,7 +164,8 @@ def main() -> int:
     parser.add_argument("--machine", default="megadrive-tmss",
                         help="the referee is a TMSS Model 1 (version 1)")  # fmt: skip
     parser.add_argument("--span", type=int, default=200_000, help="MCLK after the anchor")
-    parser.add_argument("--until", type=int, default=42_800_000, help="board run length")
+    parser.add_argument("--until", type=int,
+                        help="board run length (default: past the reset and the span)")  # fmt: skip
     parser.add_argument("--changes", type=int, default=60, help="difference changes shown")
     parser.add_argument("--no-refresh-restart", action="store_true",
                         help="the board without system.RESET_RESTARTS_REFRESH (A)")  # fmt: skip
@@ -167,8 +175,15 @@ def main() -> int:
     parser.add_argument("--min-step", type=int, default=1, help="smallest change shown")
     parser.add_argument("--vblank", type=int, default=0,
                         help="anchor at the K-th vblank edge before the Z80's start")  # fmt: skip
+    parser.add_argument("--show", type=int, nargs=2, metavar=("FROM", "TO"),
+                        help="print both streams side by side over this window")  # fmt: skip
+    parser.add_argument("--save", type=Path, help="pickle both streams and anchors here")
     args = parser.parse_args()
     theirs = referee(args.trace)
+    if args.until is None:
+        # The board must run past the window, or the judge stops where its stream does.
+        after = args.from_reset[1] if args.from_reset else args.reset_mclk
+        args.until = max(42_800_000, after + args.span + 1_000_000)
     ours = board(args.rom, args.reset_mclk, args.until, args.machine, not args.no_refresh_restart)
     if args.from_reset:
         a_r = reset_anchor(theirs, args.from_reset[0])
@@ -178,26 +193,14 @@ def main() -> int:
         if args.vblank:
             a_r = vblank_anchor(theirs, a_r, args.vblank)
             a_b = vblank_anchor(ours, a_b, args.vblank)
-    t_r, t_b = theirs[a_r][0], ours[a_b][0]
-    r = [c for c in theirs[a_r:] if c[0] - t_r <= args.span]
-    b = [c for c in ours[a_b:] if c[0] - t_b <= args.span + 20_000]
-    matcher = difflib.SequenceMatcher(None, [(c[1], c[2]) for c in r], [(c[1], c[2]) for c in b],
-                                      autojunk=False)  # fmt: skip
-    pairs = [(m.a + k, m.b + k) for m in matcher.get_matching_blocks() for k in range(m.size)]
-    print(f"anchor: referee {t_r}, board {t_b}; {len(r)} referee cycles, {len(pairs)} aligned")
-    last = None
-    shown = 0
-    for i, j in pairs:
-        diff = (b[j][0] - t_b) - (r[i][0] - t_r)
-        if last is None or abs(diff - last) >= args.min_step:
-            if shown < args.changes:
-                rc, bc = r[i], b[j]
-                print(f"  +{rc[0] - t_r:7d}  diff {diff:+6d}  {rc[2]} ${rc[1]:06X}  "
-                      f"held referee {rc[3]:3d} board {bc[3]:3d}")  # fmt: skip
-            shown += 1
-            last = diff
-    final = (b[pairs[-1][1]][0] - t_b) - (r[pairs[-1][0]][0] - t_r)
-    print(f"{shown} steps of {args.min_step}+ MCLK; final difference {final:+d}")
+    print(f"anchor: referee {theirs[a_r][0]}, board {ours[a_b][0]}")
+    if args.save:
+        import pickle
+
+        with open(args.save, "wb") as out:
+            pickle.dump((theirs, ours, a_r, a_b), out)
+    drift_walk.walk(theirs, ours, a_r, a_b, args.span, changes=args.changes,
+                    min_step=args.min_step, show=args.show)  # fmt: skip
     return 0
 
 
