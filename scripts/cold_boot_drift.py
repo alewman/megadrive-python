@@ -64,6 +64,31 @@ BOARD_FIRST_MCLK = 284
 VDP_OFFSET_MCLK = 240_277
 CART_PERIOD = run_nuked_md.CART_PERIOD
 REFRESH_FIT_MCLK = 5_000_000
+SAMPLE_MCLK = 24 * 42
+#: Where the referee's slot-23 marker (``fsm_sel23`` rising) falls against the board's
+#: slot 23 when the two FMs are in step: the /IC sweep's restarts agree to this
+#: (``run_fm_ic.py``, 125 on the die against 126 here).
+FM_MARKER_MCLK = -1
+
+
+def align_fm(system: System, markers: list[float], ic: list[tuple[float, int]],
+             first: float) -> int:  # fmt: skip
+    """Put the board's FM on the referee's sample phase: its slot 23 where the referee's
+    marker is, as the referee's FM stands at its first walked cycle (``first``, before
+    the cartridge's first /IC). Returns the shift made, MCLK."""
+    asserted = [t for t, level in ic if level and t > 0]
+    before = min(asserted) if asserted else float("inf")
+    reference = next(m for m in markers if m >= first)
+    if reference >= before:
+        raise SystemExit("the cartridge resets the FM before the walk: no phase to read")
+    fm = system.board.fm
+    target = int(reference) - VDP_OFFSET_MCLK + FM_MARKER_MCLK
+    fm.run(target - SAMPLE_MCLK)
+    slot23 = fm.mclk - ((fm.cycles - 23) % 24) * 42
+    shift = (target - slot23) % SAMPLE_MCLK
+    fm.mclk += shift % 42
+    fm.cycles = (fm.cycles - shift // 42) % 24
+    return shift
 
 
 def cartridge_phase(events: list) -> int:
@@ -96,7 +121,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         run = nuked_md.run(args.rom, until, trace=(0, until), trace_mask=1, pal=True,
-                           tmp=Path(tmp))  # fmt: skip
+                           fm_markers=True, tmp=Path(tmp))  # fmt: skip
     # Two cycles logged at power-on, before the 68000 leaves reset, are left out.
     events = [e for e in run.events if e.type == nuked_md.EV_M68K and e.by_m68k and e.t >= 100]
     theirs = [(e.t, e.addr & 0xFFFFFE, "r" if e.read else "w", e.length - judge.AS_LOW, e.data)
@@ -122,6 +147,8 @@ def main() -> int:
     # The 68000's E clock runs from power-on, through the referee's reset hold; the core
     # counts it from the clocks it has run (``M68000CPU.clock``).
     system.m68k.clock += offset // M68K_DIVIDER
+    shift = align_fm(system, run.fm_markers, run.fm_ic, events[FIRST].t)
+    print(f"the FM's sample phase moved {shift} MCLK onto the referee's")
     system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK
     system.board.ram_refresh_due = ram_due - VDP_OFFSET_MCLK
     while system.mclk < until - VDP_OFFSET_MCLK:

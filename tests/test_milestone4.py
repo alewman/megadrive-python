@@ -179,6 +179,25 @@ def test_an_ic_write_restarts_the_slot_counter_only_7_to_27_mclk_into_a_slot() -
         assert restarted == (7 <= position < 28), position
 
 
+def test_a_short_ic_pulse_leaves_the_chip_where_a_long_one_does() -> None:
+    """Nuked-MD (scripts/run_fm_ic.py --short, docs/worklog.md "The busy flag"): /IC
+    stops the chip for three cycles after the assertion, and released sooner it stays
+    stopped for the rest of them -- a 1-cycle pulse and a 10-cycle one leave the slot
+    counter at the same place."""
+    from megadrive_python.ym2612 import IC_WRITE_SLOT_LAG
+
+    counts = {}
+    for length in (1, 10):
+        chip = YM2612(FM_DISCRETE)
+        chip.mclk, chip.cycles = 4200, 10
+        chip.reset_line(True, 4200, IC_WRITE_SLOT_LAG)
+        chip.run(4200 + length * 42)
+        chip.reset_line(False, 4200 + length * 42)
+        chip.run(4200 + 20 * 42)
+        counts[length] = chip.cycles
+    assert counts[1] == counts[10]
+
+
 def test_audio_path_mixes_and_resamples() -> None:
     path = AudioPath(MACHINES["genesis"], sample_rate=44_100)
     fm = [(100, -100)] * 5000
