@@ -6991,3 +6991,68 @@ the board.
 Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (154, CPython and PyPy),
 Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
 6,981-7,200 (all 220 within three frames, 75 at the expected one).
+
+### The busy flag
+
+Sonic's and Gunstar Heroes' paths parted on the same kind of read: the 68000 writes an FM
+register and polls the status for BUSY to clear, and the last poll reads differently --
+Sonic's 1,407 MCLK after the data write, ready on the die and busy on the board;
+Gunstar's 1,421 after, busy on the die and ready on the board.
+
+`scripts/run_fm_busy.py` takes the Z80's bus and, over and over, writes an address and a
+data byte to the FM and polls the status 40 times, two delays walking the write through
+every phase of the chip's 42-MCLK cycle and the polls through every 7 MCLK. Each machine
+measured against its own FM's cycle, 1,408 writes:
+
+| the write's /AS in the cycle | BUSY clear, die | BUSY clear, board (before) |
+| ---: | ---: | ---: |
+| 0 | 1,407 | 1,435 |
+| 7 | 1,400 | 1,428 |
+| 14 | 1,393 | 1,421 |
+| 21 | 1,428 | 1,414 |
+| 28 | 1,421 | 1,407 |
+| 35 | 1,414 | 1,400 |
+
+The die's BUSY clears at a fixed point of the cycle grid, and a write in the cycle's
+first half counts from that cycle, one in its second half from the next; the board took
+every write and read the status at the access's /AS. `board.M68K_FM_WRITE_MCLK` and
+`M68K_FM_READ_MCLK` (the nuked-md machine only): the FM takes a 68000 write 21 MCLK after
+/AS and drives its status for a read as it stands 27 after. The sweep allows 15-21 and
+22-28; Gunstar's own write and poll at +96,495,063 settle both (below).
+
+Two more things were in the way before that showed in the games.
+
+- **A short /IC pulse.** Asserting /IC stops the chip for three cycles
+  (`ym2612.IC_FSM_HOLD`); the board ended that hold at the release. Gunstar's start-up
+  pulses /IC for 112 MCLK (+13,454), and the die's chip stays where a longer pulse
+  leaves it. `run_fm_ic.py --short` (pulses of 56-224 MCLK from two register writes):
+  from 140 MCLK the board's shifts and restarts were the die's, at 84-139 a cycle short.
+  `ym2612.IC_HOLD_PAST_RELEASE`: the hold runs out whatever /IC does. Open: a 56-MCLK
+  pulse leaves the die's chip 28 MCLK earlier than the board's, at every position --
+  one length, no mechanism yet.
+- **The FM's power-on phase in the cold-boot judge.** Like the refresh phases it is
+  nothing either machine models; before the first /IC the two FMs were 357.5 MCLK
+  apart, so Gunstar's short pulse paused the die's chip and restarted the board's.
+  `cold_boot_drift.align_fm` puts the board's slot 23 a master clock before the die's
+  marker (`nuked_md.run(..., fm_markers=True)`), and the two stay within 0.5-2 MCLK
+  through every /IC Gunstar gives them, out to +96.5M.
+
+With all of that, the sweep's cartridge run through `cold_boot_drift` (every phase on
+the die's, each poll against the die's at the same MCLK) agrees in every one of its
+polls. Gunstar's parting write lands at phase 21 of both FMs' cycles, the board's half
+an MCLK after the die's; the die takes it a cycle late, which needs the write at 21 (no
+earlier), and its poll 1,421 MCLK on reads busy with the die's BUSY falling at
++1,448.5, which needs the read before 28: from a snapshot just before it, 27 and 22 read
+busy, 28 ready.
+
+From power-on now: Gunstar agrees with the die to +96,673,913 (+96,496,519), Sonic to
++55,151,173, Streets of Rage 2 to +139,046,873 -- each its first interrupt, where the
+board's 68000 comes out of the acknowledge 56 MCLK late (Gunstar, Streets of Rage 2) or
+14 early for a cycle (Sonic). That is the next question. The timer flag's sweep
+(`run_fm_timer.py`) is no nearer the die's resets than before (133-147 against
+126-196); its sets now begin where the die's do, 1,148 MCLK after the load (1,141), and
+end at 2,030 against the die's 2,009.
+
+Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (155, CPython and PyPy),
+Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
+6,981-7,200 (all 220 within three frames, 75 at the expected one).

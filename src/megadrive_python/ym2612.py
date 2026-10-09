@@ -202,6 +202,14 @@ TIMER_CONTROL_DELAY_CYCLES = 2
 #: Overdrive 2 boot's later assertions, a reset and a pause, lands within 0.5 MCLK of the
 #: die's (docs/worklog.md, "The FM's restart").
 IC_FSM_HOLD = 3
+#: ... and stands still for all of them even when /IC goes high again sooner: a pulse
+#: shorter than the hold leaves the chip where a longer one does. Nuked-MD
+#: (``scripts/run_fm_ic.py --short``, pulses of 56-224 MCLK from two register writes, every
+#: position): from 140 MCLK the board's shifts and restarts were the die's, below it
+#: 42 MCLK or more short of them; Gunstar Heroes' start-up gives the chip a 112-MCLK
+#: pulse at +13,454, which left the board's FM a cycle off the die's for the rest of the
+#: run (docs/worklog.md, "The busy flag"). Die-derived. False ends the hold at release.
+IC_HOLD_PAST_RELEASE = 1
 #: Whether the slot counter is also reset depends on where in its slot the assertion
 #: falls: ``i_fsm_reset`` (``fc1004.c``, ``ic_check`` three clocks late) resets it only
 #: if a phase-1 clock still comes while it holds. Measured by clocking Nuked-MD's own
@@ -527,6 +535,16 @@ class YM2612:
                 self._acc_n -= CYCLES_PER_SAMPLE
                 self.samples.append((0, 0))
             return
+        if self._ic_hold and IC_HOLD_PAST_RELEASE:
+            # /IC released before its brief hold was over: the chip stands still for
+            # the rest of it all the same.
+            hold = min(self._ic_hold, cycles)
+            self._ic_hold -= hold
+            cycles -= hold
+            self._acc_n += hold
+            while self._acc_n >= CYCLES_PER_SAMPLE:
+                self._acc_n -= CYCLES_PER_SAMPLE
+                self.samples.append((0, 0))
         for _ in range(cycles):
             self.cycle()
 

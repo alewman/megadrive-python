@@ -11,7 +11,11 @@ pulse made, modulo a sample (1,008 MCLK), is tabulated against where in the FM's
 the assertion's bus cycle began and against the pulse's length (docs/worklog.md, "The
 FM's restart, swept").
 
-    python scripts/run_fm_ic.py [--frames 10]
+    python scripts/run_fm_ic.py [--frames 10] [--short]
+
+``--short``: pulses of 56 to 224 MCLK instead, each made by two register writes
+(``move.w d0,(a1)``, 0 to 6 ``nop``s, ``move.w d1,(a1)``), the length of the /IC pulse
+a game's start-up may give the chip (Gunstar Heroes, +13,454: 112 MCLK).
 """
 
 from __future__ import annotations
@@ -69,6 +73,27 @@ def cartridge() -> bytes:
         code += _w(hold)
     disp = table - (table_at + 2)
     code[table_at + 2:table_at + 4] = disp.to_bytes(2, "big")
+    return nuked_md_cartridge(bytes(code))
+
+
+def short_cartridge() -> bytes:
+    """The ``--short`` cartridge: every pass, a pulse of each length in turn."""
+    code = bytearray()
+    code += _w(0x46FC, 0x2700)  # move.w #$2700,sr
+    code += bytes.fromhex("23fc5345474100a14000")  # move.l #'SEGA',$A14000
+    code += _w(0x33FC, 0x0100, 0x00A1, 0x1100)  # move.w #$0100,$A11100: the Z80's bus
+    code += _w(0x33FC, 0x0100, 0x00A1, 0x1200)  # move.w #$0100,$A11200: Z80 and FM run
+    code += _w(0x43F9, 0x00A1, 0x1200)  # lea $A11200,a1
+    code += _w(0x45F9, 0x00A0, 0x1000)  # lea $A01000,a2 (Z80 RAM)
+    code += _w(0x7000, 0x323C, 0x0100)  # moveq #0,d0; move.w #$0100,d1
+    code += _w(0x7400)  # moveq #0,d2
+    loop = len(code)
+    for nops in range(7):
+        code += _w(0x3280) + _w(0x4E71) * nops + _w(0x3281)  # move.w d0,(a1); nops; move.w d1,(a1)
+        code += _w(0x3A3C, 0x0300, 0x51CD, 0xFFFE)  # move.w #$300,d5; dbra d5,*: settle
+        code += _w(0x5242, 0x0242, 0x003F, 0x3602)  # addq.w #1,d2; andi.w #63,d2; move.w d2,d3
+        code += _w(0x4E71, 0x1480, 0x51CB, 0xFFFA)  # nop; move.b d0,(a2); dbra d3,*-4: the walk
+    code += _w(0x6000, (loop - (len(code) + 2)) & 0xFFFF)  # bra.w back
     return nuked_md_cartridge(bytes(code))
 
 
@@ -159,18 +184,20 @@ def board(rom: bytes, frames: int) -> list[tuple[int, int, int, int]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--frames", type=int, default=10)
+    parser.add_argument("--short", action="store_true", help="pulses of 56-224 MCLK")
     args = parser.parse_args()
-    rom = cartridge()
+    rom = short_cartridge() if args.short else cartridge()
     tables = {"referee": shifts(referee(rom, args.frames)), "board": shifts(board(rom, args.frames))}
-    lengths = sorted({k[0] // 100 * 100 for t in tables.values() for k in t})
+    bucket = 28 if args.short else 100
+    lengths = sorted({k[0] // bucket * bucket for t in tables.values() for k in t})
     for length in lengths:
-        print(f"pulses {length}-{length + 99} MCLK long: shift (MCLK, mod {SAMPLE}) by the "
-              f"assertion's /AS, MCLK into its slot")
+        print(f"pulses {length}-{length + bucket - 1} MCLK long: shift (MCLK, mod {SAMPLE}) by "
+              f"the assertion's /AS, MCLK into its slot")
         for position in range(0, SLOT, 7):
             row = []
             for name, table in tables.items():
                 picked = [(k, n) for k, n in table.items()
-                          if k[0] // 100 * 100 == length and k[1] // 7 * 7 == position]
+                          if k[0] // bucket * bucket == length and k[1] // 7 * 7 == position]
                 by_shift = collections.Counter()
                 by_restart = collections.Counter()
                 for k, n in picked:

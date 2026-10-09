@@ -159,6 +159,20 @@ Z80_CATCH_UP_EACH_CYCLE = 1
 #: as Kabuto has it for the 68000's own VDP writes (``CART_REFRESH_STALL``). The board had
 #: the Z80's cycle take it, and the 68000's take it again. Die-derived.
 Z80_REFRESH_CARTRIDGE_ONLY = 1
+#: A 68000 write to the FM is taken this long after its /AS, and a 68000 read gets the
+#: status as it stands this long after: so a data write landing in the first half of
+#: one of the chip's 42-MCLK cycles is taken by that cycle and one in the second half by
+#: the next. Nuked-MD (die-derived; ``scripts/run_fm_busy.py``, 1,408 writes walked
+#: through every phase of the cycle and every 7 MCLK of the polls): BUSY clears 1,407
+#: MCLK after a write's /AS less its phase in the cycle up to 14, 1,449 less it from 21;
+#: the board, taking every write and reading the status at /AS, had 1,435 less it at
+#: every phase -- Sonic's and Gunstar Heroes' first parted paths. The sweep puts the
+#: write at 15-21 and the read at 22-28; Gunstar's own write at +96,495,063, at phase 21
+#: with the two FMs half an MCLK apart, taken a cycle late on the die, needs 21, and its
+#: poll at +1,421, the die's BUSY falling at +1,448.5, read busy, needs at most 27
+#: (docs/worklog.md, "The busy flag"). The nuked-md machine only.
+M68K_FM_WRITE_MCLK = 21
+M68K_FM_READ_MCLK = 27
 #: Whatever it goes to, a Z80 cycle over the 68000's bus uses up a cartridge refresh
 #: that fell due by its start: the 68000's next cartridge access is not held. Due after
 #: the Z80's cycle began, the 68000's next cartridge access takes it (14). Die-derived:
@@ -282,6 +296,11 @@ class Board:
         self.fm = YM2612(machine.fm)
         if machine.dma_figures == "die":
             self.fm.control_delay = TIMER_CONTROL_DELAY_CYCLES
+        #: When the FM takes a 68000 write and drives its status for a 68000 read, after
+        #: the access's /AS (:data:`M68K_FM_WRITE_MCLK`, :data:`M68K_FM_READ_MCLK`).
+        self.fm_write_lag, self.fm_read_lag = (
+            (M68K_FM_WRITE_MCLK, M68K_FM_READ_MCLK) if machine.dma_figures == "die" else (0, 0)
+        )
         self.fm.reset_line(True)
         #: The PSG lives inside the VDP and is written at $C00011 or $7F11; reading
         #: its port locks up a real console (CMD).  It is not held by the Z80's reset.
@@ -862,7 +881,7 @@ class Board:
             # the word paths above duplicate.
             return self.z80_ram[offset & 0x1FFF]
         if offset < 0x6000:
-            return self._fm_read(offset & 3)
+            return self._fm_read(offset & 3, t + self.fm_read_lag)
         if offset >= 0x7F00:
             raise Lockup(f"68000 access to ${address:06X}: the VDP through the Z80's space")
         return 0xFF  # the bank register and $6100-$7EFF read $FF (CMD 2.1)
@@ -876,7 +895,7 @@ class Board:
         if offset < 0x4000:
             self.z80_ram[offset & 0x1FFF] = value
         elif offset < 0x6000:
-            self.sound_sync(self.m68k_access_clock())
+            self.sound_sync(t + self.fm_write_lag)
             self.fm.write(offset & 3, value)
         elif offset < 0x6100:
             self.write_bank(value)

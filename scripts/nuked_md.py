@@ -152,6 +152,10 @@ class Run:
     ram: bytes = b""
     zram: bytes = b""
     vram: bytes = b""
+    #: The FM's slot-23 markers (``NMD_FMSIG``'s sel23 rising), in MCLK, and its /IC
+    #: changes as (MCLK, 1 asserted / 0 released).
+    fm_markers: list[float] = field(default_factory=list)
+    fm_ic: list[tuple[float, int]] = field(default_factory=list)
     stdout: str = ""
     seconds: float = 0.0
 
@@ -199,6 +203,7 @@ def run(
     dump_ram: bool = False,
     dump_zram: bool = False,
     dump_vram: bool = False,
+    fm_markers: bool = False,
     nice: int = 10,
     tmp: Path | None = None,
 ) -> Run:
@@ -231,6 +236,8 @@ def run(
             env["NMD_DUMP_ZRAM"] = str(work / "zram.bin")
         if dump_vram:
             env["NMD_DUMP_VRAM"] = str(work / "vram.bin")
+        if fm_markers:
+            env["NMD_FMSIG"] = str(work / "fm.txt")
         argv = ["nice", "-n", str(nice), str(BINARY)]
         if pal:
             argv.append("-pal")
@@ -246,6 +253,17 @@ def run(
             raise RuntimeError(f"Nuked-MD exited {proc.returncode}: {proc.stderr[-400:]}")
         if trace is not None:
             out.events = read_trace(work / "trace.bin")
+        if fm_markers:
+            last, ic = 0, None
+            for line in open(work / "fm.txt"):
+                fields = line.split()
+                t, sel23, level = int(fields[0]) / HALF, int(fields[4]), int(fields[6])
+                if sel23 and not last:
+                    out.fm_markers.append(t)
+                last = sel23
+                if level != ic:
+                    out.fm_ic.append((t, level))
+                    ic = level
         for name, flag in (("ram", dump_ram), ("zram", dump_zram), ("vram", dump_vram)):
             if flag and (work / f"{name}.bin").exists():
                 setattr(out, name, (work / f"{name}.bin").read_bytes())
