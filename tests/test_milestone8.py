@@ -241,3 +241,68 @@ def test_an_extended_ssf_cartridge_maps_its_ram_with_a130f1():
     assert cart.sram_mapped and not cart.sram_protected
     cart.write_time(0xA130F1, 0x03)
     assert cart.sram_mapped and cart.sram_protected
+
+
+def _mapper_image(length: int, *, write: bytes, header: bytes = b"SEGA GENESIS    ") -> bytes:
+    # ``write`` is the 68000 code placed at $292, where the Rickroll cartridge's
+    # reset code writes the page registers (issue #2).
+    return _image(length, {0x100: header, 0x292: write})
+
+
+def test_an_oversize_image_whose_code_writes_the_page_registers_is_on_the_sega_mapper():
+    # The 5 MB "Rickroll" video player carries Super Street Fighter II's header, is
+    # in no software list, and announces no board; its own code is the statement:
+    # move.b #1,$A130F3 ... move.b #7,$A130FF at reset, pages 8 and 9 at $A130FD /
+    # $A130FF while playing. The fallback reads that code, not the size.
+    from megadrive_python.cartridge import Cartridge, writes_sega_mapper
+
+    immediate = bytes.fromhex("13fc 0001 00a1 30f3")  # move.b #1,$A130F3
+    cart = Cartridge.from_image(_mapper_image(0x500000, write=immediate))
+    assert cart.slot == "rom_ssf2"
+    assert cart.mapper and cart.unsupported is None
+    assert not cart.sram
+
+    register = bytes.fromhex("13c0 00a1 30fd")  # move.b d0,$A130FD
+    assert Cartridge.from_image(_mapper_image(0x500000, write=register)).slot == "rom_ssf2"
+    postinc = bytes.fromhex("13d8 00a1 30ff")  # move.b (a0)+,$A130FF
+    assert writes_sega_mapper(_mapper_image(0x500000, write=postinc))
+
+
+def test_the_page_register_fallback_needs_a_write_and_an_oversize_image():
+    from megadrive_python.cartridge import Cartridge, writes_sega_mapper
+
+    # The address alone is not a write: a table of addresses, or a read, says nothing.
+    address_only = bytes.fromhex("0000 00a1 30f3")
+    assert not writes_sega_mapper(_mapper_image(0x500000, write=address_only))
+    read = bytes.fromhex("1039 00a1 30f3")  # move.b $A130F3,d0
+    assert not writes_sega_mapper(_mapper_image(0x500000, write=read))
+    # $A130F1 is the battery-RAM control, not a page register.
+    battery = bytes.fromhex("13fc 0001 00a1 30f1")  # move.b #1,$A130F1
+    assert not writes_sega_mapper(_mapper_image(0x500000, write=battery))
+    # An odd offset is not an instruction boundary.
+    assert not writes_sega_mapper(_image(0x500000, {0x293: bytes.fromhex("13fc 0001 00a1 30f3")}))
+
+    # Without a write, the oversize guard keeps its say.
+    plain = Cartridge.from_image(_mapper_image(0x500000, write=b""))
+    assert plain.slot == "rom" and plain.unsupported.startswith("oversize")
+    # Within the window there is nothing to page: the fallback does not apply.
+    small = Cartridge.from_image(
+        _mapper_image(0x400000, write=bytes.fromhex("13fc 0001 00a1 30f3"))
+    )
+    assert small.slot == "rom" and small.unsupported is None
+
+
+def test_the_page_register_fallback_honours_a_backup_ram_field():
+    from megadrive_python.cartridge import Cartridge
+
+    image = _image(
+        0x500000,
+        {
+            0x100: b"SEGA GENESIS    ",
+            0x292: bytes.fromhex("13fc 0001 00a1 30f3"),
+            0x1B0: b"RA\xf8\x20\x00\x20\x00\x00\x00\x20\xff\xff",
+        },
+    )
+    cart = Cartridge.from_image(image)
+    assert cart.slot == "rom_ssf2"
+    assert len(cart.sram) == 0x8000 and cart.sram_start == 0x200000

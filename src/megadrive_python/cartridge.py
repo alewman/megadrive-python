@@ -5,7 +5,9 @@ $A13000-$A130FF. The board it is on comes from MAME's software list
 (``/usr/share/games/mame/hash/megadriv.xml``, read at runtime by SHA-1, as
 sms-python reads its lists): the ``slot`` feature names the board and a ``sram``
 data area gives the size of battery RAM. An unlisted image falls back to its header
-(``RA`` at $1B0, the Manual's backup-RAM field; CMD ``gen-hw.txt`` 4.1).
+(``RA`` at $1B0, the Manual's backup-RAM field; CMD ``gen-hw.txt`` 4.1), and an
+unlisted image larger than the 4 MB window whose own code writes the Sega mapper's
+page registers goes on that mapper (:func:`writes_sega_mapper`).
 
 Boards modelled:
 
@@ -302,6 +304,36 @@ def header_backup_ram(image: bytes) -> tuple[int, int] | None:
     return (start, end) if end >= start else None
 
 
+#: ``move.b <ea>,(xxx).l`` opcodes: 0001 111 001 eeeeee, so $13C0-$13FF; the immediate
+#: form is $13FC and carries its byte in the next word.
+_MOVE_B_ABS_L = range(0x13C0, 0x1400)
+
+
+def writes_sega_mapper(image: bytes) -> bool:
+    """True when the image's own code writes the Sega mapper's page registers.
+
+    The registers are $A130F3, $A130F5, ... $A130FF (``ssf2tnc.txt``), reachable only
+    as an absolute long operand, and a page write is a byte write (undocumented-
+    behavior item 20: every observed write is a byte to an odd address). So the
+    search is for a ``move.b`` whose destination is one of those addresses: the
+    operand words ``$00A1 $30Fx`` (x odd, 3 to F) preceded by an opcode in
+    $13C0-$13FF, either directly (register or memory source) or at one word's
+    remove (the immediate form, $13FC, whose byte sits between). The whole image is
+    searched at even offsets: the pattern is eight or six specific bytes, so data
+    produces it by accident at no realistic rate, and a cartridge's paging code need
+    not be near the reset vector.
+    """
+    at = image.find(b"\x00\xa1\x30", 0)
+    while at != -1:
+        if at % 2 == 0 and at + 3 < len(image) and image[at + 3] & 0x01 and image[at + 3] >= 0xF3:
+            before = int.from_bytes(image[at - 2 : at], "big") if at >= 2 else -1
+            earlier = int.from_bytes(image[at - 4 : at - 2], "big") if at >= 4 else -1
+            if before in _MOVE_B_ABS_L or earlier == 0x13FC:
+                return True
+        at = image.find(b"\x00\xa1\x30", at + 1)
+    return False
+
+
 def _padded(image: bytes) -> bytes:
     size = 1
     while size < len(image):
@@ -424,6 +456,23 @@ class Cartridge:
             cart.sram_end = cart.sram_start + 2 * len(cart.sram)
             return cart
         backup = header_backup_ram(image)
+        if len(image) > ROM_WINDOW and writes_sega_mapper(image):
+            # Larger than the window, listed nowhere, announcing no board in its
+            # header -- but its own code writes the Sega mapper's page registers,
+            # which no cartridge without that mapper has a reason to do. That is an
+            # observation of the cartridge, like the ``SEGA SSF`` string above, not
+            # a guess from its size: an oversize image that never touches
+            # $A130F3-$A130FF still goes to the ``oversize`` guard below. The case
+            # is the hobbyist cartridge that reused a commercial header (the 5 MB
+            # "Rickroll" video player carries Super Street Fighter II's, issue #2).
+            # A backup-RAM field, if any, is honoured as on ``ssf_sram``.
+            if backup is None:
+                return cls(image, slot="rom_ssf2")
+            start, end = backup
+            cart = cls(image, slot="rom_ssf2", sram_size=min((end - start) // 2 + 1, 0x8000))
+            cart.sram_start = start & 0x3FFFFE
+            cart.sram_end = cart.sram_start + 2 * len(cart.sram)
+            return cart
         if backup is not None:
             start, end = backup
             size = min((end - start) // 2 + 1, 0x8000)
