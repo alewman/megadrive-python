@@ -57,9 +57,11 @@ def walk(theirs: list[tuple], ours: list[tuple], a_r: int, a_b: int, span: int, 
     end = theirs[i - 1][0] - t_r
     # The anchor's line counts as a step, as the judge has always printed it.
     print(f"{steps} steps of {min_step}+ MCLK; final difference {last:+d}")
-    print(f"walked {i - a_r - acknowledges:,} cycles to +{end:,} "
-          f"({acknowledges} referee acknowledges stepped over); first step "
-          + (f"+{first:,}" if first is not None else "none"))
+    print(
+        f"walked {i - a_r - acknowledges:,} cycles to +{end:,} "
+        f"({acknowledges} referee acknowledges stepped over); first step "
+        + (f"+{first:,}" if first is not None else "none")
+    )
     if parted:
         print(f"the paths part at referee +{theirs[i][0] - t_r:,}:")
         for k in range(-6, 8):

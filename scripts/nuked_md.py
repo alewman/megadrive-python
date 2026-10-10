@@ -255,7 +255,7 @@ def run(
             out.events = read_trace(work / "trace.bin")
         if fm_markers:
             last, ic = 0, None
-            for line in open(work / "fm.txt"):
+            for line in (work / "fm.txt").read_text().splitlines():
                 fields = line.split()
                 t, sel23, level = int(fields[0]) / HALF, int(fields[4]), int(fields[6])
                 if sel23 and not last:

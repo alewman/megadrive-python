@@ -294,8 +294,9 @@ def test_a_request_made_in_reset_is_granted_after_the_first_m1(
     "busy" -- the die's Z80 fetches its first opcode after the release and lets go only
     at that M1 cycle's end (docs/worklog.md, "A second title"). Without the rule the
     request made in reset is granted already."""
-    import megadrive_python.system as system_module
     from run_vscroll_latch import _w, nuked_md_cartridge
+
+    import megadrive_python.system as system_module
 
     monkeypatch.setattr(system_module, "Z80_BUSACK_AFTER_RESET", int(after_reset))
     code = _w(0x46FC, 0x2700)  # move.w #$2700,sr

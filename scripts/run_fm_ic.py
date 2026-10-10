@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import collections
+import itertools
 import os
 import subprocess
 import sys
@@ -54,7 +55,8 @@ def cartridge() -> bytes:
     loop = len(code)
     # The hold for this pass, HOLDS[(d6 >> 4) & 3] from a table after the code: each
     # length for 16 passes in turn.
-    code += _w(0x3006, 0xE848, 0x0240, 0x0003, 0xD040)  # move.w d6,d0; lsr.w #4,d0; andi.w #3,d0; add.w d0,d0
+    # move.w d6,d0; lsr.w #4,d0; andi.w #3,d0; add.w d0,d0
+    code += _w(0x3006, 0xE848, 0x0240, 0x0003, 0xD040)
     table_at = len(code)
     code += _w(0x41FA, 0x0000)  # lea table(pc),a0 (patched below)
     code += _w(0x3830, 0x0000)  # move.w (a0,d0.w),d4
@@ -72,7 +74,7 @@ def cartridge() -> bytes:
     for hold in HOLDS:
         code += _w(hold)
     disp = table - (table_at + 2)
-    code[table_at + 2:table_at + 4] = disp.to_bytes(2, "big")
+    code[table_at + 2 : table_at + 4] = disp.to_bytes(2, "big")
     return nuked_md_cartridge(bytes(code))
 
 
@@ -117,12 +119,13 @@ def referee(rom: bytes, frames: int) -> list[tuple[int, int, int, int]]:
         (work / "rom.bin").write_bytes(rom)
         env = dict(os.environ, NMD_STOP=str((2 + frames) * PAL_FRAME_MCLK * 2),
                    NMD_TRACE=str(work / "t.bin"), NMD_TRACE_MASK="1",
-                   NMD_TRACE_FROM=str(2 * PAL_FRAME_MCLK * 2), NMD_FMSIG=str(work / "fm.txt"))  # fmt: skip
+                   NMD_TRACE_FROM=str(2 * PAL_FRAME_MCLK * 2),
+                   NMD_FMSIG=str(work / "fm.txt"))  # fmt: skip
         subprocess.run(["nice", str(nuked_md.BINARY), "-pal", str(work / "rom.bin")], env=env,
                        cwd=work, check=True, capture_output=True)  # fmt: skip
         events = nuked_md.read_trace(work / "t.bin")
         markers, last = [], 0
-        for line in open(work / "fm.txt"):
+        for line in (work / "fm.txt").read_text().splitlines():
             fields = line.split()
             sel23 = int(fields[4])
             if sel23 and not last:
@@ -131,7 +134,7 @@ def referee(rom: bytes, frames: int) -> list[tuple[int, int, int, int]]:
     writes = [(e.t, e.data) for e in events if e.type == nuked_md.EV_M68K and e.by_m68k
               and not e.read and (e.addr & 0xFFFFFE) == RESET]  # fmt: skip
     pulses = []
-    for (assert_at, low), (release_at, high) in zip(writes, writes[1:]):
+    for (assert_at, low), (release_at, high) in itertools.pairwise(writes):
         if low & 0x100 or not high & 0x100:
             continue
         i = bisect.bisect_left(markers, assert_at) - 1  # the last marker before
@@ -187,17 +190,25 @@ def main() -> int:
     parser.add_argument("--short", action="store_true", help="pulses of 56-224 MCLK")
     args = parser.parse_args()
     rom = short_cartridge() if args.short else cartridge()
-    tables = {"referee": shifts(referee(rom, args.frames)), "board": shifts(board(rom, args.frames))}
+    tables = {
+        "referee": shifts(referee(rom, args.frames)),
+        "board": shifts(board(rom, args.frames)),
+    }
     bucket = 28 if args.short else 100
     lengths = sorted({k[0] // bucket * bucket for t in tables.values() for k in t})
     for length in lengths:
-        print(f"pulses {length}-{length + bucket - 1} MCLK long: shift (MCLK, mod {SAMPLE}) by "
-              f"the assertion's /AS, MCLK into its slot")
+        print(
+            f"pulses {length}-{length + bucket - 1} MCLK long: shift (MCLK, mod {SAMPLE}) by "
+            f"the assertion's /AS, MCLK into its slot"
+        )
         for position in range(0, SLOT, 7):
             row = []
             for name, table in tables.items():
-                picked = [(k, n) for k, n in table.items()
-                          if k[0] // bucket * bucket == length and k[1] // 7 * 7 == position]
+                picked = [
+                    (k, n)
+                    for k, n in table.items()
+                    if k[0] // bucket * bucket == length and k[1] // 7 * 7 == position
+                ]
                 by_shift = collections.Counter()
                 by_restart = collections.Counter()
                 for k, n in picked:
@@ -206,9 +217,11 @@ def main() -> int:
                 # whichever is constant names the kind: a pause shifts by a fixed amount,
                 # a restart puts slot 0 a fixed time after the assertion
                 if len(by_shift) <= len(by_restart):
-                    row.append(f"{name} shift " + ",".join(f"{v}x{n}" for v, n in sorted(by_shift.items())))
+                    counts = ",".join(f"{v}x{n}" for v, n in sorted(by_shift.items()))
+                    row.append(f"{name} shift {counts}")
                 else:
-                    row.append(f"{name} restart+" + ",".join(f"{v}x{n}" for v, n in sorted(by_restart.items())))
+                    counts = ",".join(f"{v}x{n}" for v, n in sorted(by_restart.items()))
+                    row.append(f"{name} restart+{counts}")
             print(f"  {position:2d}-{position + 6:2d}:  " + "   ".join(row))
     return 0
 

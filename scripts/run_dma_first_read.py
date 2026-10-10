@@ -118,7 +118,8 @@ def main() -> int:
     for name, found in (("referee", referee(rom, args.frames)), ("board", board(rom, args.frames))):
         common = [t for t, n in found.items() if n >= max(found.values()) / 10]
         print(f"{name}: {sum(found.values())} transfers; first read {min(common)}-{max(common)} "
-              f"MCLK after the trigger's /AS for most (all: {min(found)}-{max(found)})")  # fmt: skip
+              f"MCLK after the trigger's /AS for most "
+              f"(all: {min(found)}-{max(found)})")  # fmt: skip
     return 0
 
 

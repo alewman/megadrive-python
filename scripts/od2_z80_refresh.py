@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import collections
+import itertools
 import sys
 from pathlib import Path
 
@@ -40,7 +41,7 @@ def main() -> int:
     cycles = [(c[0] - r0, c[1], c[3]) for c in theirs[first:] if c[0] - r0 <= args.span]
     # The grid's phase: after the access before each held cartridge access, and by it.
     lo, hi = -PERIOD, PERIOD
-    for (before, _, _), (t, address, held) in zip(cycles, cycles[1:]):
+    for (before, _, _), (t, address, held) in itertools.pairwise(cycles):
         if held == 14 and address < 0x800000:
             x, y = before % PERIOD, t % PERIOD
             if x > y:
@@ -50,7 +51,8 @@ def main() -> int:
             lo, hi = max(lo, x), min(hi, y)
     print(f"the die's refresh falls due at a phase in ({lo}, {hi}] MCLK, mod {PERIOD}")
     z80 = [(e.t - r0, e.addr & 0xFFFFFE) for e in nuked_md.read_trace(TRACE)
-           if e.type == nuked_md.EV_M68K and not e.by_m68k and 0 <= e.t - r0 <= args.span]  # fmt: skip
+           if e.type == nuked_md.EV_M68K and not e.by_m68k
+           and 0 <= e.t - r0 <= args.span]  # fmt: skip
     times = [c[0] for c in cycles]
     table: collections.Counter = collections.Counter()
     for t, address in z80:
@@ -62,8 +64,9 @@ def main() -> int:
                 target = "cartridge" if address < 0x800000 else f"${address:06X}"
                 after = "cartridge" if cycles[i][1] < 0x800000 else f"${cycles[i][1]:06X}"
                 table[(target, offset, after, cycles[i][2])] += 1
-    print("Z80 cycle's target, tick from its start (MCLK), the 68000's next access, its "
-          "hold: count")
+    print(
+        "Z80 cycle's target, tick from its start (MCLK), the 68000's next access, its hold: count"
+    )
     for key in sorted(table):
         print(f"  {key[0]:>10} {key[1]:+4d}  {key[2]:>10} held {key[3]:2d}: {table[key]}")
     return 0

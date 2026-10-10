@@ -63,7 +63,9 @@ def cartridge(polls: int, timer: int = 0x3FF) -> bytes:
     return nuked_md_cartridge(bytes(code))
 
 
-def measure(accesses: list[tuple[int, int, str, int]]) -> tuple[collections.Counter, collections.Counter]:
+def measure(
+    accesses: list[tuple[int, int, str, int]],
+) -> tuple[collections.Counter, collections.Counter]:
     """From (MCLK, address, r/w, byte) for the 68000's accesses to the FM: the first
     poll after each $27 load write that sees the flag set, and after each reset write
     that sees it clear, from the write. The load write resets the flag too, so its set is
@@ -163,8 +165,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--frames", type=int, default=6)
     parser.add_argument("--polls", type=int, default=30)
-    parser.add_argument("--timer", type=lambda v: int(v, 0), default=0x3FF,
-                        help="Timer A's value ($3FF overflows on its next count)")
+    parser.add_argument(
+        "--timer",
+        type=lambda v: int(v, 0),
+        default=0x3FF,
+        help="Timer A's value ($3FF overflows on its next count)",
+    )
     args = parser.parse_args()
     rom = cartridge(args.polls, args.timer)
     for name, (sets, clears) in (("referee", referee(rom, args.frames)),

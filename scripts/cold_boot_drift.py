@@ -35,6 +35,7 @@ docs/worklog.md, "A second title".
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 import tempfile
 from pathlib import Path
@@ -95,7 +96,7 @@ def cartridge_phase(events: list) -> int:
     """The referee's cartridge refresh phase (mod its period): the end of the bracket
     every held cartridge access leaves, up to the first that disagrees."""
     lo, hi = -CART_PERIOD, CART_PERIOD
-    for before, held in zip(events, events[1:]):
+    for before, held in itertools.pairwise(events):
         if held.length - judge.AS_LOW == run_nuked_md.CART_STALL and held.address < 0x800000:
             x, y = before.t % CART_PERIOD, held.t % CART_PERIOD
             if x > y:
@@ -158,8 +159,10 @@ def main() -> int:
     if ours[a_b][0] != theirs[FIRST][0] - VDP_OFFSET_MCLK:
         raise SystemExit(f"the board's first cycle is at {ours[a_b][0]}, the referee's at "
                          f"{theirs[FIRST][0]}: BOARD_FIRST_MCLK has moved")  # fmt: skip
-    print(f"board: {len(ours):,} 68000 cycles; the walk starts at MCLK {theirs[FIRST][0]:,} "
-          f"on the referee, {ours[a_b][0]:,} on the board")
+    print(
+        f"board: {len(ours):,} 68000 cycles; the walk starts at MCLK {theirs[FIRST][0]:,} "
+        f"on the referee, {ours[a_b][0]:,} on the board"
+    )
     if args.save:
         import pickle
 

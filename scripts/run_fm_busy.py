@@ -98,12 +98,13 @@ def referee(rom: bytes, frames: int) -> collections.Counter:
         (work / "rom.bin").write_bytes(rom)
         env = dict(os.environ, NMD_STOP=str((2 + frames) * PAL_FRAME_MCLK * 2),
                    NMD_TRACE=str(work / "t.bin"), NMD_TRACE_MASK="1",
-                   NMD_TRACE_FROM=str(2 * PAL_FRAME_MCLK * 2), NMD_FMSIG=str(work / "fm.txt"))  # fmt: skip
+                   NMD_TRACE_FROM=str(2 * PAL_FRAME_MCLK * 2),
+                   NMD_FMSIG=str(work / "fm.txt"))  # fmt: skip
         subprocess.run(["nice", str(nuked_md.BINARY), "-pal", str(work / "rom.bin")], env=env,
                        cwd=work, check=True, capture_output=True)  # fmt: skip
         events = nuked_md.read_trace(work / "t.bin")
         markers, last = [], 0
-        for line in open(work / "fm.txt"):
+        for line in (work / "fm.txt").read_text().splitlines():
             fields = line.split()
             sel23 = int(fields[4])
             if sel23 and not last:

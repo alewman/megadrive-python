@@ -276,7 +276,7 @@ DOT_CLOCK_LINE_LAG_MCLK = 15
 
 def _dot_clock_edges(mode: HMode) -> frozenset[int]:
     """The line offsets (MCLK from the line start) of the dot clock's edges."""
-    ends = mode.starts[1:] + [mode.length]
+    ends = [*mode.starts[1:], mode.length]
     windows = []
     i = 0
     while i < len(mode.hvals):
@@ -1729,7 +1729,9 @@ class VDP:
             # transfer to just after its last read.
             start = mclk + RAM_REFRESH_PAUSE_FROM_MCLK
             board.ram_refresh_due = ram_refresh_paused(
-                board.ram_refresh_due, start, self.mclk + RAM_REFRESH_PAUSE_TAIL_MCLK,
+                board.ram_refresh_due,
+                start,
+                self.mclk + RAM_REFRESH_PAUSE_TAIL_MCLK,
                 start + RAM_REFRESH_PAUSE_BEGAN_MCLK,
             )
         return back

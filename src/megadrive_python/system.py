@@ -322,11 +322,12 @@ class System:
             if before <= fetched and pc < 0x4000:
                 return
             self.z80_probe()
-            bus = sorted(zip((at for _end, at in self._probe_bus_ends), self._probe_bus_cart))
+            ends = (at for _end, at in self._probe_bus_ends)
+            bus = sorted(zip(ends, self._probe_bus_cart, strict=False))
             done = board.z80_prearbitrated = (start, [], bus)
         waits, bus = done[1], done[2]
         extra = sum(wait for wait, _ in waits) * Z80_DIVIDER
-        for at, cartridge in bus[len(waits):]:
+        for at, cartridge in bus[len(waits) :]:
             # The probe gives the machine cycle's first T-state; the access-timing table,
             # by which the access is placed when it runs (``Board._z80_access_time``),
             # puts it a T-state on (75 MCLK for the read in T-state 4).

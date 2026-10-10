@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 from megadrive_python.board import CART_REFRESH_MCLK, CART_REFRESH_STALL, RAM_REFRESH_STALL
 from megadrive_python.machine import MACHINES, MCLK_PER_LINE
 from megadrive_python.vdp import (
@@ -240,9 +242,9 @@ def test_the_dot_clock_runs_slow_in_h40s_long_pixels():
 
     edges = sorted(_dot_clock_edges(H40))
     assert len(edges) == 1680
-    gaps = [b - a for a, b in zip(edges, edges[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(edges)]
     assert gaps.count(3) == 60 and set(gaps) == {2, 3}
-    assert [a for a, b in zip(edges, edges[1:]) if b - a == 3][::15] == [316, 399, 482, 565]
+    assert [a for a, b in itertools.pairwise(edges) if b - a == 3][::15] == [316, 399, 482, 565]
     assert len(_dot_clock_edges(H40_VSYNC)) == 1680  # the second run moved, not changed
 
 
@@ -259,7 +261,7 @@ def test_a_refresh_due_a_clock_after_the_as_is_taken_on_a_dot_clock_edge():
         vdp = board.vdp
         taken = {}
         for edge in (True, False):
-            vdp.dot_clock_edge = lambda t, edge=edge: edge and vdp._dma_die
+            vdp.dot_clock_edge = lambda t, edge=edge, vdp=vdp: edge and vdp._dma_die
             board.ram_refresh_due, board.stall = 1007, 0
             board.m68k_access_clock = lambda: 1000
             board._bus_cycle(0xFF0000)
