@@ -7080,3 +7080,15 @@ snapshot just before it, -2 puts its SR push and vector fetch at the die's MCLK;
 In all three the paths now part on an interrupt the board's 68000 takes an instruction
 before the die's does -- the next question, and one the Overdrive 2 judge does not
 reach before +16.98M.
+
+`scripts/run_vint_sweep.py` asks where the 68000 takes a VINT: a cartridge loops on
+`nop; nop; bra.s` with VINT unmasked, its handler a different length each frame, run
+from power-on on both through `cold_boot_drift` (whose setup is now `referee()` and
+`board()`, for other harnesses). In 62 of 62 VINTs the die takes it at a later
+instruction boundary than the board, whichever of the 0-69 MCLK the board saw it before
+its boundary by: the die begins stacking 152-234 MCLK after the board's VDP raises it.
+No one delay fits all 62 (the die's boundaries bracket it at 137 and more for some, 115
+and less for others), so it is not just VINT being raised later on the die: where the
+68000 samples its interrupt lines inside the instruction comes into it. That needs the
+die's IPL lines and its 68000's interrupt decision in the trace, which the harness does
+not record yet.
