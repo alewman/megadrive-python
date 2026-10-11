@@ -221,7 +221,7 @@ class Frontend:
         )  # fmt: skip
         system.audio.sample_rate = SAMPLE_RATE
         # With the generator off the FM's registers, timers and BUSY still run, so a
-        # game behaves the same; only its sound is silent (ym2612.py, ``enabled``).
+        # game behaves the same; only its sound is silent (ym2612-python, ``enabled``).
         system.board.fm.enabled = self.fm
         return system
 

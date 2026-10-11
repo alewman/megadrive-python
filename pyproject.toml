@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "megadrive-python"
 version = "0.1.0.dev0"
-description = "Readable, pure-Python Sega Mega Drive / Genesis emulator built on m68000-python and z80-python"
+description = "Readable, pure-Python Sega Mega Drive / Genesis emulator built on m68000-python, z80-python and ym2612-python"
 readme = "README.md"
 # The floor is the newest Python PyPy supports (3.11 as of PyPy 7.3.23); raise it when PyPy does.
 requires-python = ">=3.11"
@@ -18,6 +18,8 @@ dependencies = [
     # 0.4.0 introduced the callables contract the board is built for; the access-timing
     # table (z80_python.timing, PR #19) is not released yet, so the merge is pinned.
     "z80-python @ git+https://github.com/alewman/z80-python@b62891b9bac68da196ccb47c77e1e579f207dc1c",
+    # The FM chip, extracted from this repository at efcc6bb with its history.
+    "ym2612-python @ git+https://github.com/alewman/ym2612-python@2c2ab235aed619b395ba152111cd79a6193390b3",
 ]
 
 [project.scripts]

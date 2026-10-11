@@ -155,8 +155,9 @@ def test_the_fm_slot_counter_runs_on_under_reset() -> None:
     (Nuked-MD's own ``fm.c`` clocked through every position, and the Overdrive 2 boot's
     assertions; "The one-frame slip", "The FM's restart"). Overdrive 2's Z80 driver waits on timer A
     straight after its reset."""
-    from megadrive_python.machine import YM2612 as VARIANT
-    from megadrive_python.ym2612 import IC_FSM_HOLD, IC_PAUSE_CARRY, MCLK_PER_CYCLE, YM2612
+    from ym2612_python import YM2612
+    from ym2612_python import YM2612_DISCRETE as VARIANT
+    from ym2612_python.chip import IC_FSM_HOLD, IC_PAUSE_CARRY, MCLK_PER_CYCLE
 
     fm = YM2612(VARIANT)
     fm.run(1000 * MCLK_PER_CYCLE)

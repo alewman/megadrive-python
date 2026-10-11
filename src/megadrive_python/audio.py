@@ -26,7 +26,7 @@ distortion model, so this module carries:
 
 The DAC's own step between $7F and $80 (Kabuto's "quite a jump of 3 samples") and
 the discrete chip's crossover distortion are *not* here: they belong to the chip and
-are in :mod:`megadrive_python.ym2612` (:meth:`YM2612._ch_output`, the ladder).
+are in the ym2612-python core (:meth:`ym2612_python.YM2612._ch_output`, the ladder).
 
 Rates
 -----

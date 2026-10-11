@@ -371,8 +371,8 @@ is 53,267 Hz on NTSC and 52,781 Hz on PAL. Slots 0-5 are the six channels' opera
 fixed number of cycles behind the slot being served (the phase generator 19 and 20,
 the envelope 22 and 23, the modulation 6 and 18), which is why a register written
 between two cycles reaches one operator this sample and the next operator only next
-sample, and why `src/megadrive_python/ym2612.py` runs the pipeline rather than a
-per-sample loop.
+sample, and why the FM core (ym2612-python, which this board depends on) runs the
+pipeline rather than a per-sample loop.
 
 BUSY's 32 internal cycles are 32 x 6 = 192 68000 clocks, which is Eke's measurement
 read the other way round. Timer A counts one per output sample (1,008 MCLK); timer B

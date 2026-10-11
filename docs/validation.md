@@ -239,6 +239,18 @@ costing between half and two thirds of the time.
 
 ### Milestone 4: sound
 
+**The FM chip is a core now.** It was extracted with its history into
+[ym2612-python](https://github.com/alewman/ym2612-python) from efcc6bb, and this board
+depends on it at a pinned commit (`pyproject.toml`). The records below were made on the
+board's own copy and stand: the core's code is the same, and this board's milestone 4
+tests pass unchanged against it. The FM's chip-level record continues in the core's
+`docs/validation.md`: the same eighteen streams, run longer because the board runs
+further now, **663,015,150 values, 0 different**, plus its conformance kit, the tables'
+hashes, seeded faults and speed. What stays here is the board's: when an access reaches
+the chip (`IC_SLOT_LAG`, the arbiter), the /IC, BUSY and timer sweeps on Nuked-MD
+(`scripts/run_fm_ic.py`, `run_fm_busy.py`, `run_fm_timer.py`), the PSG, and the
+analogue path (`audio.py`).
+
 The judges here are the **die-derived models**, because nothing above them covers the
 question: there is no YM2612 datasheet, no self-checking FM test ROM and no pinned
 capture of a Mega Drive PSG, which is exactly the case the tier rule reserves for
