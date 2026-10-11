@@ -2,11 +2,12 @@
 
 A readable, pure-Python emulator of the **Sega Mega Drive / Genesis**, to be
 built as a board on the family's cores:
-[m68000-python](https://github.com/alewman/m68000-python) for the main CPU and
-[z80-python](https://github.com/alewman/z80-python) for the sound CPU. The
-cores own their instruction sets; this repository will own everything around
+[m68000-python](https://github.com/alewman/m68000-python) for the main CPU,
+[z80-python](https://github.com/alewman/z80-python) for the sound CPU, and
+[ym2612-python](https://github.com/alewman/ym2612-python) for the FM chip. The
+cores own their chips; this repository will own everything around
 them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
-315-5313 / Yamaha YM7101), the YM2612 FM chip and the PSG, the I/O chip and
+315-5313 / Yamaha YM7101), the FM chip's wiring and the PSG, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
 **Status: milestones 1 to 9 of ten** ([docs/validation.md](docs/validation.md),

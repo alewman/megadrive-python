@@ -21,12 +21,12 @@ from pathlib import Path
 
 import pytest
 from conftest import ROOT
+from ym2612_python import EXP, LOG_SIN, YM2612, YM3438_ASIC
+from ym2612_python import YM2612_DISCRETE as FM_DISCRETE
 
 from megadrive_python.audio import AudioPath
-from megadrive_python.machine import MACHINES, YM3438_ASIC
-from megadrive_python.machine import YM2612 as FM_DISCRETE
+from megadrive_python.machine import MACHINES
 from megadrive_python.psg import PSG, VOLUME_LEVELS
-from megadrive_python.ym2612 import EXP, LOG_SIN, YM2612
 
 REFEREES = ROOT / "reference" / "build-referees"
 NUKED_OPN2 = ROOT / "reference" / "src" / "Nuked-OPN2" / "ym3438.c"
@@ -169,7 +169,7 @@ def test_an_ic_write_restarts_the_slot_counter_only_7_to_27_mclk_into_a_slot() -
     /IC driven by a write to $A11200 whose bus cycle begins 7-27 MCLK into the FM's slot
     restarts the slot counter at 0; at 0-6 and 28-41 it only pauses it, the count going
     on."""
-    from megadrive_python.ym2612 import IC_WRITE_SLOT_LAG
+    from ym2612_python.chip import IC_WRITE_SLOT_LAG
 
     for position in range(42):
         chip = YM2612(FM_DISCRETE)
@@ -184,7 +184,7 @@ def test_a_short_ic_pulse_leaves_the_chip_where_a_long_one_does() -> None:
     stops the chip for three cycles after the assertion, and released sooner it stays
     stopped for the rest of them -- a 1-cycle pulse and a 10-cycle one leave the slot
     counter at the same place."""
-    from megadrive_python.ym2612 import IC_WRITE_SLOT_LAG
+    from ym2612_python.chip import IC_WRITE_SLOT_LAG
 
     counts = {}
     for length in (1, 10):

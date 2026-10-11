@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+# The FM chip's two variants are the core's (ym2612-python, docs/contract.md, "One
+# chip, two variants"); a Machine names one.
+from ym2612_python import YM2612_DISCRETE, YM3438_ASIC, FMVariant
+
 MCLK_NTSC = 53_693_175
 MCLK_PAL = 53_203_424
 
@@ -45,25 +49,6 @@ class VDPVariant:
     vsram_bytes: int = 0x50
     revision: str = "315-5313A"
 
-
-@dataclass(frozen=True)
-class FMVariant:
-    """The FM chip: the discrete NMOS YM2612 or the YM3438-like core in an ASIC.
-
-    ``busy_on_all_ports``: the BUSY flag reads on every port on the ASIC but on
-    port 0 only on the discrete YM2612 (Eke's measurements on a VA4 Model 1 and a VA0
-    Model 2, forum t=386 start=810; hardware-captured). ``ladder``: the DAC's
-    crossover distortion (HardWareMan's oscilloscope traces, Aly James's
-    ``MD1_LADDER.wav``; hardware-captured), absent on the ASIC. Read from milestone 4.
-    """
-
-    name: str
-    busy_on_all_ports: bool
-    ladder: bool
-
-
-YM2612 = FMVariant("YM2612 (discrete)", busy_on_all_ports=False, ladder=True)
-YM3438_ASIC = FMVariant("YM3438-like core (ASIC)", busy_on_all_ports=True, ladder=False)
 
 VDP_5313 = VDPVariant("315-5313", revision="315-5313")
 VDP_5313A = VDPVariant("315-5313A", revision="315-5313A")
@@ -135,7 +120,7 @@ def _model(name: str, *, pal: bool, overseas: bool, **fields: object) -> Machine
 
 # The Model 1 before VA6: no TMSS, version 0, the 315-5313, the discrete YM2612.
 _MODEL1_EARLY = {
-    "vdp": VDP_5313, "fm": YM2612, "tmss": False, "hardware_version": 0,
+    "vdp": VDP_5313, "fm": YM2612_DISCRETE, "tmss": False, "hardware_version": 0,
     "audio_path": "model1",
 }  # fmt: skip
 # The Model 1 from VA6: TMSS and a nonzero version; the 315-5313A.

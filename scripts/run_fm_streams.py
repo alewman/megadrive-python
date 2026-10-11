@@ -52,10 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import audio_refs
-
-from megadrive_python.machine import YM2612 as FM_DISCRETE
-from megadrive_python.machine import YM3438_ASIC
-from megadrive_python.ym2612 import YM2612
+from ym2612_python import YM2612, YM3438_ASIC
+from ym2612_python import YM2612_DISCRETE as FM_DISCRETE
 
 ROOT = Path(__file__).resolve().parent.parent
 ROMS = ROOT / "tests" / "test_roms"

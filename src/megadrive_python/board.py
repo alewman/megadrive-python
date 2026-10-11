@@ -25,6 +25,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from ym2612_python import YM2612
+from ym2612_python.chip import IC_SLOT_LAG, IC_WRITE_SLOT_LAG, TIMER_CONTROL_DELAY_CYCLES
+
 from .arbiter import (
     AS_LOW_MCLK,
     BUSACK_PROPAGATION_MCLK,
@@ -38,12 +41,6 @@ from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
 from .psg import PSG
 from .vdp import VDP
-from .ym2612 import (
-    IC_SLOT_LAG,
-    IC_WRITE_SLOT_LAG,
-    TIMER_CONTROL_DELAY_CYCLES,
-    YM2612,
-)
 
 if TYPE_CHECKING:
     from m68000_python import M68000CPU
@@ -255,7 +252,7 @@ def ram_refresh_paused(due: int, start: int, end: int, began_by: int) -> int:
 HOLD_ON_68K_EDGE = True
 #: How long after a write to $A11200 begins the YM2612 is given /IC. On Nuked-MD the line
 #: moves 18 MCLK after the write, but the FM model already samples it later
-#: (``ym2612.IC_SLOT_LAG``, three FM clocks after the bus cycle): with the clocks lined
+#: (``ym2612_python.chip.IC_SLOT_LAG``, three FM clocks after the bus cycle): with the clocks lined
 #: up as the die's (``system.M68K_POWER_ON_PHASE``), the FM's phase after the boot's
 #: resets matches the die's with 0 to 6 here and leaves it 175-440 MCLK out with 9 or more
 #: (docs/worklog.md, "The VDPs' offset"). 0.
