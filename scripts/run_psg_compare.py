@@ -14,7 +14,7 @@ channels are driving, at **every input clock** (MCLK / 15, 3.58 MHz), not only a
 one clock in sixteen a sample is taken on.  That is the whole state a listener could
 hear, sampled 16 times more finely than the chip's own output rate.  Nuked's analogue
 level is not compared, because the board uses Nuked's own measured attenuation curve
-(:data:`megadrive_python.psg.VOLUME_LEVELS`) and comparing it would be circular; the
+(:data:`sn76489_python.YM7101_LEVELS`) and comparing it would be circular; the
 curve is checked in the unit tests instead.
 """
 
@@ -32,8 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import audio_refs
-
-from megadrive_python.psg import PSG
+from sn76489_python import SN76489, YM7101_PSG
 
 CARTS = Path("/data/emu/roms/megadrive")
 
@@ -128,7 +127,7 @@ def load_image(path: Path) -> bytes:
 def compare(name: str, events: list[tuple[int, int]], clocks: int, tmp: Path) -> bool:
     started = time.perf_counter()
     reference, _levels = audio_refs.run_psg(events, clocks, tmp)
-    psg = PSG()
+    psg = SN76489(YM7101_PSG)
     index = 0
     count = len(events)
     differing = 0

@@ -1611,9 +1611,9 @@ class VDP:
         if port == 7:
             # $C0001C, the debug register (Kabuto, "The mighty debug register"; CMD
             # ``newreg.txt``). Only the plane-forcing bits are modelled, plus the
-            # PSG's three test bits, which Nuked-PSG takes at the same place.
+            # PSG's three test bits (11-9), which Nuked-PSG takes at the same place.
             self.debug_register = value & 0xFFFF
-            self.board.psg.write_test(value & 0xFFFF)
+            self.board.psg.write_test((value >> 9) & 7)
             return 0
         if port in (4, 5):
             # $C00011-$C00017: the PSG.  "If you want to write to the PSG via

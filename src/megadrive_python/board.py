@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from sn76489_python import SN76489, YM7101_PSG
 from ym2612_python import YM2612
 from ym2612_python.chip import IC_SLOT_LAG, IC_WRITE_SLOT_LAG, TIMER_CONTROL_DELAY_CYCLES
 
@@ -39,7 +40,6 @@ from .arbiter import (
 from .cartridge import Cartridge
 from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
-from .psg import PSG
 from .vdp import VDP
 
 if TYPE_CHECKING:
@@ -301,7 +301,7 @@ class Board:
         self.fm.reset_line(True)
         #: The PSG lives inside the VDP and is written at $C00011 or $7F11; reading
         #: its port locks up a real console (CMD).  It is not held by the Z80's reset.
-        self.psg = PSG()
+        self.psg = SN76489(YM7101_PSG)
         self.psg_mclk = 0
         #: 68000 address bits 23-15 of the Z80's bank window; power-on 0 (unknown on
         #: hardware; MAME 0.285 ``machine_reset`` clears it).
