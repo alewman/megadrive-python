@@ -44,7 +44,7 @@ from .machine import Machine
 MCLK_PER_FM_SAMPLE = 1008
 MCLK_PER_PSG_SAMPLE = 240
 
-#: The PSG's level (0.0-4.0 from :mod:`megadrive_python.psg`) per unit of the FM's
+#: The PSG's level (0.0-4.0 from :mod:`sn76489_python`) per unit of the FM's
 #: summed DAC.  **Measured**, not guessed: the MDFourier signal's 40 PSG tone blocks
 #: sit 6.70 dB below its 96 FM blocks on a real Model 1 VA3
 #: (``A-MD1UTVA3-M192.flac``, hardware-captured), and this is the gain that puts the

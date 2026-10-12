@@ -20,6 +20,8 @@ dependencies = [
     "z80-python @ git+https://github.com/alewman/z80-python@b62891b9bac68da196ccb47c77e1e579f207dc1c",
     # The FM chip, extracted from this repository at efcc6bb with its history.
     "ym2612-python @ git+https://github.com/alewman/ym2612-python@2c2ab235aed619b395ba152111cd79a6193390b3",
+    # The PSG, extracted from this repository and sms-python with both histories.
+    "sn76489-python @ git+https://github.com/alewman/sn76489-python@b0acbc863c87259b3bb120df1a5886980462e25c",
 ]
 
 [project.scripts]

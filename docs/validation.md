@@ -251,6 +251,20 @@ the chip (`IC_SLOT_LAG`, the arbiter), the /IC, BUSY and timer sweeps on Nuked-M
 (`scripts/run_fm_ic.py`, `run_fm_busy.py`, `run_fm_timer.py`), the PSG, and the
 analogue path (`audio.py`).
 
+**The PSG is a core now too.** It was extracted into
+[sn76489-python](https://github.com/alewman/sn76489-python) with this board's history
+(the engine, from 4871beb) and sms-python's (the variant table), whose copy this one
+had been adapted from; this board uses its `YM7101_PSG` variant at a pinned commit. The
+PSG records below were made on the board's own copy and stand: this board's milestone
+4 tests and `scripts/run_psg_compare.py --games` pass unchanged against the core. The
+core's record continues in its `docs/validation.md`: nineteen streams, including this
+board's five cartridges and sms-python's eight, **633,262,572 input clocks, 0
+different** from Nuked-PSG. Its conformance kit found one rule this board's copy had
+wrong and no console reaches: a write on the clock straight after another hands the
+first write's register update the second byte (the die has one data register). The
+board keeps when a write reaches the chip (`Board.sound_sync`, MCLK / 15), the debug
+register's test bits (it passes bits 11-9), and the mix (`audio.py`).
+
 The judges here are the **die-derived models**, because nothing above them covers the
 question: there is no YM2612 datasheet, no self-checking FM test ROM and no pinned
 capture of a Mega Drive PSG, which is exactly the case the tier rule reserves for

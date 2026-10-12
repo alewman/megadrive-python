@@ -3,11 +3,12 @@
 A readable, pure-Python emulator of the **Sega Mega Drive / Genesis**, to be
 built as a board on the family's cores:
 [m68000-python](https://github.com/alewman/m68000-python) for the main CPU,
-[z80-python](https://github.com/alewman/z80-python) for the sound CPU, and
-[ym2612-python](https://github.com/alewman/ym2612-python) for the FM chip. The
+[z80-python](https://github.com/alewman/z80-python) for the sound CPU,
+[ym2612-python](https://github.com/alewman/ym2612-python) for the FM chip, and
+[sn76489-python](https://github.com/alewman/sn76489-python) for the PSG. The
 cores own their chips; this repository will own everything around
 them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
-315-5313 / Yamaha YM7101), the FM chip's wiring and the PSG, the I/O chip and
+315-5313 / Yamaha YM7101), the FM chip's and the PSG's wiring, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
 
 **Status: milestones 1 to 9 of ten** ([docs/validation.md](docs/validation.md),
@@ -124,7 +125,7 @@ N + 1, which together come close to 60. The title bar shows the speed.
 | `scripts/pinned_files.json` | 94 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
 | `scripts/pinned_repos.json` | 14 git repositories at pinned revisions (sparse where large) | yes |
 | `scripts/mame_trace.py` | The MAME 0.285 two-run trace recipe for both CPUs and the device buses, verified | yes |
-| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the YM2612 and the PSG, the analogue path, the system clock | yes |
+| `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the sound chips' wiring, the analogue path, the system clock | yes |
 | `scripts/lockstep_mame.py` | Milestone 1: both CPUs against MAME's logs | yes |
 | `scripts/run_hv_captures.py` | Milestone 2: Nemesis's HV/status captures, word for word | yes |
 | `scripts/run_vdpfifotesting.py` | Milestone 2: VDPFIFOTesting, read back from VRAM | yes |

@@ -623,7 +623,9 @@ class System:
         drains at long intervals still gets every sample.
         """
         self.board.sound_sync(self.mclk)
-        return self.audio.mix(self.board.fm.take_samples(), self.board.psg.take_samples())
+        # The PSG is mono here: both sides of its samples are the same level.
+        psg = [left for left, _right in self.board.psg.take_samples()]
+        return self.audio.mix(self.board.fm.take_samples(), psg)
 
     def run_mclk(self, mclk: int) -> None:
         target = self.mclk + mclk

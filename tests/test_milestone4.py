@@ -21,12 +21,13 @@ from pathlib import Path
 
 import pytest
 from conftest import ROOT
+from sn76489_python import SN76489, YM7101_PSG
+from sn76489_python import YM7101_LEVELS as VOLUME_LEVELS
 from ym2612_python import EXP, LOG_SIN, YM2612, YM3438_ASIC
 from ym2612_python import YM2612_DISCRETE as FM_DISCRETE
 
 from megadrive_python.audio import AudioPath
 from megadrive_python.machine import MACHINES
-from megadrive_python.psg import PSG, VOLUME_LEVELS
 
 REFEREES = ROOT / "reference" / "build-referees"
 NUKED_OPN2 = ROOT / "reference" / "src" / "Nuked-OPN2" / "ym3438.c"
@@ -72,7 +73,7 @@ def test_psg_volume_curve_matches_the_die() -> None:
 def test_psg_powers_up_part_way_round_its_rotation() -> None:
     """/IC leaves the counters at 1 and the one-hot selector on the noise channel, not
     everything at zero (``ympsg.c`` ``YMPSG_Init``)."""
-    psg = PSG()
+    psg = SN76489(YM7101_PSG)
     assert psg.counter == [1, 1, 1, 1]
     assert psg.chan_sel == 0x08
     assert psg.counter_of == 0x0F
@@ -81,7 +82,7 @@ def test_psg_powers_up_part_way_round_its_rotation() -> None:
 
 
 def test_psg_makes_one_sample_every_sixteen_input_clocks() -> None:
-    psg = PSG()
+    psg = SN76489(YM7101_PSG)
     psg.run(16 * 100)
     assert len(psg.levels) == 100
 
