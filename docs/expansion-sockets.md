@@ -22,9 +22,9 @@ oracles and claims.
 | Attaches at | the cartridge slot; the cartridge goes through it | the expansion port |
 | 68000 space it owns | `$000000-$3FFFFF` (re-mapped), `$800000-$9FFFFF`, `$A15100-$A153FF` | `$000000-$3FFFFF` with no cartridge (else `$400000-$7FFFFF`), `$A12000-$A120FF` |
 | Clock | SH-2 = MCLK x 3/7: the Mega Drive's domain | its own 50 MHz crystal: asynchronous |
-| Picture | composites its pixels over the Mega Drive's output | none of its own; DMA from word RAM into the VDP |
+| Picture | switches, per pixel and in analogue, between the Mega Drive's finished RGB and its own, driven by YS | none of its own; DMA from word RAM into the VDP (one word late) |
 | Sound | PWM, in on the cartridge audio lines | RF5C164 PCM + CD-DA, in on the expansion audio lines |
-| Into the 68000 | (its interrupts go to the SH-2s) | interrupt level 2 |
+| Into the 68000 | none (its interrupts go to the SH-2s) | none: level 2 runs main -> **sub** (IFL2); the first draft had this backwards |
 
 Every row above is to be re-sourced in each add-on's Phase 0 docs; this table only
 says which socket each fact needs.
@@ -52,33 +52,60 @@ Found by reading the code (2026-10-21, at d7882e1); each is a call site a socket
 Each is a narrow `typing.Protocol`, so it transcribes to a Rust trait for
 `megadrive-rust` without redesign.
 
+Revised 2026-10-21 after both add-on Phase 0s (`segacd-python/docs/sockets.md`,
+`sega32x-python/docs/handoff-brief.md`), which found the first draft short in the places
+marked *(revised)*.
+
 1. **Cartridge slot** -- what `Board.cartridge` already is. The existing `Cartridge`
    method set (`read_word`, `read_byte`, `write_word`, `write_byte`, `read_time`,
-   `write_time`) becomes a named Protocol, widened by one method: `claims(top) -> bool`,
-   so a device in the slot can take `$80-$9F` and parts of `$A1` (the 32X's `$A151xx`).
-   The 32X is then a slot device that holds a `Cartridge`. The `Lockup`s stay as the
-   answer when nothing claims the range.
-2. **Expansion port** -- new; `None` by default. Same method set plus `cart_present`
-   (the /CART sense line it reads) so it can map at `$000000` or `$400000`, and the
-   board routes `$400000-$7FFFFF` and its `$A12xxx` window to it. With a cartridge in
-   and a CD attached, the slot keeps `$000000-$3FFFFF`.
-3. **Bus timing** -- every slot/port access already passes through `_bus_cycle` and the
-   arbiter; the devices add their own wait states through `board.stall`, exactly as the
-   VDP does (`_on_edge(vdp.hold)`). No new mechanism; the Protocol documents the rule.
-4. **Clock domains** -- `System.step` gains a list of `catch_up(mclk)` devices after
-   `catch_up_z80`. A device in MCLK's domain (32X) converts exactly; an asynchronous one
-   (CD) keeps its own rational ratio and remainder. The 68000-led scheduler is kept; a
-   device that must interrupt the 68000 mid-instruction is out of scope until one is
-   shown to need it (the sub-CPU handshakes are register polls).
-5. **Interrupt sources** -- `set_ipl(max(vdp.ipl, *device.ipl))`.
-6. **Picture** -- a per-line hook after the VDP finishes a line, handing the device the
-   line's colour indices *and* a backdrop mask before RGB conversion, at the line's
-   output-delay-corrected timing (`render.OUTPUT_DELAY`). The 32X composites there.
-7. **Sound** -- `AudioPath.mix` takes a list of `(samples, rate, gain)` sources, the FM
-   and PSG being the first two. Gains for add-on audio come from recordings where we
-   have them and are labelled assumptions where we do not.
-8. **Reset** -- the reset button and the 68000's RESET output reach the devices
-   (`System.press_reset` and the reset exception path).
+   `write_time`) becomes a named Protocol. *(revised)* Claims are **address ranges**,
+   not a top byte: the `$A1` page is shared by the I/O chip, Z80 control, TMSS and the
+   32X (`$A15100-$A153FF`). "No cartridge" becomes a real state (today `None` turns
+   into `Cartridge(b"")`): the RAM cart and /CART sense depend on it. The 32X is a slot
+   device that holds a `Cartridge`; the `Lockup`s stay as the answer when nothing claims
+   a range.
+2. **Expansion port** -- new; `None` by default. Same method set plus the /CART sense,
+   so it maps at `$000000` (no cartridge) or `$400000`; the board routes those ranges
+   and `$A12000-$A120FF` to it. *(revised)* Two board pieces must follow the port rather
+   than sit beside it: `$A10001` bit 5 (/DISK, today the static `Machine.expansion`)
+   and the TMSS overlay, which swaps `self.cartridge` and must sit above the port.
+3. **One address decode for every bus master** *(new)* -- the 68000, the Z80 bank
+   window (`_z80_bank_read/_write`, `z80_peek`, the arbiter probe at `system.py:479`)
+   and the VDP DMA source (`dma_read_word`) all go through the same claims. Today each
+   reaches `board.cartridge` directly. DMA additionally gets a `dma_start()` notice and
+   the open-bus value, for word RAM's one-word-late rule (GPGX applies the same to SVP).
+4. **Bus timing** -- every slot/port access carries its master-clock time, and the
+   device adds its own wait states through `board.stall`, as the VDP does. *(revised)*
+   The device's `catch_up(mclk)` must be callable **inside** an access, not only after
+   the instruction: a 68000 reading the CD's or the 32X's communication registers must
+   see the other CPUs up to that clock (GPGX syncs at `$A12000/1/3/4/8` and cites games
+   that break without it). Overshoot bound: one sub-CPU instruction (~680 MCLK for DIVS),
+   stated as a limitation.
+5. **Clock domains** -- `System.step` gains a list of `catch_up(mclk)` devices after
+   `catch_up_z80`. The 32X converts exactly (x3/7); the CD keeps its own rational ratio
+   and remainder. The 68000-led scheduler is kept.
+6. **Video timing** *(new)* -- the 32X takes HSYNC, VSYNC, EDCLK, YS and NTSC/PAL off the
+   slot; its HBLK/VBLK/PEN bits, HINT/VINT and register latch need those edges and H32/H40
+   changes at master-clock precision. The VDP publishes its edges as they happen.
+7. **Picture** *(revised)* -- per pixel: the Mega Drive's **finished RGB**, YS and the
+   shadow/highlight state, plus the line's mode and pixel clock, handed over before
+   output. The device returns the pixel that leaves the console. (The 32X assumes H40
+   even when the Mega Drive runs H32; NFL Quarterback Club shows it.)
+8. **Sound** -- `AudioPath.mix` takes a list of sources, each with its own **changeable**
+   rate and a gain; the FM and PSG are the first two. Add-on gains are labelled
+   assumptions: no recording of either add-on's mix exists.
+9. **Reset** *(revised)* -- three distinct events reach the devices: power-on, the
+   reset button, and the 68000's RESET instruction. The CD is reset only at power-on
+   (GPGX: "FRES is only asserted on Power ON"); the reset button interrupts the SH-2s.
+
+Dropped: the interrupt socket. Neither add-on interrupts the main 68000, and `max()`
+was the wrong model anyway: the VDP encodes the 68000's level, and an outside one
+enters through EXINT.
+
+Needed outside this board: `m68000-python` cannot pause an instruction mid-access, and
+a CD sub-CPU access to word RAM it does not own gets no /DTACK and hangs on hardware
+(KRIKzz). `segacd-python`'s brief proposes a core PR; `sh2-python` must expose the FRT's
+FTOA output, which the 32X wires to the SH-2 interrupt lines.
 
 ## The gate
 
@@ -101,6 +128,10 @@ One branch, one PR, as a board-side change. `megadrive-rust` is frozen at
    cheaply.
 4. `segacd-python`: the port device; two clock domains and a drive.
 5. Sega CD + 32X together: one device in each socket -- the check that the sockets are right.
+
+Also: the full jgenesis clone in `reference/` (git-ignored) carries Sega's three 32X
+boot ROMs in `backend/s32x-core/src/*.bin`. They were never committed; whether this
+repo's pin should leave them out is an open decision.
 
 ## Open decisions for Aubrey
 
