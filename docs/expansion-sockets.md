@@ -135,6 +135,6 @@ repo's pin should leave them out is an open decision.
 
 ## Open decisions for Aubrey
 
-- Repository and package names: `sega32x-python` / `sega32x_python` (a package cannot start
-  with a digit) and `segacd-python` / `segacd_python` -- or `mars-python`, `megacd-python`?
+- Names DECIDED by Aubrey 2026-10-21: `sega32x-python` / `sega32x_python` (a package
+  cannot start with a digit) and `segacd-python` / `segacd_python`.
 - Whether the sockets PR waits for the remaining `megadrive-python` work or goes first.
