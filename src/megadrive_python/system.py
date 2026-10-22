@@ -43,7 +43,7 @@ from .audio import AudioPath
 from .board import CART_REFRESH_MCLK, Z80_CATCH_UP_EACH_CYCLE, Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
-from .sockets import Clocked, Picture, PortDevice, Reset, SlotDevice, VideoTiming
+from .sockets import AudioSource, Clocked, Picture, PortDevice, Reset, SlotDevice, VideoTiming
 
 #: The longest Z80 step in T-states (an interrupt entry in IM 2 is 19, the longest
 #: instruction 23): an instruction that starts this long before a bus request
@@ -173,6 +173,8 @@ class System:
         #: instructions, after the Z80 -- the sockets' devices, and anything else an
         #: add-on puts here. Empty on a console with nothing plugged in.
         self.clocked: list[Clocked] = list(board.devices)
+        #: Socket 8: the sound sources mixed with the FM and the PSG (:meth:`take_audio`).
+        self.audio_sources: list[AudioSource] = []
         self.z80 = Z80CPU(board.z80_read, board.z80_write)
         board.m68k = self.m68k
         board.catch_up_z80 = self.catch_up_z80
@@ -679,7 +681,12 @@ class System:
         self.board.sound_sync(self.mclk)
         # The PSG is mono here: both sides of its samples are the same level.
         psg = [left for left, _right in self.board.psg.take_samples()]
-        return self.audio.mix(self.board.fm.take_samples(), psg)
+        fm = self.board.fm.take_samples()
+        if self.audio_sources:
+            # Socket 8: each further source up to the same clock, at its own rate.
+            taken = [(source, source.take_samples(self.mclk)) for source in self.audio_sources]
+            return self.audio.mix(fm, psg, taken)
+        return self.audio.mix(fm, psg)
 
     def run_mclk(self, mclk: int) -> None:
         target = self.mclk + mclk

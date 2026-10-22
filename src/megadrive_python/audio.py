@@ -34,11 +34,33 @@ Rates
 The YM2612 finishes a sample every 1,008 MCLK (53,267 Hz on NTSC) and the PSG every
 240 MCLK (223,721 Hz), a ratio of exactly 21/5.  :class:`AudioPath` box-filters the
 PSG down onto the FM's grid and then resamples the pair to the host's rate.
+
+Further sources (expansion socket 8)
+------------------------------------
+
+An add-on's sound -- the Sega CD's PCM and CD-DA, the 32X's PWM -- comes as further
+sources (:class:`~megadrive_python.sockets.AudioSource`), each at its own rate, which
+may change from one call to the next, and with its own gain, both the add-on's to
+state. Each is resampled linearly onto the FM's grid and added **after the console's
+low-pass and before the coupling capacitor**: the Sega CD mixes the Mega Drive's output
+with its own in its own unit (the Model 1 takes the headphone jack's, the Model 2's
+comes through the expansion port), and the 32X's PWM reaches the listener either way
+by model and cabling (segacd-python ``docs/sockets.md`` 7; sega32x-python's handoff
+brief, finding 7). Where it is added is an assumption, as the gains are: no recording
+of either mix exists. With no further source the mix is exactly the two chips'.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .machine import Machine
+
+if TYPE_CHECKING:
+    from .sockets import AudioSource
+
+    #: Further sources with the samples each gave for one stretch of time.
+    Taken = list[tuple[AudioSource, list[tuple[float, float]]]]
 
 #: Master clocks per finished sample of each chip.
 MCLK_PER_FM_SAMPLE = 1008
@@ -92,6 +114,9 @@ class AudioPath:
         self._resample_phase = 0.0
         self._previous = (0.0, 0.0)
         self._have_previous = False
+        #: Each further source's samples not yet used and its position among them, in
+        #: its own samples (:meth:`_add_sources`).
+        self._sources: dict[int, tuple[list[tuple[float, float]], float]] = {}
 
     @property
     def fm_rate(self) -> float:
@@ -103,7 +128,8 @@ class AudioPath:
         dt = 1.0 / self.fm_rate
         return dt / (rc + dt)
 
-    def mix(self, fm: list[tuple[int, int]], psg: list[float]) -> list[tuple[int, int]]:
+    def mix(self, fm: list[tuple[int, int]], psg: list[float],
+            sources: Taken | None = None) -> list[tuple[int, int]]:  # fmt: skip
         """``fm`` at the chip's rate and ``psg`` at the PSG's, to stereo at
         :attr:`sample_rate`.
 
@@ -111,6 +137,9 @@ class AudioPath:
         samples to 5 FM ones), so nothing drifts over a long run; the sum is then
         low-passed and resampled linearly.  Leftovers of either stream are carried to
         the next call, so a caller may hand over a frame at a time.
+
+        ``sources``: expansion socket 8's further sources, each with the samples it
+        gave for the same stretch of time (``System.take_audio``).
         """
         self._pending_psg.extend(psg)
         merged = []
@@ -135,7 +164,40 @@ class AudioPath:
             # The PSG is one signal mixed into both sides.
             merged.append((left + level * gain, right + level * gain))
         del self._pending_psg[:psg_index]
-        return self._resample(self._dc_blocked(self._filtered(merged)))
+        filtered = self._filtered(merged)
+        if sources:
+            self._add_sources(filtered, sources)
+        return self._resample(self._dc_blocked(filtered))
+
+    def _add_sources(self, samples: list[tuple[float, float]], sources: Taken) -> None:
+        """Add each further source to ``samples`` (on the FM's grid) in place: linear
+        interpolation from its rate, times its gain. Its leftovers carry to the next call;
+        when it falls short, its last sample is held (silence before it has given any)."""
+        fm_rate = self.fm_rate
+        for source, new in sources:
+            key = id(source)
+            pending, position = self._sources.get(key, ([], 0.0))
+            pending = pending + new
+            if not pending:
+                continue  # silent until it gives its first sample
+            step = source.rate / fm_rate
+            gain = source.gain
+            last = len(pending) - 1
+            for index, (left, right) in enumerate(samples):
+                at = int(position)
+                if at >= last:
+                    level = pending[last]
+                else:
+                    fraction = position - at
+                    before, after = pending[at], pending[at + 1]
+                    level = (
+                        before[0] + (after[0] - before[0]) * fraction,
+                        before[1] + (after[1] - before[1]) * fraction,
+                    )
+                samples[index] = (left + level[0] * gain, right + level[1] * gain)
+                position += step
+            used = min(int(position), last)
+            self._sources[key] = (pending[used:], position - used)
 
     def _dc_blocked(self, samples: list[tuple[float, float]]) -> list[tuple[float, float]]:
         """The coupling capacitor: a one-pole high-pass at :data:`DC_BLOCK_HZ`."""
