@@ -1696,6 +1696,10 @@ class VDP:
         TestDMATransferBusLock); returns how long the 68000's next bus cycle waits."""
         self.transfer_active = True
         self.transfer_cached = False
+        if self.board.devices:
+            # Expansion socket 3: the sockets' devices hear the start, for word RAM's
+            # one-word-late rule.
+            self.board.dma_started(mclk)
         # The first word is fetched once the write that started the transfer is over,
         # not from where it began ("the VDP takes the bus once the write ... is over"),
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).
