@@ -55,8 +55,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .sockets import PictureLine
+
 if TYPE_CHECKING:
-    from .vdp import VDP
+    from .sockets import Picture
+    from .vdp import VDP, HMode
 
 #: How many pixels the picture's output runs behind the H counter, by mode: a change
 #: that acts where the colour is looked up (a CRAM write, the backdrop index in
@@ -194,6 +197,23 @@ class Renderer:
         #: What the line before scanned for the next line (:meth:`_sprite_scan`), as
         #: ``((row, width, double interlace), latched sprites)``, or None.
         self._scanned: tuple | None = None
+        #: Expansion socket 7 (:meth:`attach_picture`): the device each finished line is
+        #: handed to, or None on a console with nothing plugged in; the line waiting to be
+        #: handed over (row, start, width, mode); its YS, pixel by pixel; and the lines
+        #: the device returned, per row, swapped with the frames as the rest are.
+        self.picture: Picture | None = None
+        self._handing: tuple[int, int, int, HMode] | None = None
+        self._ys = bytearray(320)
+        self._composite: list[list[int] | None] = []
+        self._done_composite: list[list[int] | None] = []
+
+    def attach_picture(self, device: Picture) -> None:
+        """Plug in expansion socket 7: from the next line on, each finished line goes to
+        ``device`` (:meth:`_hand_over`) and the line it returns is the one
+        :meth:`frame_rgb` gives."""
+        self.picture = device
+        self._composite = [None] * 480
+        self._done_composite = [None] * 480
 
     # -- the sprite cache ---------------------------------------------------------
 
@@ -543,6 +563,8 @@ class Renderer:
         """Start display line ``v``, the V counter's value for it: finish the line
         before it, then read everything this one needs for its whole length."""
         self.finish_line()
+        if self.picture is not None:
+            self._hand_over()
         vdp = self.vdp
         width = 320 if vdp.hmode.name == "H40" else 256
         im2 = vdp.interlace_double
@@ -574,6 +596,11 @@ class Renderer:
         backdrop = vdp.registers[7] & 0x3F
         self.widths[row] = width
         self._blanked[row] = vdp.registers[0] & 0x01
+        if self.picture is not None:
+            self._handing = (row, vdp.line_start, width, vdp.hmode)
+            self._composite[row] = None
+            if not vdp.display_enabled:
+                self._ys[:width] = b"\x01" * width
         if width < 320:
             for x in range(width, 320):
                 out[x] = backdrop
@@ -704,6 +731,8 @@ class Renderer:
             out = self._out
             for x in range(first, last):
                 out[x] = backdrop
+            if self.picture is not None:
+                self._ys[first:last] = b"\x01" * (last - first)
             self._drawn = last
             return
         if self.cram_dirty:
@@ -719,7 +748,56 @@ class Renderer:
         # write shows"), where the board used to keep the line's first value.
         self._mix(self._out, self._line_a, self._line_b, self._line_s, first, last,
                   self.vdp.registers[7] & 0x3F)  # fmt: skip
+        if self.picture is not None:
+            self._ys_span(first, last)
         self._drawn = last
+
+    def _ys_span(self, first: int, last: int) -> None:
+        """YS over ``first``..``last`` - 1 for expansion socket 7: 1 where no plane or
+        sprite pixel shows -- the backdrop, TmEE's definition -- by :meth:`_mix`'s own
+        priority test, with a shadow/highlight operator sprite showing nothing. Run with
+        the same state as the mix of the same span. The debug register's plane forcing
+        is not looked at: what YS does under it is not known."""
+        ys = self._ys
+        line_a, line_b, line_s = self._line_a, self._line_b, self._line_s
+        shadow_mode = bool(self.vdp.registers[12] & 8)
+        for x in range(first, last):
+            av = line_a[x]
+            bv = line_b[x]
+            sv = line_s[x]
+            s_visible = bool(sv & 15) and (
+                sv & 0x40 or (not (av & 15 and av & 0x40) and not (bv & 15 and bv & 0x40))
+            )
+            if shadow_mode and s_visible and sv & 0x3F >= 62:
+                s_visible = False
+            ys[x] = 0 if s_visible or av & 15 or bv & 15 else 1
+
+    def _hand_over(self) -> None:
+        """Expansion socket 7: the line drawn last, finished, to the device; what it returns
+        is the line that leaves the console (:meth:`frame_rgb`). Called before the next
+        line begins and as a frame ends, so the line is whole."""
+        handing = self._handing
+        if handing is None:
+            return
+        self._handing = None
+        row, start, width, mode = handing
+        pixels = self.pixels[row]
+        palettes = self._palettes[row] or [(0, self._palette)]
+        rgb = self._row_rgb(pixels, width, self._blanked[row], palettes, self._dots[row])
+        h40 = mode.name == "H40"
+        line = PictureLine(
+            row=row,
+            start=start,
+            hmode=mode.name,
+            width=width,
+            pixel_mclk=8 if h40 else 10,
+            display_at=start + mode.offset_of[0],
+            output_delay=OUTPUT_DELAY[mode.name],
+            rgb=rgb,
+            ys=bytes(self._ys[:width]),
+            shade=bytes(value >> SHADE_SHIFT for value in pixels[:width]),
+        )
+        self._composite[row] = self.picture.picture_line(line)  # type: ignore[union-attr]
 
     # -- the mixer ----------------------------------------------------------------
 
@@ -815,6 +893,10 @@ class Renderer:
         sweep scored 17 cartridges ``size`` for exactly that (docs/worklog.md).
         """
         self.finish_line()
+        if self.picture is not None:
+            self._hand_over()
+            if self.rows:
+                self._composite, self._done_composite = self._done_composite, self._composite
         if self.rows:
             self.height = self.rows
             self.done_width = max(self.widths[: self.rows], default=self.width) or self.width
@@ -875,23 +957,36 @@ class Renderer:
         width, height, pixels, blanked, palettes_of, dots_of = self._finished()
         rows = [pixels[row] for row in range(height)]
         default = [(0, self._palette or self._make_palette())]
+        # Expansion socket 7: a line the device returned is the one that leaves the
+        # console (:meth:`_hand_over`), whatever its width.
+        composite = None
+        if self.picture is not None:
+            composite = self._done_composite if self.height else self._composite
         out = []
         for index, row in enumerate(rows):
-            if blanked[index]:
-                # Register $00 bit 0: no display generation at all, so no colour of
-                # CRAM's reaches the screen (CMD ``genvdp.txt`` 17; r57shell's "VDP
-                # Blink Test (Reg 0 bit 0)" is what makes it visible).
-                out.append([0] * width)
+            if composite is not None and composite[index] is not None:
+                out.append(composite[index])
                 continue
-            palettes = palettes_of[index] or default
-            line = [0] * width
-            for span, (start, palette) in enumerate(palettes):
-                stop = palettes[span + 1][0] if span + 1 < len(palettes) else width
-                for x in range(start, min(stop, width)):
-                    value = row[x]
-                    line[x] = palette[value >> SHADE_SHIFT][value & 0x3F]
-            for x, colour in dots_of[index]:
-                if x < width:
-                    line[x] = colour
-            out.append(line)
+            out.append(self._row_rgb(row, width, blanked[index],
+                                     palettes_of[index] or default, dots_of[index]))  # fmt: skip
         return out
+
+    @staticmethod
+    def _row_rgb(row: bytearray, width: int, blanked: int, palettes: list, dots: list) -> list[int]:
+        """One row of shaded CRAM indices as RGB888, ``width`` pixels: through the palette
+        each span was drawn with, CRAM dots laid over it."""
+        if blanked:
+            # Register $00 bit 0: no display generation at all, so no colour of CRAM's
+            # reaches the screen (CMD ``genvdp.txt`` 17; r57shell's "VDP Blink Test (Reg
+            # 0 bit 0)" is what makes it visible).
+            return [0] * width
+        line = [0] * width
+        for span, (start, palette) in enumerate(palettes):
+            stop = palettes[span + 1][0] if span + 1 < len(palettes) else width
+            for x in range(start, min(stop, width)):
+                value = row[x]
+                line[x] = palette[value >> SHADE_SHIFT][value & 0x3F]
+        for x, colour in dots:
+            if x < width:
+                line[x] = colour
+        return line

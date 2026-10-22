@@ -43,7 +43,7 @@ from .audio import AudioPath
 from .board import CART_REFRESH_MCLK, Z80_CATCH_UP_EACH_CYCLE, Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
-from .sockets import Clocked, PortDevice, Reset, SlotDevice
+from .sockets import Clocked, Picture, PortDevice, Reset, SlotDevice, VideoTiming
 
 #: The longest Z80 step in T-states (an interrupt entry in IM 2 is 19, the longest
 #: instruction 23): an instruction that starts this long before a bus request
@@ -214,7 +214,17 @@ class System:
         self.mclk = M68K_POWER_ON_PHASE + self.m68k.reset() * M68K_DIVIDER
         self._z80_reset_line(True)
 
-    # -- the expansion sockets ----------------------------------------------------------
+    # -- the expansion sockets that are not on the bus --------------------------------
+
+    def attach_video_timing(self, device: VideoTiming) -> None:
+        """Socket 6: ``device`` hears every line as the VDP starts it (:class:`~megadrive_
+        python.sockets.VideoLine`)."""
+        self.vdp.video_timing = device
+
+    def attach_picture(self, device: Picture) -> None:
+        """Socket 7: ``device`` takes each finished line and returns the one that leaves
+        the console (``Renderer.attach_picture``)."""
+        self.vdp.renderer.attach_picture(device)
 
     def _reset_instruction(self) -> None:
         """The 68000's RESET instruction (socket 9): m68000-python calls this as the pulse
