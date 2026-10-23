@@ -53,9 +53,11 @@ from typing import TYPE_CHECKING
 
 from .machine import MCLK_PER_LINE, Machine
 from .render import Renderer
+from .sockets import VideoLine
 
 if TYPE_CHECKING:
     from .board import Board
+    from .sockets import VideoTiming
 
 # -- the horizontal scan -------------------------------------------------------------
 
@@ -777,6 +779,9 @@ class VDP:
         #: clear, so a harness that reads them must leave it on.
         self.renderer = Renderer(self)
         self.rendering = True
+        #: Expansion socket 6: told of every line as the VDP starts it
+        #: (:meth:`_publish_line`); None on a console with nothing plugged in.
+        self.video_timing: VideoTiming | None = None
         #: MCLK the last 68000 port access held the 68000.
         self.hold = 0
         # Timing: the latched modes, the current line and how far the VDP has run.
@@ -1020,6 +1025,8 @@ class VDP:
         self._vint_done = False
         self._odd_done = False
         self._line_events()
+        if self.video_timing is not None:
+            self._publish_line()
 
     def _latch_hmode(self) -> None:
         """RS0/RS1 changes take effect at HBlank (Exodus General.cpp 1917-1935): the H
@@ -1034,6 +1041,37 @@ class VDP:
         self.line_start = self.mclk - new.offset_of.get(h, new.offset_of[new.hblank_set])
         self._line_events()
         self.hblank_at = -1
+        if self.video_timing is not None:
+            self._publish_line()
+
+    def _publish_line(self) -> None:
+        """The line under way, as expansion socket 6 hands it over
+        (:class:`~megadrive_python.sockets.VideoLine`): at the V counter's increment, and
+        again from the HBlank an H32/H40 change takes effect at, the line re-anchored.
+
+        HBlank's two edges are the flag's (``status``), VBlank is the vertical border
+        (:attr:`border`), and VSYNC the line the mode asserts it on (``VMode.vsync``).
+        What the board does not model is not here: HSYNC's own edges (the dot clock's slow
+        pixels around it are, in ``pixels``), and the length of the VSYNC pulse.
+        """
+        mode, start = self.hmode, self.line_start
+        self.video_timing.video_line(  # type: ignore[union-attr]
+            VideoLine(
+                start=start,
+                length=mode.length,
+                v=self.v,
+                hmode=mode.name,
+                hblank_set=start + mode.offset_of[mode.hblank_set],
+                hblank_clear=start + mode.offset_of[mode.hblank_clear],
+                vblank=self.border and self.v != 0x1FF,
+                vsync=self.v == self.vmode.vsync,
+                interlace=self.interlace,
+                odd=self.odd,
+                pal=self.pal,
+                pixels=mode.starts,
+                published=max(start, self.mclk),
+            )
+        )
 
     def _blank_line(self) -> int:
         """The line the vertical border starts on for the V28/V30 mode register 1 holds
@@ -1696,6 +1734,10 @@ class VDP:
         TestDMATransferBusLock); returns how long the 68000's next bus cycle waits."""
         self.transfer_active = True
         self.transfer_cached = False
+        if self.board.devices:
+            # Expansion socket 3: the sockets' devices hear the start, for word RAM's
+            # one-word-late rule.
+            self.board.dma_started(mclk)
         # The first word is fetched once the write that started the transfer is over,
         # not from where it began ("the VDP takes the bus once the write ... is over"),
         # and after the fixed start-up Kabuto measured (:data:`DMA_STARTUP_MCLK`).

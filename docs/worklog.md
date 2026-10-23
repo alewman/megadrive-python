@@ -7056,3 +7056,57 @@ end at 2,030 against the die's 2,009.
 Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (155, CPython and PyPy),
 Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
 6,981-7,200 (all 220 within three frames, 75 at the expected one).
+
+## Session 15 (2026-10-21/22): the expansion sockets, built
+
+Branch `expansion-sockets`, from `d7882e1` plus the design commits; the design and
+what was built are in [expansion-sockets.md](expansion-sockets.md) ("What is built").
+`src/megadrive_python/sockets.py` holds the nine sockets as `typing.Protocol`s; the
+call sites are in `board.py` (sockets 1-4: claims by 256-byte page, `_LowDecode` for
+`$000000-$3FFFFF`, `hold`, `dma_started`, the Z80's bank window and peek), `system.py`
+(5, 9, the probe through `Board.z80_peek`, `attach_*`), `vdp.py` (6 and the DMA start
+notice), `render.py` (7) and `audio.py` (8). Test-only fakes for every socket are in
+`tests/fake_devices.py` and `tests/test_sockets.py` (19 tests).
+
+### The gate, with nothing attached
+
+Run at `ebd1771` (the last code commit; the commit after it changes only docs). PyPy
+7.3.23 throughout; `d7882e1` in a scratch worktree wherever a comparison needs one.
+
+| gate | result |
+| --- | --- |
+| `pytest`, PyPy | 177 passed, 6 deselected (1,465 s, machine loaded) |
+| `pytest -m slow`, PyPy | 6 passed (the six MAME lockstep replays) |
+| `scripts/lockstep_mame.py`, six traces | 0 unexplained each; e.g. Sonic 23,286,815 68000 and 12,728,465 Z80 instructions identical, as in milestone 1 |
+| VDPFIFOTesting, nine machines | 122/122 on eight, 114/122 on genesis3; every row identical to `d7882e1`'s |
+| Nemesis's HV captures | 8,762,828 of 8,847,360 words equal; all 288 dumps' JSON identical to `d7882e1`'s, field for field |
+| `run_psg_compare.py --games` | 10 streams, 0 not identical |
+| `run_fm_streams.py --roms --games` | 18 streams, 0 comparisons not identical |
+| mini sweep (`tests/mini_sweep.txt`, window 12), against the same sweep run at `d7882e1` | 115 unchanged, 0 better, 0 worse: every row's status, differing pixels and offset |
+| `ruff check`, `ruff format --check` (0.16.8) | clean |
+
+The mini sweep was run, not the full one (about four hours on this machine when it is
+quiet, and it was not). The CPython suite did not collect: `.venv` has no
+`sn76489_python` (the PSG's extraction postdates it), at `d7882e1` as on the branch.
+
+Speed, PyPy, 900 frames `--no-sound`, revisions interleaved three rounds, best user
+CPU time, run alone (no other megadrive-python process; load average 8.3 at the start,
+10.3 at the end, from other users). Both revisions ran the same instruction counts and
+wrote byte-identical final frames in every run.
+
+| Game | `d7882e1` (s) | branch (s) | change |
+| --- | ---: | ---: | ---: |
+| Sonic The Hedgehog (USA, Europe) | 34.01 | 34.17 | -0.5 % |
+| Streets of Rage 2 (USA) | 24.57 | 24.56 | +0.1 % |
+| Gunstar Heroes (USA) | 31.40 | 32.36 | -3.0 % |
+| Castlevania - Bloodlines (USA) | 24.93 | 23.77 | +4.9 % |
+
+Within noise: one revision's own three runs spread by up to 15 % (Gunstar 31.4-36.6 s
+on `d7882e1`).
+
+### Open
+
+- Sockets 6 and 7 are the minimum (lines, not pixels; no HSYNC edges or VSYNC pulse
+  length; YS ignores the debug register); see expansion-sockets.md.
+- The FM and the PSG stay outside the sources list, to keep their exact merge.
+- Needed outside this board, unchanged: m68000-python's /DTACK wait; sh2-python's FTOA.

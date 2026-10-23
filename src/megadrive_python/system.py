@@ -43,6 +43,7 @@ from .audio import AudioPath
 from .board import CART_REFRESH_MCLK, Z80_CATCH_UP_EACH_CYCLE, Board
 from .cartridge import Cartridge
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
+from .sockets import AudioSource, Clocked, Picture, PortDevice, Reset, SlotDevice, VideoTiming
 
 #: The longest Z80 step in T-states (an interrupt entry in IM 2 is 19, the longest
 #: instruction 23): an instruction that starts this long before a bus request
@@ -149,15 +150,31 @@ class System:
 
     def __init__(self, machine: Machine, cartridge: Cartridge | None, *,
                  pads: tuple[object, object] | None = None,
-                 tmss_rom: bytes | None = None) -> None:  # fmt: skip
+                 tmss_rom: bytes | None = None, slot: SlotDevice | None = None,
+                 port: PortDevice | None = None) -> None:  # fmt: skip
+        """``slot`` and ``port``: the expansion sockets' devices (docs/expansion-sockets.md),
+        plugged in before power-on; a slot device holds its own cartridge, so
+        ``cartridge`` is then None. Each hears the power-on reset before the 68000 fetches
+        its vectors, which may be the device's."""
         self.machine = machine
         board = self.board = Board(machine, cartridge, pads=pads)
+        if slot is not None:
+            board.attach_slot(slot)
+        if port is not None:
+            board.attach_port(port)
         if tmss_rom is not None:
             board.install_tmss_rom(tmss_rom)
         self.m68k = M68000CPU(
             board.read_byte, board.read_word, board.write_byte, board.write_word,
             tas_write=board.tas_write, acknowledge=self._acknowledge,
+            reset_devices=self._reset_instruction,
         )  # fmt: skip
+        #: Socket 5: the devices run up to the 68000's clock after each of its
+        #: instructions, after the Z80 -- the sockets' devices, and anything else an
+        #: add-on puts here. Empty on a console with nothing plugged in.
+        self.clocked: list[Clocked] = list(board.devices)
+        #: Socket 8: the sound sources mixed with the FM and the PSG (:meth:`take_audio`).
+        self.audio_sources: list[AudioSource] = []
         self.z80 = Z80CPU(board.z80_read, board.z80_write)
         board.m68k = self.m68k
         board.catch_up_z80 = self.catch_up_z80
@@ -189,12 +206,40 @@ class System:
         #: (:meth:`press_reset`), and the clock it was pressed at.
         self.reset_pressed = False
         self.reset_at = 0
-        # Power-on: the 68000 takes its reset vector; the Z80 is held in reset.
+        # Power-on: the sockets' devices first (the 68000's vector fetches may be theirs),
+        # then the 68000 takes its reset vector; the Z80 is held in reset.
+        for device in board.devices:
+            device.reset(Reset.POWER_ON, 0)
         self.m68k.clock = M68K_E_CLOCK_POWER_ON
         # The YM2612 runs on the 68000's clock (MCLK/7): its edges are the 68000's.
         self.board.fm.mclk = M68K_POWER_ON_PHASE
         self.mclk = M68K_POWER_ON_PHASE + self.m68k.reset() * M68K_DIVIDER
         self._z80_reset_line(True)
+
+    # -- the expansion sockets that are not on the bus --------------------------------
+
+    def attach_video_timing(self, device: VideoTiming) -> None:
+        """Socket 6: ``device`` hears every line as the VDP starts it (:class:`~megadrive_
+        python.sockets.VideoLine`)."""
+        self.vdp.video_timing = device
+
+    def attach_picture(self, device: Picture) -> None:
+        """Socket 7: ``device`` takes each finished line and returns the one that leaves
+        the console (``Renderer.attach_picture``)."""
+        self.vdp.renderer.attach_picture(device)
+
+    def _reset_instruction(self) -> None:
+        """The 68000's RESET instruction (socket 9): m68000-python calls this as the pulse
+        ends, 128 clocks into the instruction (``reset_devices``). Nothing on the board
+        itself is reset by it here (whether the Mega Drive wires the 68000's RESET
+        output anywhere is not in the sources this board follows), so only the
+        sockets' devices hear it."""
+        devices = self.board.devices
+        if devices:
+            board = self.board
+            t = board.step_start + board.stall + self.m68k.step_clocks * M68K_DIVIDER
+            for device in devices:
+                device.reset(Reset.INSTRUCTION, t)
 
     # -- the CPUs' interrupt lines ------------------------------------------------
 
@@ -475,10 +520,10 @@ class System:
                 value = written[address]
             elif address < 0x4000:
                 value = board.z80_ram[address & 0x1FFF]
-            elif address >= 0x8000 and (board.bank | (address & 0x7FFF)) < 0x400000:
-                value = board.cartridge.read_byte(board.bank | (address & 0x7FFF))
             else:
-                value = 0xFF
+                # The bank window through the board's one decode, so a socket's device
+                # answers the probe as it will the access (``Board.z80_peek``).
+                value = board.z80_peek(address)
             if fetching and address == next_fetch:
                 clock += 4 if after_prefix else 3
                 after_prefix = value in (0xCB, 0xDD, 0xED, 0xFD) and after_prefix
@@ -538,6 +583,10 @@ class System:
         self.reset_at = self.mclk if at is None else max(at, self.mclk)
         self.board.set_z80_reset(True, self.reset_at)
         self.reset_pressed = True
+        # VRES# also goes "to 68000 and cartridge connector" (above): the sockets' devices
+        # hear the button, and each decides what it resets (socket 9).
+        for device in self.board.devices:
+            device.reset(Reset.BUTTON, self.reset_at)
 
     def step(self) -> int:
         """One 68000 instruction, then the Z80 up to the same time; returns MCLK."""
@@ -570,6 +619,9 @@ class System:
             elapsed = held + (RESET_PULSE_CLOCKS + clocks) * M68K_DIVIDER + board.stall
             self.mclk = start + elapsed
             self.catch_up_z80(self.mclk)
+            if self.clocked:
+                for device in self.clocked:
+                    device.catch_up(self.mclk)
             return elapsed
         owed = board.m68k_pending_stall
         if owed and OWED_AT_FIRST_CYCLE and Z80_CATCH_UP_EACH_CYCLE and board.arbiter_enabled:
@@ -606,6 +658,10 @@ class System:
         # the bus from a Z80 access asked for there (``board.Z80_CATCH_UP_EACH_CYCLE``).
         lead = CUTOFF_MCLK if Z80_CATCH_UP_EACH_CYCLE and board.arbiter_enabled else 0
         self.catch_up_z80(self.mclk - lead)
+        if self.clocked:
+            # Socket 5: the other clock domains, up to the 68000's clock.
+            for device in self.clocked:
+                device.catch_up(self.mclk)
         return elapsed
 
     def run_frame(self) -> None:
@@ -625,7 +681,12 @@ class System:
         self.board.sound_sync(self.mclk)
         # The PSG is mono here: both sides of its samples are the same level.
         psg = [left for left, _right in self.board.psg.take_samples()]
-        return self.audio.mix(self.board.fm.take_samples(), psg)
+        fm = self.board.fm.take_samples()
+        if self.audio_sources:
+            # Socket 8: each further source up to the same clock, at its own rate.
+            taken = [(source, source.take_samples(self.mclk)) for source in self.audio_sources]
+            return self.audio.mix(fm, psg, taken)
+        return self.audio.mix(fm, psg)
 
     def run_mclk(self, mclk: int) -> None:
         target = self.mclk + mclk

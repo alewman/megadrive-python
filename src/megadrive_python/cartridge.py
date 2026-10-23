@@ -346,6 +346,10 @@ class Cartridge:
 
     #: A board this module does not model yet (the image runs as plain ROM).
     unsupported: str | None = None
+    #: Whether the cartridge grounds /CART (expansion socket 1,
+    #: ``sockets.CartridgeSlot``): every ROM cartridge does; the Sega CD's RAM cartridge,
+    #: which is not modelled here, does not.
+    grounds_cart = True
 
     def __init__(self, image: bytes, *, slot: str = "rom", sram_size: int = 0,
                  name: str = "") -> None:  # fmt: skip
@@ -677,6 +681,7 @@ class BootROM:
     """
 
     unsupported = None
+    grounds_cart = True
     name = "TMSS boot ROM"
     slot = "tmss"
     sram = b""

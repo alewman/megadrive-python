@@ -40,10 +40,13 @@ from .arbiter import (
 from .cartridge import Cartridge
 from .io import IOChip
 from .machine import M68K_DIVIDER, Z80_DIVIDER, Machine
+from .sockets import CLAIM_PAGE, CLAIMABLE, M68K, Z80
 from .vdp import VDP
 
 if TYPE_CHECKING:
     from m68000_python import M68000CPU
+
+    from .sockets import BusDevice, PortDevice, SlotDevice
 
 
 #: The cartridge-side refresh: every 128 68000 clocks of real time, the next 68000 bus
@@ -274,13 +277,88 @@ class Lockup(Exception):
     """
 
 
+class _LowDecode:
+    """$000000-$3FFFFF for the 68000 while a socket's device claims any of it.
+
+    It stands where the cartridge stands (``Board.cartridge``), with the cartridge's
+    method set, so the 68000's paths are the same calls with or without a device: a
+    claimed page goes to its device at the access's clock, the rest to the slot. Only
+    the 68000 comes through here; the Z80's bank window, its peeks and the VDP's DMA
+    look the claims up themselves and use their own entries and clocks (socket 3).
+    """
+
+    grounds_cart = True
+
+    def __init__(self, board: Board) -> None:
+        self.board = board
+        self.pages = board._pages
+        self.slot = board._slot_bus
+
+    def read_word(self, address: int) -> int:
+        device = self.pages[address >> 8]  # type: ignore[index]
+        if device is None:
+            return self.slot.read_word(address)
+        return device.read_word(address, self.board.m68k_access_clock())
+
+    def read_byte(self, address: int) -> int:
+        device = self.pages[address >> 8]  # type: ignore[index]
+        if device is None:
+            return self.slot.read_byte(address)
+        return device.read_byte(address, self.board.m68k_access_clock(), M68K)
+
+    def write_word(self, address: int, value: int) -> None:
+        device = self.pages[address >> 8]  # type: ignore[index]
+        if device is None:
+            self.slot.write_word(address, value)
+        else:
+            device.write_word(address, value, self.board.m68k_access_clock())
+
+    def write_byte(self, address: int, value: int) -> None:
+        device = self.pages[address >> 8]  # type: ignore[index]
+        if device is None:
+            self.slot.write_byte(address, value)
+        else:
+            device.write_byte(address, value, self.board.m68k_access_clock(), M68K)
+
+    def read_time(self, address: int) -> int | None:
+        return self.slot.read_time(address)
+
+    def write_time(self, address: int, value: int) -> None:
+        self.slot.write_time(address, value)
+
+
 class Board:
     """Memory maps and devices for one :class:`Machine`."""
 
     def __init__(self, machine: Machine, cartridge: Cartridge | None, *,
                  pads: tuple[object, object] | None = None) -> None:  # fmt: skip
         self.machine = machine
-        self.cartridge = cartridge if cartridge is not None else Cartridge(b"")
+        #: The cartridge in the slot -- through a slot device, the one it holds -- or
+        #: None: an empty slot is a state of its own, which /CART reads
+        #: (:attr:`cartridge_present`; expansion socket 1).
+        self.slot_cartridge: Cartridge | None = cartridge
+        #: What the slot puts on $000000-$3FFFFF where no device claims: the cartridge,
+        #: or for an empty slot a ROM-less stand-in that reads $FF, as the board always
+        #: has (nothing hardware here says what an empty slot reads; not claimed).
+        self._slot_bus = cartridge if cartridge is not None else Cartridge(b"")
+        #: What answers the 68000 at $000000-$3FFFFF now: the slot, the TMSS boot ROM,
+        #: or the claims of a socket's device (:meth:`_remap`). The 68000's fetches are
+        #: the hottest path in the emulator, so this one object is swapped rather than
+        #: anything being tested per access.
+        self.cartridge = self._slot_bus
+        #: The expansion sockets (docs/expansion-sockets.md, :mod:`megadrive_python.sockets`):
+        #: the device in the cartridge slot and the one on the expansion port, both None
+        #: on a console with nothing plugged in, and the two as a tuple for the events
+        #: every device hears (DMA starts, resets).
+        self.slot: SlotDevice | None = None
+        self.port: PortDevice | None = None
+        self.devices: tuple[BusDevice, ...] = ()
+        #: Every claimed 256-byte page of the 68000's space, by ``address >> 8``: the
+        #: device that answers it, or None. None as a whole when nothing is attached --
+        #: the only paths that look at it are ones that had nothing to do before (open
+        #: bus, the 32X area's lock-up, the $A1 page) and the Z80's and DMA's, for one
+        #: ``None`` test (:meth:`update_claims`).
+        self._pages: list[BusDevice | None] | None = None
         self.ram = bytearray(0x10000)
         self.z80_ram = bytearray(0x2000)
         self.io = IOChip(machine.version_register, pads)  # type: ignore[arg-type]
@@ -411,16 +489,15 @@ class Board:
         from .cartridge import BootROM
 
         self.tmss_rom = BootROM(image)
-        self.tmss_cartridge = self.cartridge
-        self.cartridge = self.tmss_rom  # type: ignore[assignment]
+        self.tmss_cartridge = self._slot_bus
         self.tmss_cart_selected = False
+        self._remap()
 
     @property
     def game_cartridge(self) -> Cartridge:
-        """The cartridge, whichever of it and the boot ROM is on the bus now."""
-        if self.tmss_cartridge is not None:
-            return self.tmss_cartridge
-        return self.cartridge
+        """The cartridge, whichever of it, the boot ROM and a device is on the bus now
+        (the empty slot's stand-in when there is none)."""
+        return self._slot_bus
 
     def set_z80_reset(self, held: bool, t: int, fm_t: int | None = None,
                       write: bool = False) -> None:  # fmt: skip
@@ -443,9 +520,109 @@ class Board:
         if self.tmss_rom is None or cartridge == self.tmss_cart_selected:
             return
         self.tmss_cart_selected = cartridge
-        self.cartridge = (  # type: ignore[assignment]
-            self.tmss_cartridge if cartridge else self.tmss_rom
-        )
+        self._remap()
+
+    def _remap(self) -> None:
+        """Choose what answers the 68000 at $000000-$3FFFFF (:attr:`cartridge`).
+
+        The TMSS boot ROM, while $A14101 bit 0 is clear, sits above everything: in the
+        Sega CD's mode 2 the port is what is at $000000, and a TMSS console must still
+        run its check first (segacd-python ``docs/sockets.md`` 2: "TMSS ROM selected >
+        port in mode 2 > slot"). Then a device's claims there, through
+        :class:`_LowDecode`; then the slot. With nothing attached this is exactly the
+        swap ``_tmss_select`` always made.
+        """
+        if self.tmss_rom is not None and not self.tmss_cart_selected:
+            self.cartridge = self.tmss_rom  # type: ignore[assignment]
+        elif self._pages is not None and any(
+            device is not None for device in self._pages[: 0x400000 // CLAIM_PAGE]
+        ):
+            self.cartridge = _LowDecode(self)  # type: ignore[assignment]
+        else:
+            self.cartridge = self._slot_bus
+
+    # -- the expansion sockets ---------------------------------------------------
+
+    @property
+    def cartridge_present(self) -> bool:
+        """/CART: low when the slot -- through a slot device, the device's own slot --
+        holds a cartridge that grounds it (``CartridgeSlot.grounds_cart``). The Sega CD
+        reads it to choose its mapping; it is told at attach, since hot-plugging is not
+        modelled (segacd-python ``docs/sockets.md`` 2)."""
+        cartridge = self.slot_cartridge
+        return cartridge is not None and cartridge.grounds_cart
+
+    def attach_slot(self, device: SlotDevice) -> None:
+        """Plug ``device`` into the cartridge slot (socket 1). The cartridge it holds
+        takes the slot's place on the bus wherever the device does not claim."""
+        if self.slot is not None:
+            raise ValueError("the cartridge slot already holds a device")
+        if self.slot_cartridge is not None:
+            raise ValueError("a slot device holds its own cartridge: pass the board none")
+        self.slot = device
+        self.slot_cartridge = device.cartridge
+        self._slot_bus = device.cartridge if device.cartridge is not None else self._slot_bus
+        if self.tmss_rom is not None:
+            self.tmss_cartridge = self._slot_bus
+        self.devices = (*self.devices, device)
+        device.attach(self)
+        self.update_claims()
+
+    def attach_port(self, device: PortDevice) -> None:
+        """Plug ``device`` into the expansion port (socket 2). $A10001 bit 5, "no
+        expansion unit" (the Manual, PDF page 84; /DISK on the port), now reads 0, as
+        ``Machine.expansion`` already makes it for a model that has a unit built in."""
+        if self.port is not None:
+            raise ValueError("the expansion port already holds a device")
+        self.port = device
+        self.io.version &= ~0x20
+        self.devices = (*self.devices, device)
+        device.attach(self)
+        self.update_claims()
+
+    def update_claims(self) -> None:
+        """Read every attached device's claims again and rebuild the page table: at
+        attach, and whenever a device's mapping changes (the 32X's ADEN or RV, the Sega
+        CD's mode). A claim is [start, end) in 68000 addresses, page-aligned and inside
+        :data:`~megadrive_python.sockets.CLAIMABLE`; the port's claims win over the
+        slot's where both claim a page."""
+        if not self.devices:
+            self._pages = None
+            self._remap()
+            return
+        pages: list[BusDevice | None] = [None] * 0x10000
+        for device in (self.slot, self.port):
+            if device is None:
+                continue
+            for start, end in device.claims():
+                if start % CLAIM_PAGE or end % CLAIM_PAGE or start >= end:
+                    raise ValueError(f"claim ${start:06X}-${end:06X} is not whole pages")
+                if not any(low <= start and end <= high for low, high in CLAIMABLE):
+                    raise ValueError(f"claim ${start:06X}-${end:06X} is not on a socket's bus")
+                for page in range(start // CLAIM_PAGE, end // CLAIM_PAGE):
+                    pages[page] = device
+        self._pages = pages
+        self._remap()
+
+    def hold(self, master: int, mclk: int) -> None:
+        """A device's wait states on the access it is answering (socket 4): ``mclk``
+        master clocks for the 68000 -- on its own clock edge, as the VDP's holds
+        (:data:`HOLD_ON_68K_EDGE`), and as a longer bus cycle in the arbiter's grid -- or
+        for the Z80, added to its step as the arbiter's waits are."""
+        if master == Z80:
+            self.z80_stall += mclk
+            return
+        held = _on_edge(mclk)
+        self.stall += held
+        if self.arbiter_enabled and self.m68k_accesses:
+            self.m68k_accesses[-1][1] += held
+
+    def dma_started(self, mclk: int) -> None:
+        """A 68000-to-VDP DMA started at ``mclk`` (``VDP._run_transfer``): every device is
+        told, with the 68000's data bus as it stands (socket 3)."""
+        bus = self.open_bus()
+        for device in self.devices:
+            device.dma_start(mclk, bus)
 
     # -- time ----------------------------------------------------------------
 
@@ -590,12 +767,16 @@ class Board:
         return t + hold[1] if hold is not None and t >= hold[0] else t
 
     def z80_peek(self, address: int) -> int:
-        """A byte of the Z80's space without side effects, for looking at code: RAM
-        and cartridge ROM; anything else reads $FF."""
+        """A byte of the Z80's space without side effects, for looking at code: RAM,
+        cartridge ROM and a claimed page's device (``BusDevice.peek_byte``); anything
+        else reads $FF. The scheduler's probe reads through it too (``System.z80_probe``),
+        so the arbiter's prediction and the access it predicts see one decode."""
         if address < 0x4000:
             return self.z80_ram[address & 0x1FFF]
         if address >= 0x8000:
             full = self.bank | (address & 0x7FFF)
+            if self._pages is not None and (device := self._pages[full >> 8]) is not None:
+                return device.peek_byte(full)
             if full < 0x400000:
                 return self.cartridge.read_byte(full)
         return 0xFF
@@ -742,6 +923,10 @@ class Board:
             value = self._z80_area_read(address)
             self._z80_space_cost()
             return value | (value << 8) if value is not None else self.open_bus_msb()
+        # The rest is the expansion sockets' (socket 3: a claimed page is the device's,
+        # at the access's own clock), and where nothing claims, what it always was.
+        if self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            return device.read_word(address, self.m68k_access_clock())
         if top == 0xA1:
             return self._system_read_word(address)
         if 0x80 <= top < 0xA0:
@@ -767,6 +952,8 @@ class Board:
             if value is not None:
                 return value
             return (self.open_bus() >> 8) if not address & 1 else 0
+        if self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            return device.read_byte(address, self.m68k_access_clock(), M68K)
         if top == 0xA1:
             word = self._system_read_word(address & ~1)
             return word & 0xFF if address & 1 else word >> 8
@@ -795,6 +982,8 @@ class Board:
             # (CMD 1.2): the Z80's bus is eight bits wide and takes D15-D8.
             self._z80_area_write(address & ~1, value >> 8)
             self._z80_space_cost()
+        elif self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            device.write_word(address, value, self.m68k_access_clock())
         elif top == 0xA1:
             self._system_write(address, value >> 8, value & 0xFF, word=True)
         elif 0x80 <= top < 0xA0:
@@ -819,6 +1008,8 @@ class Board:
         elif top == 0xA0:
             self._z80_area_write(address, value)
             self._z80_space_cost()
+        elif self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            device.write_byte(address, value, self.m68k_access_clock(), M68K)
         elif top == 0xA1:
             # The 68000 drives a byte on both halves of the data bus (UM 5.1.2), so
             # a register on D8 sees bit 0 of the byte at either address.
@@ -830,7 +1021,10 @@ class Board:
         """A word the VDP's 68000-to-VDP DMA reads from the 68000's bus (the 68000 is
         held meanwhile): cartridge, work RAM, or anything else as the 68000 would read
         it. A source in the VDP's own range reads $FFFF here: no measurement says what
-        it gives (not claimed)."""
+        it gives (not claimed). A claimed page is its device's, at the VDP's clock for
+        the read (socket 3; the device was told of the start, :meth:`dma_started`)."""
+        if self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            return device.dma_read_word(address, self.vdp.mclk)
         top = address >> 16
         if top < 0x40:
             return self.cartridge.read_word(address)
@@ -1032,8 +1226,11 @@ class Board:
         MoD's ``gen_test_z80_bus`` on several machines, forum t=3021); CMD "Read
         banked 68000 RAM. (returns FFh)". The Z80's own space locks up (CMD 2.3, MoD);
         the VDP's unused addresses read $FF and its status's top six bits 1 (CMD 1.1).
-        Undriven bits read 1 (CMD 1.1 note 1).
+        Undriven bits read 1 (CMD 1.1 note 1). A claimed page is its device's, at the
+        Z80's own clock (socket 3), before any of that.
         """
+        if self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            return device.read_byte(address, self._z80_access_time(), Z80)
         top = address >> 16
         if top < 0x40:
             return self.cartridge.read_byte(address)
@@ -1052,6 +1249,9 @@ class Board:
         return 0xFF
 
     def _z80_bank_write(self, address: int, value: int) -> None:
+        if self._pages is not None and (device := self._pages[address >> 8]) is not None:
+            device.write_byte(address, value, self._z80_access_time(), Z80)
+            return
         top = address >> 16
         if top >= 0xE0:
             self.ram[address & 0xFFFF] = value
