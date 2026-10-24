@@ -83,7 +83,11 @@
     "path": "reference/src/jgenesis",
     "url": "https://github.com/jsgroth/jgenesis",
     "rev": "d19ee94f64798946e30d8be7a3dc6f1f9f8732c8",
-    "why": "Claims VDPFIFOTesting, Direct Color DMA and MD Soft Checker in its release notes. GPL-3.0: read, never copy."
+    "sparse_patterns": [
+      "/*",
+      "!/backend/s32x-core/src/*.bin"
+    ],
+    "why": "Claims VDPFIFOTesting, Direct Color DMA and MD Soft Checker in its release notes. GPL-3.0: read, never copy. Its tree carries Sega's three 32X boot ROMs (backend/s32x-core/src/*.bin), which are left out: Sega's boot ROMs are never fetched (Aubrey, 2026-10-23)."
   },
   {
     "path": "reference/src/clownmdemu-core",
