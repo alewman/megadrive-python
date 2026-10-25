@@ -7122,8 +7122,11 @@ Run at `ebd1771` (the last code commit; the commit after it changes only docs). 
 | `ruff check`, `ruff format --check` (0.16.8) | clean |
 
 The mini sweep was run, not the full one (about four hours on this machine when it is
-quiet, and it was not). The CPython suite did not collect: `.venv` has no
+quiet, and it was not). The CPython suite did not collect: `.venv` had no
 `sn76489_python` (the PSG's extraction postdates it), at `d7882e1` as on the branch.
+*(Corrected 2026-10-24: sn76489-python installed into `.venv` from the local clone at the
+pinned `b0acbc8`; CPython 3.14.4 then gives 177 passed, 6 deselected, on main at
+`44ab15d`, the sockets merged.)*
 
 Speed, PyPy, 900 frames `--no-sound`, revisions interleaved three rounds, best user
 CPU time, run alone (no other megadrive-python process; load average 8.3 at the start,
