@@ -49,7 +49,7 @@ def cartridge() -> bytes:
     handler += _w(0x51CE, 0xFFFE)  # dbra d6,*
     handler += _w(0x4A79, 0x00C0, 0x0004)  # tst.w $C00004: the status, as a handler reads it
     handler += _w(0x4E73)  # rte
-    rom[HANDLER:HANDLER + len(handler)] = handler
+    rom[HANDLER : HANDLER + len(handler)] = handler
     rom[0x78:0x7C] = HANDLER.to_bytes(4, "big")  # level 6 autovector
     return bytes(rom)
 
@@ -61,9 +61,10 @@ def stackings(stream: list[tuple]) -> list[int]:
     for i, cycle in enumerate(stream):
         if cycle[1] == 0x78 and cycle[2] == "r":
             j = i - 1
+            # The stacking writes, and the referee's acknowledge (a read at $FFFFF0 and up).
             while j > 0 and (
                 (stream[j - 1][2] == "w" and STACK - 16 <= stream[j - 1][1] < STACK)
-                or (stream[j - 1][2] == "r" and stream[j - 1][1] >= 0xFFFFF0)  # the referee's acknowledge
+                or (stream[j - 1][2] == "r" and stream[j - 1][1] >= 0xFFFFF0)
             ):
                 j -= 1
             while stream[j][2] == "r":
@@ -84,8 +85,9 @@ def main() -> int:
     until = (args.frames + 2) * PAL_FRAME_MCLK
     theirs, events, run = cold_boot_drift.referee(path, until)
 
-    import megadrive_python.system as system_module
     import od2_boot_drift as judge
+
+    import megadrive_python.system as system_module
 
     log = judge.log_bus()
     system = cold_boot_drift.board(path, events, run, quiet=True)
@@ -112,7 +114,7 @@ def main() -> int:
     die, ours = stackings(theirs), stackings([tuple(c) for c in log])
     table: collections.Counter = collections.Counter()
     rows: list[tuple[int, int, int]] = []
-    for k, (d, b) in enumerate(zip(die, ours)):
+    for d, b in zip(die, ours, strict=False):  # the counts may differ; both are printed
         boards_raise = [r for r in raised if r[0] <= b]
         if not boards_raise:
             continue
@@ -126,8 +128,9 @@ def main() -> int:
     for key in sorted(table):
         print(f"  {key[0]:4d}-{key[0] + 6:4d}  {key[1]:+5d}: {table[key]}")
     after = sorted(r[2] for r in rows)
+    margins = sorted(r[0] for r in rows)
     print(f"the referee's stacking began {after[0]}-{after[-1]} MCLK after the board's VDP raised"
-          f" VINT; the board's {min(r[0] for r in rows) + min(0, 0)}-{max(r[0] for r in rows)} after it"
+          f" VINT; the board's {margins[0]}-{margins[-1]} after it"
           " plus the acknowledge's lead")  # fmt: skip
     return 0
 
