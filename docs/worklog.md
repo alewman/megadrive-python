@@ -7057,6 +7057,42 @@ Unchanged: the judge over Overdrive 2 (+16,244,508), the suites (155, CPython an
 Nemesis's HV captures, the test-ROM battery, the arms window (100 of 100), frames
 6,981-7,200 (all 220 within three frames, 75 at the expected one).
 
+### The first interrupt
+
+Each title's first step was its first interrupt: the 68000 pushes its PC, makes the
+autovectored acknowledge, pushes SR -- and between the two pushes the board took 56 MCLK
+longer than the die in Gunstar Heroes and Streets of Rage 2 (8 68000 clocks), 14 shorter
+in Sonic. The acknowledge waits for the E clock, ten clocks a period: +8 and -2 are the
+same phase two clocks out. The board keeps its E clock in step with time over the run
+(every hold is credited to the core's clock count after each instruction), so this is
+where it starts, and that is `cold_boot_drift`'s to set, not the board's: it moved the
+count on by the clocks of the die's reset hold, which leaves it two ahead of the die's.
+`cold_boot_drift.E_CLOCK_SHIFT` = -2, read from Gunstar's first acknowledge (from a
+snapshot just before it, -2 puts its SR push and vector fetch at the die's MCLK; -1 and
+-3 are 63 and 7 out) and right for the other two as they stand:
+
+| Cartridge | agrees with the die to | the paths part |
+| --- | ---: | --- |
+| Streets of Rage 2 (USA) | +139,354,306 | +139,528,893 |
+| Gunstar Heroes (USA) | +97,726,153, no step | +97,726,181 |
+| Sonic The Hedgehog (USA, Europe) | +55,297,851 | +55,978,328 |
+
+In all three the paths now part on an interrupt the board's 68000 takes an instruction
+before the die's does -- the next question, and one the Overdrive 2 judge does not
+reach before +16.98M.
+
+`scripts/run_vint_sweep.py` asks where the 68000 takes a VINT: a cartridge loops on
+`nop; nop; bra.s` with VINT unmasked, its handler a different length each frame, run
+from power-on on both through `cold_boot_drift` (whose setup is now `referee()` and
+`board()`, for other harnesses). In 62 of 62 VINTs the die takes it at a later
+instruction boundary than the board, whichever of the 0-69 MCLK the board saw it before
+its boundary by: the die begins stacking 152-234 MCLK after the board's VDP raises it.
+No one delay fits all 62 (the die's boundaries bracket it at 137 and more for some, 115
+and less for others), so it is not just VINT being raised later on the die: where the
+68000 samples its interrupt lines inside the instruction comes into it. That needs the
+die's IPL lines and its 68000's interrupt decision in the trace, which the harness does
+not record yet.
+
 ## Session 15 (2026-10-21/22): the expansion sockets, built
 
 Branch `expansion-sockets`, from `d7882e1` plus the design commits; the design and

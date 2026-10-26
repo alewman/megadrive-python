@@ -64,6 +64,11 @@ BOARD_FIRST_MCLK = 284
 #: clock (docs/worklog.md, "A second title").
 VDP_OFFSET_MCLK = 240_277
 CART_PERIOD = run_nuked_md.CART_PERIOD
+#: The referee's E clock against a 68000 clocked from power-on: two clocks behind it at
+#: the walk's start. Read from Gunstar Heroes' first autovectored acknowledge
+#: (+96,673,913: with it the SR push and the vector fetch fall at the referee's MCLK,
+#: without it 56 late) and the same in Sonic's and Streets of Rage 2's.
+E_CLOCK_SHIFT = -2
 REFRESH_FIT_MCLK = 5_000_000
 SAMPLE_MCLK = 24 * 42
 #: Where the referee's slot-23 marker (``fsm_sel23`` rising) falls against the board's
@@ -109,6 +114,48 @@ def cartridge_phase(events: list) -> int:
     return hi % CART_PERIOD
 
 
+def referee(rom: Path, until: int) -> tuple[list[tuple], list, nuked_md.Run]:
+    """The referee's run from power-on: its 68000 bus stream (``od2_boot_drift``'s
+    tuples), the events behind it, and the run (for the FM's markers)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        run = nuked_md.run(rom, until, trace=(0, until), trace_mask=1, pal=True,
+                           fm_markers=True, tmp=Path(tmp))  # fmt: skip
+    # Two cycles logged at power-on, before the 68000 leaves reset, are left out.
+    events = [e for e in run.events if e.type == nuked_md.EV_M68K and e.by_m68k and e.t >= 100]
+    theirs = [(e.t, e.addr & 0xFFFFFE, "r" if e.read else "w", e.length - judge.AS_LOW, e.data)
+              for e in events]  # fmt: skip
+    return theirs, events, run
+
+
+def board(rom: Path, events: list, run: nuked_md.Run, quiet: bool = False) -> System:
+    """The board's system for the cartridge, its clock and every phase put on the
+    referee's, ready to step (its 68000 bus is logged if :func:`judge.log_bus` was
+    called first)."""
+    fitted = [e for e in events if e.t < events[0].t + REFRESH_FIT_MCLK]
+    cart_due, _, ram_due, ram_miss = run_nuked_md.referee_refresh(fitted)
+    phase = cartridge_phase(events)
+    cart_due -= (cart_due - phase) % CART_PERIOD
+    cart_due -= CART_PERIOD * ((cart_due - events[0].t) // CART_PERIOD + 1)
+    cart_due, ram_due = run_nuked_md.dues_at(events, FIRST, cart_due, ram_due)
+    system = System(MACHINES["nuked-md"], Cartridge.from_image(load_image(rom)))
+    system.board.fm.enabled = True
+    offset = events[FIRST].t - VDP_OFFSET_MCLK - BOARD_FIRST_MCLK
+    system.mclk += offset
+    system.z80_mclk += offset
+    system.board.step_start = system.mclk
+    # The 68000's E clock runs from power-on, through the referee's reset hold; the core
+    # counts it from the clocks it has run (``M68000CPU.clock``).
+    system.m68k.clock += offset // M68K_DIVIDER + E_CLOCK_SHIFT
+    shift = align_fm(system, run.fm_markers, run.fm_ic, events[FIRST].t)
+    system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK
+    system.board.ram_refresh_due = ram_due - VDP_OFFSET_MCLK
+    if not quiet:
+        print(f"refresh phases: cartridge {phase} of {CART_PERIOD}; work RAM fitted on the "
+              f"first {REFRESH_FIT_MCLK:,} MCLK, {ram_miss} misplaced; the FM's sample phase "
+              f"moved {shift} MCLK onto the referee's")  # fmt: skip
+    return system
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("rom", type=Path)
@@ -120,38 +167,10 @@ def main() -> int:
     args = parser.parse_args()
     until = args.span + 2_000_000
 
-    with tempfile.TemporaryDirectory() as tmp:
-        run = nuked_md.run(args.rom, until, trace=(0, until), trace_mask=1, pal=True,
-                           fm_markers=True, tmp=Path(tmp))  # fmt: skip
-    # Two cycles logged at power-on, before the 68000 leaves reset, are left out.
-    events = [e for e in run.events if e.type == nuked_md.EV_M68K and e.by_m68k and e.t >= 100]
-    theirs = [(e.t, e.addr & 0xFFFFFE, "r" if e.read else "w", e.length - judge.AS_LOW, e.data)
-              for e in events]  # fmt: skip
+    theirs, events, run = referee(args.rom, until)
     print(f"referee: {len(theirs):,} 68000 cycles ({run.seconds:.0f} s)")
-
-    fitted = [e for e in events if e.t < events[0].t + REFRESH_FIT_MCLK]
-    cart_due, _, ram_due, ram_miss = run_nuked_md.referee_refresh(fitted)
-    phase = cartridge_phase(events)
-    cart_due -= (cart_due - phase) % CART_PERIOD
-    cart_due -= CART_PERIOD * ((cart_due - events[0].t) // CART_PERIOD + 1)
-    cart_due, ram_due = run_nuked_md.dues_at(events, FIRST, cart_due, ram_due)
-    print(f"refresh phases: cartridge {phase} of {CART_PERIOD}; work RAM fitted on the first "
-          f"{REFRESH_FIT_MCLK:,} MCLK, {ram_miss} misplaced")  # fmt: skip
-
     log = judge.log_bus()
-    system = System(MACHINES["nuked-md"], Cartridge.from_image(load_image(args.rom)))
-    system.board.fm.enabled = True
-    offset = events[FIRST].t - VDP_OFFSET_MCLK - BOARD_FIRST_MCLK
-    system.mclk += offset
-    system.z80_mclk += offset
-    system.board.step_start = system.mclk
-    # The 68000's E clock runs from power-on, through the referee's reset hold; the core
-    # counts it from the clocks it has run (``M68000CPU.clock``).
-    system.m68k.clock += offset // M68K_DIVIDER
-    shift = align_fm(system, run.fm_markers, run.fm_ic, events[FIRST].t)
-    print(f"the FM's sample phase moved {shift} MCLK onto the referee's")
-    system.board.cart_refresh_due = cart_due - VDP_OFFSET_MCLK
-    system.board.ram_refresh_due = ram_due - VDP_OFFSET_MCLK
+    system = board(args.rom, events, run)
     while system.mclk < until - VDP_OFFSET_MCLK:
         system.step()
     ours = [tuple(c) for c in log]
