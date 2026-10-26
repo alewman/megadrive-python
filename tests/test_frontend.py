@@ -122,6 +122,56 @@ def test_the_window_survives_a_resolution_change(tmp_path) -> None:
         pygame.quit()
 
 
+def test_v28_v30_does_not_reopen_the_window(tmp_path) -> None:
+    """A V28/V30 height change (224 against 240) is not a resize: the arcade scene's
+    own V28/V30 latching called ``_open_window`` on close to every frame before it was
+    fixed (docs/worklog.md, Session 13), and repeating that call was seen to leave the
+    real window stuck on a stale picture while the console kept running underneath --
+    reproduced separately with plain ``set_mode()`` calls and no Frontend at all, and
+    not recovered by toggling fullscreen. The OS window is pinned at 240 lines instead
+    (``_window_size_for``); only a real change (width, or interlace) reopens it."""
+    pytest.importorskip("pygame")
+    import pygame
+    import pygame._sdl2.controller
+
+    from megadrive_python.frontend import Frontend
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    rom = bytearray(0x10000)
+    rom[0:4] = (0x00FFFE00).to_bytes(4, "big")
+    rom[4:8] = (0x00000200).to_bytes(4, "big")
+    rom[0x100:0x110] = b"SEGA GENESIS    "
+    rom[0x200:0x202] = bytes.fromhex("60fe")  # bra.s *
+    path = tmp_path / "loop.bin"
+    path.write_bytes(bytes(rom))
+    pygame.display.init()
+    pygame._sdl2.controller.init()
+    try:
+        frontend = Frontend(pygame, path, "genesis", scale=1, audio=False, fullscreen=False)
+        # A known baseline first (the synthetic ROM's own power-on frame size is not
+        # asserted here), so the counting below sees only the V28/V30 alternation.
+        frontend.frame = [[0] * 320 for _ in range(224)]
+        frontend.draw()
+        opened = []
+        original = frontend._open_window
+
+        def counting(size):
+            opened.append(size)
+            return original(size)
+
+        frontend._open_window = counting
+        for height in [224, 240, 224, 240, 240, 224]:
+            frontend.frame = [[0] * 320 for _ in range(height)]
+            frontend.draw()
+            assert frontend.frame_size == (320, height)
+            assert frontend.window.get_size()[1] == 240  # the pinned OS window height
+        assert opened == [], "no V28/V30 height change should call _open_window again"
+        frontend.close()
+    finally:
+        pygame.quit()
+
+
 def test_the_title_bar_names_the_frame_and_the_emulated_time():
     from megadrive_python.frontend import where
 
