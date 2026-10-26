@@ -24,6 +24,11 @@ dependencies = [
     "sn76489-python @ git+https://github.com/alewman/sn76489-python@b0acbc863c87259b3bb120df1a5886980462e25c",
 ]
 
+[project.urls]
+Homepage = "https://github.com/alewman/megadrive-python"
+Documentation = "https://github.com/alewman/megadrive-python/tree/main/docs"
+Issues = "https://github.com/alewman/megadrive-python/issues"
+
 [project.scripts]
 megadrive-python-play = "megadrive_python.frontend:main"
 

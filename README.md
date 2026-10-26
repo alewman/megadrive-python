@@ -1,12 +1,12 @@
 # megadrive-python
 
-A readable, pure-Python emulator of the **Sega Mega Drive / Genesis**, to be
-built as a board on the family's cores:
+A readable, pure-Python emulator of the **Sega Mega Drive / Genesis**, built
+as a board on the family's cores:
 [m68000-python](https://github.com/alewman/m68000-python) for the main CPU,
 [z80-python](https://github.com/alewman/z80-python) for the sound CPU,
 [ym2612-python](https://github.com/alewman/ym2612-python) for the FM chip, and
 [sn76489-python](https://github.com/alewman/sn76489-python) for the PSG. The
-cores own their chips; this repository will own everything around
+cores own their chips; this repository owns everything around
 them: the memory maps and the bus arbiter between the two CPUs, the VDP (Sega
 315-5313 / Yamaha YM7101), the FM chip's and the PSG's wiring, the I/O chip and
 pads, cartridges and their mappers, TMSS, and the clock that ties them together.
@@ -67,8 +67,8 @@ on every one of 71,680 pixels.** The two pads reproduce CMD's published table fo
 4,352 combinations of their buttons, the games that want six buttons ask for them about
 once a frame and the ones that do not never ask, and r57shell's VDP tests -- blocked
 since milestone 3 on what turned out to be a misreading -- are walked and measured. Around the
-groundwork it was built from, in the shape that built
-[sms-python](https://github.com/alewman/sms-python):
+groundwork it was built from, in the shape that built sms-python (the
+author's Master System board, not public):
 
 - a primer on the machine;
 - the clock tree, the counters, the VRAM access slots, DMA and bus timing, with
@@ -81,6 +81,30 @@ groundwork it was built from, in the shape that built
 - a handoff brief with ten milestones.
 
 See [docs/README.md](docs/README.md).
+
+## Installing
+
+Python 3.11 or newer; PyPy 3.11 is several times faster and is what CI runs. The four
+cores are installed from their public GitHub repositories at the revisions
+`pyproject.toml` pins, so `pip` needs git:
+
+```
+pypy3.11 -m venv .venv-pypy
+.venv-pypy/bin/pip install -e ".[frontend]"      # add ",dev" for pytest and ruff
+.venv-pypy/bin/python -m pytest -q               # tests needing fetched files skip
+```
+
+## What you supply
+
+No cartridge, BIOS or boot ROM is included or fetched. Bring your own dumps: a
+cartridge image (`.bin`, `.md`, `.gen`, `.smd`, or a `.zip` holding one), and, only
+if you want to boot through TMSS, the boot ROM (`--tmss-rom`). The test programs,
+captures and reference documents the validation scripts use are homebrew or
+published research, fetched from their authors' sites at pinned SHA-256s by
+`scripts/fetch_references.py` and never committed (one exception: Sega's MD Soft
+Checker, milestone 8's judge, is read from a local No-Intro set). The milestone 1, 7 and 8 scripts
+compare commercial cartridges against MAME and expect a local romset; their default
+paths are the author's and are set at the top of each script.
 
 ## Playing a cartridge
 
@@ -122,7 +146,7 @@ N + 1, which together come close to 60. The title bar shows the speed.
 | --- | --- | --- |
 | `docs/` | The documents listed in `docs/README.md` | yes |
 | `scripts/fetch_references.py` | Rebuilds `reference/` and `tests/test_roms/` from the pins | yes |
-| `scripts/pinned_files.json` | 94 files: URL, SHA-256, size, kind, tier, why (458 MB; 3 over 50 MB fetched only with `--large`) | yes |
+| `scripts/pinned_files.json` | 96 files: URL, SHA-256, size, kind, tier, why (481 MB; 3 over 50 MB fetched only with `--large`) | yes |
 | `scripts/pinned_repos.json` | 14 git repositories at pinned revisions (sparse where large) | yes |
 | `scripts/mame_trace.py` | The MAME 0.285 two-run trace recipe for both CPUs and the device buses, verified | yes |
 | `src/megadrive_python/` | The board: machines, cartridge, I/O, both memory maps and the bus, the VDP and its renderer, the sound chips' wiring, the analogue path, the system clock | yes |

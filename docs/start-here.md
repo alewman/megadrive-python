@@ -243,7 +243,7 @@ sms-python does for the SMS1/SMS2/Game Gear.
 
 ## Where the cores fit
 
-- **m68000-python** (`/data/emu/m68000-python`, private GitHub) is the
+- **m68000-python** ([GitHub](https://github.com/alewman/m68000-python), public) is the
   68000: `M68000CPU(read_byte, read_word, write_byte, write_word)`, `step()`
   returns clocks, `set_ipl(level)`, an `acknowledge` hook for autovectors, and
   a `tas_write` hook (the Genesis bus drops TAS's write: its
@@ -251,6 +251,6 @@ sms-python does for the SMS1/SMS2/Game Gear.
   PyPy; the Mega Drive needs about one million.
 - **z80-python** 0.4.0 (PyPI) is the Z80, through the same callables contract
   sms-python uses. The Mega Drive's Z80 is an NMOS part.
-- **sms-python** (`/data/emu/sms-python`) has the Sega PSG, a Mode 4 renderer,
-  the MAME sweep and triage tooling, and a desktop frontend, all of which this
+- **sms-python** (the author's Master System board, not public) has the Sega
+  PSG, a Mode 4 renderer, the MAME sweep and triage tooling, and a desktop frontend, all of which this
   board can reuse or copy the design of (same author, MIT).
