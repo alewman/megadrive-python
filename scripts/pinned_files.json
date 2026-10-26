@@ -956,7 +956,7 @@
   },
   {
     "path": "tests/test_roms/sega/MD Soft Checker (USA) (Proto) (Unl).zip",
-    "url": "file:///data/emu/source/myrient.erista.me/files/No-Intro/Sega%20-%20Mega%20Drive%20-%20Genesis/MD%20Soft%20Checker%20%28USA%29%20%28Proto%29%20%28Unl%29.zip",
+    "url": "file://${NO_INTRO_DIR}/Sega%20-%20Mega%20Drive%20-%20Genesis/MD%20Soft%20Checker%20%28USA%29%20%28Proto%29%20%28Unl%29.zip",
     "sha256": "688debcf0635e48ef501c84fd8348cdd40d18b2a5efa1e4391be1fd5cbf2996a",
     "size": 82628,
     "kind": "test-rom",

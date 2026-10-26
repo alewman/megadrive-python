@@ -37,6 +37,7 @@ Four things are run:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -53,7 +54,8 @@ from megadrive_python.png import read_png, write_png  # noqa: E402
 from megadrive_python.system import System  # noqa: E402
 
 MAME = "/usr/games/mame"
-ROMPATH = "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)"
+#: MAME's BIOS/system romsets (MAME_ROMPATH; MAME's own default if unset).
+ROMPATH = os.environ.get("MAME_ROMPATH", "roms")
 ROMS = Path("/data/emu/roms/megadrive")
 BOOT = ROMS / "[BIOS] Sega Mega Drive - Genesis - Boot ROM (World).zip"
 GAME = "Sonic The Hedgehog (USA, Europe)"

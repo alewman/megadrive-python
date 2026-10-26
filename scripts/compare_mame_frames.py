@@ -22,6 +22,7 @@ included.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,7 +37,8 @@ from megadrive_python.system import System  # noqa: E402
 
 IMAGE_SUFFIXES = (".md", ".gen", ".bin", ".smd")
 MAME = "/usr/games/mame"
-ROMPATH = "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)"
+#: MAME's BIOS/system romsets (MAME_ROMPATH; MAME's own default if unset).
+ROMPATH = os.environ.get("MAME_ROMPATH", "roms")
 
 
 def record(trace: Path, seconds: int, driver: str, mame: str, rompath: str) -> Path:

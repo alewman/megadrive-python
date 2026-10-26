@@ -57,6 +57,7 @@ import argparse
 import collections
 import csv
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -81,7 +82,8 @@ from megadrive_python.system import System  # noqa: E402
 
 ROMS = Path("/data/emu/roms/megadrive")
 MAME = "/usr/games/mame"
-ROMPATH = "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)"
+#: MAME's BIOS/system romsets (MAME_ROMPATH; MAME's own default if unset).
+ROMPATH = os.environ.get("MAME_ROMPATH", "roms")
 DRIVER = "genesis"
 MACHINE = "genesis"
 RESULTS = ROOT / "tests" / "compat"

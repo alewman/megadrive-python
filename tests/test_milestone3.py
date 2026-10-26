@@ -135,3 +135,45 @@ def test_window_bug_is_the_partial_column() -> None:
             assert around[:2] == around[2:], around
         else:
             assert around == [around[2] - 2, around[3] - 2, around[2], around[3]], around
+
+
+def test_window_bug_does_not_touch_plane_b() -> None:
+    """CMD's window bug is plane A's alone ("the VDP is drawing the 2-cell column
+    from plane A"): plane B has no window over it and must fetch its own columns
+    undisturbed, scroll or not."""
+    from megadrive_python.board import Board
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import MACHINES
+
+    vdp = Board(MACHINES["genesis"], Cartridge(b"")).vdp
+    vdp.registers[1] = 0x64  # display on, mode 5
+    vdp.registers[2] = 0x30  # plane A at $C000
+    vdp.registers[3] = 0x20  # window at $8000
+    vdp.registers[4] = 0x07  # plane B at $E000
+    vdp.registers[11] = 0x00  # full-screen scroll
+    vdp.registers[13] = 0x3F  # scroll table at $FC00
+    vdp.registers[16] = 0x01  # 64 x 32 cells
+    vdp.registers[17] = 0x04  # window: the left eight cells
+    vdp.registers[18] = 0x00
+    for cell in range(64):  # plane B: cell N names pattern N (no window over it)
+        vdp.vram[0xE000 + cell * 2] = 0
+        vdp.vram[0xE000 + cell * 2 + 1] = cell
+    vdp.vram[0xFC00], vdp.vram[0xFC01] = 0x00, 0x06  # plane A: fine scroll 6 (nonzero
+    # low bits, the condition the window bug needs) so it is active for this line
+    fetched: list[tuple[int, int]] = []
+    inner = vdp.renderer._tile_row
+
+    def note(address: int, attribute: int, flip: bool):
+        fetched.append((len(fetched), address // 32))
+        return inner(address, attribute, flip)
+
+    vdp.renderer._tile_row = note  # type: ignore[method-assign]
+    try:
+        vdp.renderer._line_a = [0] * 320
+        vdp.renderer._line_b = [0] * 320
+        vdp.renderer._spans = vdp.renderer._plane_setup(320, 0, 0, False)
+        vdp.renderer._plane_span(0, 320, planes=(1,))  # plane B only
+    finally:
+        vdp.renderer._tile_row = inner  # type: ignore[method-assign]
+    cells = [cell for _, cell in fetched]
+    assert cells == list(range(40)), cells

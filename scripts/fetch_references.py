@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -64,6 +65,9 @@ MIRROR_PACE = 2
 
 
 def download(url: str, backoff: tuple[int, ...] = ()) -> bytes:
+    """``${NO_INTRO_DIR}`` in a ``file://`` pin is the reader's own No-Intro set."""
+    if url.startswith("file://"):
+        url = os.path.expandvars(url)
     for wait in (*backoff, None):
         try:
             with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:

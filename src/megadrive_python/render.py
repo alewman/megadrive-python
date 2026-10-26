@@ -408,6 +408,10 @@ class Renderer:
         ):
             if plane not in planes:
                 continue
+            # The window bug is plane A's alone (CMD: "the VDP is drawing the 2-cell
+            # column from plane A"; ``_window_columns``'s docstring); plane B has no
+            # window over it and must fetch its own columns undisturbed.
+            plane_window_bug = window_bug if plane == 0 else -1
             if two_cell:
                 # Two-cell column vertical scroll: each 16-pixel column of the display
                 # has its own VSRAM entry (CMD ``genvdp.txt``, register $0B bit 2).
@@ -416,14 +420,14 @@ class Renderer:
                     index = (x >> 4) * 2 + plane
                     vscroll = vdp.column_scroll(index) if index < words else 0
                     self._plane_columns(line, base, screen_row + vscroll, size, scroll,
-                                        im2, window_bug, max(x, first),
+                                        im2, plane_window_bug, max(x, first),
                                         min(x + 16, last))  # fmt: skip
                     x += 16
             else:
                 # Full-screen: the value latched at the end of the line before, not
                 # VSRAM as it stands (:attr:`VDP.vscroll_latch`).
                 self._plane_columns(line, base, screen_row + vdp.vscroll_latch[plane],
-                                    size, scroll, im2, window_bug, first,
+                                    size, scroll, im2, plane_window_bug, first,
                                     last)  # fmt: skip
         if window_last >= window_first and 0 in planes:
             # "Plane A is not shown in any column where plane W is shown" (CMD).
