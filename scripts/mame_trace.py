@@ -40,6 +40,7 @@ with the first run's exit snapshot under ``snap/``.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -48,7 +49,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAME = "/usr/games/mame"
-ROMPATH = "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)"
+#: MAME's BIOS/system romsets (MAME_ROMPATH; MAME's own default if unset).
+ROMPATH = os.environ.get("MAME_ROMPATH", "roms")
 DRIVERS = ("genesis", "megadriv", "megadrij", "genesis_tmss")
 CART_SUFFIXES = (".md", ".gen", ".bin", ".smd")
 

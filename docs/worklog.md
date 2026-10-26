@@ -3011,7 +3011,7 @@ sweep is next.
    cartridge code is fresh, rather than leaving them to the frontend.
 8. **MD Soft Checker v0.30 is available after all** (the user asked the right
    question): the local mirror has it as
-   `/data/emu/source/myrient.erista.me/files/No-Intro/Sega - Mega Drive - Genesis/MD Soft Checker (USA) (Proto) (Unl).zip`
+   `No-Intro/Sega - Mega Drive - Genesis/MD Soft Checker (USA) (Proto) (Unl).zip`
    (zip SHA-256 `688debcf0635e48ef501c84fd8348cdd40d18b2a5efa1e4391be1fd5cbf2996a`,
    inner `.md` 262,144 bytes). No-Intro dropped the `(v0.30)` from the name, which
    is why the romset's symlink dangles. It runs on the board: at 600 frames it

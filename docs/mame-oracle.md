@@ -17,7 +17,7 @@ It runs MAME twice in a fresh directory (default
 `tests/mame_traces/<driver>-<cart stem>`, ignored), once per CPU, each time as
 
 ```sh
-mame genesis -cart <image> -rompath "/data/emu/source/myrient.erista.me/files/MAME/ROMs (non-merged)" \
+mame genesis -cart <image> -rompath "$MAME_ROMPATH" \
   -homepath <out> -snapshot_directory <out>/snap-<cpu> -video none -sound none -nothrottle \
   -noreadconfig -skip_gameinfo -debug -debugger none -log -seconds_to_run <n> \
   -autoboot_script <out>/<cpu>.lua
