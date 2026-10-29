@@ -931,6 +931,8 @@ class Board:
             return self._system_read_word(address)
         if 0x80 <= top < 0xA0:
             raise Lockup(f"68000 read of ${address:06X} (32X area) without a 32X")
+        if top < 0x80 and getattr(self.cartridge, "upper", False):
+            return self.cartridge.read_word(address)
         return self.open_bus_msb()
 
     def read_byte(self, address: int) -> int:
@@ -959,6 +961,8 @@ class Board:
             return word & 0xFF if address & 1 else word >> 8
         if 0x80 <= top < 0xA0:
             raise Lockup(f"68000 read of ${address:06X} (32X area) without a 32X")
+        if top < 0x80 and getattr(self.cartridge, "upper", False):
+            return self.cartridge.read_byte(address)
         return 0 if address & 1 else self.open_bus() >> 8
 
     def write_word(self, address: int, value: int) -> None:
@@ -988,6 +992,8 @@ class Board:
             self._system_write(address, value >> 8, value & 0xFF, word=True)
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"68000 write to ${address:06X} (32X area) without a 32X")
+        elif top < 0x80 and getattr(self.cartridge, "upper", False):
+            self.cartridge.write_word(address, value)
 
     def write_byte(self, address: int, value: int) -> None:
         if self.refresh_enabled:
@@ -1016,6 +1022,8 @@ class Board:
             self._system_write(address, value, value, word=False)
         elif 0x80 <= top < 0xA0:
             raise Lockup(f"68000 write to ${address:06X} (32X area) without a 32X")
+        elif top < 0x80 and getattr(self.cartridge, "upper", False):
+            self.cartridge.write_byte(address, value)
 
     def dma_read_word(self, address: int) -> int:
         """A word the VDP's 68000-to-VDP DMA reads from the 68000's bus (the 68000 is
@@ -1117,9 +1125,15 @@ class Board:
             busy = 0 if granted else 0x100
             return (self.open_bus() & 0xFE00) | busy
         if offset & 0xFF00 == 0x3000:
-            value = self.cartridge.read_time(address | 1)
-            if value is not None:
-                return value | (value << 8)
+            word = getattr(self.cartridge, "read_time_word", None)
+            if word is not None:
+                value = word(address)
+                if value is not None:
+                    return value
+            else:
+                value = self.cartridge.read_time(address | 1)
+                if value is not None:
+                    return value | (value << 8)
         return self.open_bus_msb()
 
     def _system_write(self, address: int, high: int, low: int, *, word: bool,
@@ -1161,7 +1175,11 @@ class Board:
             t = self.m68k_access_clock()
             self.set_z80_reset(not high & 1, t, t + ZRES_PIN_MCLK, write=True)
         elif offset & 0xFF00 == 0x3000:
-            self.cartridge.write_time(address | 1, low)
+            lanes = getattr(self.cartridge, "write_time_lanes", None)
+            if lanes is not None:
+                lanes(address, high, low, word)
+            else:
+                self.cartridge.write_time(address | 1, low)
         elif offset & 0xFF00 == 0x4100:
             # $A14101 bit 0: the cartridge (1) or the TMSS boot ROM (0). The boot
             # program reaches it with BSET and BCLR, so only bit 0 of the byte

@@ -587,6 +587,10 @@ class System:
         # hear the button, and each decides what it resets (socket 9).
         for device in self.board.devices:
             device.reset(Reset.BUTTON, self.reset_at)
+        # ... and so does the cartridge, if its board has anything that counts presses.
+        press = getattr(self.board.cartridge, "reset", None)
+        if press is not None:
+            press()
 
     def step(self) -> int:
         """One 68000 instruction, then the Z80 up to the same time; returns MCLK."""

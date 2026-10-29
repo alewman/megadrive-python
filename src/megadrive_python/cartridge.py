@@ -44,9 +44,13 @@ Boards modelled:
   EEPROM ones, which are J-Carts too): two more control ports on the cartridge,
   read and written at $38FFFE.
 
-Other boards (the unlicensed mappers, the SVP, the Game Genie) are not modelled; an
-image on one of them loads as plain ROM with :attr:`Cartridge.unsupported` naming the
-board.
+- the **unlicensed and special boards** of :mod:`megadrive_python.mappers` (protection
+  read-backs, bank mappers, the Super Fighter Team boards), registered in :data:`BOARDS`
+  by MAME's slot name; the ones that decode $400000-$7FFFFF set :attr:`Cartridge.upper`.
+
+Other boards (the SVP, Pier Solar's board, the Game Genie and the lock-on adapters) are
+not modelled; an image on one of them loads as plain ROM with
+:attr:`Cartridge.unsupported` naming the board.
 """
 
 from __future__ import annotations
@@ -72,6 +76,11 @@ SSF_SLOTS = ("ssf", "ssf_sram")
 #: Boards on a Sega-mapper-shaped board: the SSF2 mapper, Titan's Overdrive 2 board
 #: (MAME's own comment says it is the same mapper), and Krikzz's Extended SSF.
 MAPPER_SLOTS = ("rom_ssf2", "rom_titan", *SSF_SLOTS)
+
+#: Boards that are their own class (:mod:`megadrive_python.mappers`), by the name MAME's
+#: software list gives the slot; the module fills it in when it is imported (bottom of
+#: this file). A slot in here is supported; any other that is not listed above is not.
+BOARDS: dict[str, type[Cartridge]] = {}
 
 #: The bank number a board's page registers take, as a mask.
 #:
@@ -350,6 +359,9 @@ class Cartridge:
     #: ``sockets.CartridgeSlot``): every ROM cartridge does; the Sega CD's RAM cartridge,
     #: which is not modelled here, does not.
     grounds_cart = True
+    #: Whether the board decodes $400000-$7FFFFF itself (the pirate boards' protection
+    #: registers live there); on every other board it is open bus.
+    upper = False
 
     def __init__(self, image: bytes, *, slot: str = "rom", sram_size: int = 0,
                  name: str = "") -> None:  # fmt: skip
@@ -398,7 +410,9 @@ class Cartridge:
         #: plain cartridge pays exactly what it paid before either existed; a 68000
         #: fetch is the hottest thing in the emulator.
         self.special = bool(self.sram) or self.decoded
-        if slot not in ("rom", *SRAM_SLOTS, *MAPPER_SLOTS) and not self.decoded:
+        if slot in BOARDS:
+            pass  # the board's own class decides what it maps
+        elif slot not in ("rom", *SRAM_SLOTS, *MAPPER_SLOTS) and not self.decoded:
             self.unsupported = slot
         elif len(image) > ROM_WINDOW and slot not in MAPPER_SLOTS:
             # Larger than the 68000's cartridge window with no mapper to page it in.
@@ -437,7 +451,7 @@ class Cartridge:
             sram = int(listed["sram"]) // 2
             if slot in SRAM_SLOTS and not sram:
                 sram = 0x8000  # MAME's default range, $200000 + $FFFF
-            return cls(image, slot=slot, sram_size=sram, name=str(listed["name"]))
+            return BOARDS.get(slot, cls)(image, slot=slot, sram_size=sram, name=str(listed["name"]))
         if image[0x100:0x108] in SSF_HEADERS:
             # Krikzz's Extended SSF announces itself in the console field, which is
             # the activation rule his own document gives. These cartridges are
@@ -718,3 +732,6 @@ class BootROM:
 
     def load_bytes(self, data: bytes) -> None:
         """Nothing to load."""
+
+
+from . import mappers  # noqa: E402,F401  (registers its boards in BOARDS)
