@@ -526,6 +526,34 @@ source, the way sms-python does.
    lines 150-160), which is an empty socket. Attaching pads there is a frontend's job
    and is not modelled.
 
+6. **The unlicensed and pirate boards have no source but MAME.** Every board in
+   `mappers.py` is a transcription of a MAME device; no datasheet, no hardware capture.
+   MAME has two layouts in the pinned tree: 0.285's `bus/megadrive/rom.cpp` and the
+   newer `bus/megadrive/cart/*.cpp`, whose author annotated the protection values with
+   the program counters that read them. The board follows the newer where it has the
+   board. Where they differ: Super Mario Bros. reads `$1C` from `$A13000` (0.285
+   `$0C`); Rockman X3 gains `$400004`/`$400006` bytes; Red Cliff's dump is XORed with
+   `$40` and skips four bytes; Lion King 3 and Pokemon Stadium are one board
+   (`megadrive_unl_topf`). The installed MAME 0.285 cannot run a board whose slot name
+   only the newer layout knows (`rom_sf001_beggarp1`, `rom_777casino`, `rockworld`,
+   `rom_sanguo5`), so those are not compared.
+7. **Byte lanes decide what a register sees.** A register at an even address is on
+   D15-D8 and at an odd address on D7-D0, and a word write drives both. MAME 0.285
+   compares whole words (`data == 0xf100`), the newer files map one byte and mirror
+   address bit 0, and a literal reading of the mirror makes a word write of `$0300`
+   fire the handler twice, the second time with zero. The board resolves it per board
+   from what the games do: Chinese Fighter III's bank counts on the even lane only (the
+   word's high byte), Top Fighter and Pokemon Stadium's on either lane for byte writes
+   (Pokemon Stadium writes `$770077`) and by the *low* byte for word writes. A word
+   read of a protection register has the value high and `$FF` low.
+8. **Chaoji Poker (`rom_smouse`) ends in a Z80 lockup the game causes.** With the
+   protection answered it reaches its title screen (identical to MAME), then releases
+   the Z80 from reset without ever loading a driver; the Z80 runs the zeroed work RAM
+   as a NOP sled into its banked window, and `Board` raises `Lockup` for a bank
+   pointing at `$A00000` (CMD 2.3, MoD). On a console the Z80's RAM is garbage and
+   the outcome is undefined; MAME has no such lockup. Left as the board's existing
+   policy.
+
 ## Known-wrong or superseded sources
 
 - **CMD `m5hvc.txt`**: "probably off by one or two". Superseded by Nemesis's

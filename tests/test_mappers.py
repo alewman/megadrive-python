@@ -143,6 +143,10 @@ def test_top_fighter_bank_and_bitswap():
     assert c.read_byte(0x100000) == 0xFF
     c.write_byte(0x700000, 0)
     assert c.read_byte(0x8000) == 1
+    c.write_byte(0x770077, 0x08)  # Pokemon Stadium writes its bank at an odd address
+    assert c.read_byte(0x0000) == 8
+    c.write_word(0x700000, 0x0000)  # a word write counts by its low byte
+    assert c.read_byte(0x8000) == 1
     # the protection device: modes 0-3 on latch $B1 = 1011 0001
     c.write_byte(0x600001, 0xB1)
     expected = {0: 0x62, 1: 0x58, 2: 0x1B, 3: 0x8D}
@@ -286,6 +290,9 @@ def test_star_odyssey_modes_and_base_register():
     assert [c.read_byte(i * 0x40000) for i in range(5)] == [3, 4, 5, 6, 7]
     assert c.read_byte(0x140000) == 0xFF
     assert c.read_time_word(0xA13001) & 0xFF == 0x30
+    # the single-window mode follows the base too (Star Odyssey boots from it)
+    c.write_byte(0xE01, 0x80)
+    assert c.read_byte(0x0) == 3 and c.read_byte(0x1C0000) == 3
     c.write_byte(0xD01, 0x80)
     c.write_byte(0x200001, 0x66)
     assert c.read_byte(0x200001) == 0x66

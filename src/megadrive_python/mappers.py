@@ -413,8 +413,17 @@ class TopFighter(Board):
                 self.latch = value
             elif address & 7 == 3:
                 self.mode = value & 3
-        elif address >= 0x700000 and not address & 1:
-            self.bank = value  # even lane only, as Chinese Fighter III's bank byte
+        elif address >= 0x700000:
+            self.bank = value
+
+    def write_word(self, address: int, value: int) -> None:
+        # cart/xboy.cpp takes a byte on either lane; Pokemon Stadium writes it at an odd
+        # address ($770077). 0.285's rom.cpp takes ``data & 0xff`` of a word write, so a
+        # word write counts by its low byte, not its (zero) high one.
+        if address >= 0x700000:
+            self.bank = value & 0xFF
+        else:
+            super().write_word(address, value)
 
 
 @board("rom_realtec")
@@ -752,7 +761,8 @@ class StarOdyssey(_SuperFighter):
     def rb(self, address: int) -> int:
         if address < 0x200000:
             if not self.windows:
-                return self.padded[(address & 0x3FFFF) % len(self.padded)]
+                # window 0's page follows the base register in this mode too
+                return self.padded[((self.base << 18) | (address & 0x3FFFF)) % len(self.padded)]
             if address >= 0x140000:
                 return 0xFF
             page = (self.base + (address >> 18)) & 7

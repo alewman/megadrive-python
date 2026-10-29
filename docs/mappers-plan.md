@@ -8,6 +8,18 @@ sources (Plutiedev, CMD, Eke, Krikzz, Notaz for the SVP) win where they exist.
 Gap measured on the staged romset (`/data/emu/roms/megadrive`): ~100 entries load as
 plain ROM with `Cartridge.unsupported` set (Virtua Racing is `rom_svp`, 3 entries).
 
+## Status (2026-10-29)
+
+Tasks 1-3 built on branch `mappers`: 38 boards in `src/megadrive_python/mappers.py`,
+37 tests in `tests/test_mappers.py`. The 52 romset cartridges they cover, against MAME
+0.285 at 10 s (window 12): 16 `same`, 19 `phase`, 8 `differs`, 6 MAME cannot run (slot
+names only the newer MAME layout knows), 2 lockups, 1 `size` (an H32 game MAME shows
+padded to 320). Of the 8 `differs`, the two pairs of pictures looked at show the same
+scene at another animation moment; the other six were not looked at. Two lockups:
+Ya Se Chuan Shuo locks up identically on plain ROM (68000 access to `$DFFFFE`, not a
+mapper matter), Chaoji Poker is undocumented-behavior item 8. Not done from task 2:
+`18kin1`, `goldm250`, Tectoy Sports, 3-in-1 FWT (none in the romset).
+
 ## Tasks
 
 1. **Infrastructure** (additive; the 32X work pins this repo, so protocols only grow):
