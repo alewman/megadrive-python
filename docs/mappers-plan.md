@@ -8,6 +8,15 @@ sources (Plutiedev, CMD, Eke, Krikzz, Notaz for the SVP) win where they exist.
 Gap measured on the staged romset (`/data/emu/roms/megadrive`): ~100 entries load as
 plain ROM with `Cartridge.unsupported` set (Virtua Racing is `rom_svp`, 3 entries).
 
+## Status (2026-10-30)
+
+Tasks 4 and 6 built (same branch): `rom_stm95` Pier Solar matches MAME on all four
+listed images (and an unlisted-image header rule takes the two it does not list);
+`rom_sk` and `rom_ggenie` take a second cartridge (`--lock-on`, `Cartridge.lock_on`).
+S&K + Sonic 3 is identical to the real Lock-on Combination dump; S&K + Sonic 2 is too
+once given the 256 KB patch chip. Action Replay/PAR and Sega Channel are out of scope
+(undocumented-behavior item 10).
+
 ## Status (2026-10-29)
 
 Tasks 1-3 built on branch `mappers`: 38 boards in `src/megadrive_python/mappers.py`,

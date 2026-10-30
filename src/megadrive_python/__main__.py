@@ -62,12 +62,21 @@ def main(argv: list[str] | None = None) -> int:
         "--tmss-rom", type=Path,
         help="the TMSS boot ROM, which then runs before the cartridge",
     )  # fmt: skip
+    parser.add_argument(
+        "--lock-on", type=Path,
+        help="the cartridge plugged into the top of Sonic & Knuckles or a Game Genie",
+    )  # fmt: skip
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
     # from_image, not Cartridge(...): the board (a mapper, battery RAM) comes from
     # MAME's software list, which is what makes a banked cartridge work.
-    cartridge = Cartridge.from_image(load_image(args.cartridge))
+    try:
+        cartridge = Cartridge.lock_on(
+            load_image(args.cartridge), load_image(args.lock_on) if args.lock_on else None
+        )
+    except ValueError as error:
+        parser.error(str(error))
     if args.save and args.save.exists():
         cartridge.load_bytes(args.save.read_bytes())
     system = System(

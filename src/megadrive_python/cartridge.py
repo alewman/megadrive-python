@@ -48,9 +48,12 @@ Boards modelled:
   read-backs, bank mappers, the Super Fighter Team boards), registered in :data:`BOARDS`
   by MAME's slot name; the ones that decode $400000-$7FFFFF set :attr:`Cartridge.upper`.
 
-Other boards (the SVP, Pier Solar's board, the Game Genie and the lock-on adapters) are
-not modelled; an image on one of them loads as plain ROM with
-:attr:`Cartridge.unsupported` naming the board.
+- **Pier Solar** (``rom_stm95``), and the two **lock-on** boards (``rom_sk``,
+  ``rom_ggenie``), which take a second cartridge through :meth:`Cartridge.lock_on`.
+
+Other boards (the SVP, the Action Replay, the Sega Channel adapter) are not modelled;
+an image on one of them loads as plain ROM with :attr:`Cartridge.unsupported` naming the
+board.
 """
 
 from __future__ import annotations
@@ -289,12 +292,17 @@ def _software_list() -> dict[str, dict[str, str | int]]:
                 if area.get("name") == "sram":
                     sram = int(area.get("size", "0"), 0)
             roms = [r for r in part.iter("rom") if r.get("sha1")]
-            if len(roms) == 1:
-                table[roms[0].get("sha1", "")] = {
-                    "name": software.get("name", ""),
-                    "slot": slot,
-                    "sram": sram,
-                }
+            # A cartridge of several chips is listed by the chips; an image is the whole
+            # area, so only a single chip can be matched by hash. The exception is a
+            # dump of the first chip alone, which No-Intro's Sonic & Knuckles is (its
+            # 256 KB patch ROM is a second chip nobody dumped with it): it names the
+            # board for a board that is not the plain one.
+            if len(roms) == 1 or (roms and slot != "rom"):
+                entry = {"name": software.get("name", ""), "slot": slot, "sram": sram}
+                if len(roms) == 1:
+                    table[roms[0].get("sha1", "")] = entry
+                else:
+                    table.setdefault(roms[0].get("sha1", ""), entry)
     return table
 
 
@@ -505,6 +513,22 @@ class Cartridge:
             cart.sram_mapped = cart.rom_size <= cart.sram_start
             return cart
         return cls(image)
+
+    @classmethod
+    def lock_on(cls, image: bytes, sub_image: bytes | None, patch: bytes = b"") -> Cartridge:
+        """``image`` with ``sub_image`` plugged into its top, for the cartridges that
+        have a socket there (Sonic & Knuckles, the Game Genie). ``None`` is an empty
+        socket. ``patch`` is Sonic & Knuckles's 256 KB second chip, if the caller has it
+        (:attr:`mappers.SonicAndKnuckles.patch`). A cartridge with no socket is a
+        mistake in the command line."""
+        cartridge = cls.from_image(image)
+        if sub_image is None:
+            return cartridge
+        attach = getattr(cartridge, "attach", None)
+        if attach is None:
+            raise ValueError(f"{cartridge.name or cartridge.slot}: no lock-on socket")
+        attach(cls.from_image(sub_image), *([patch] if patch else []))
+        return cartridge
 
     # -- the battery ------------------------------------------------------------
 

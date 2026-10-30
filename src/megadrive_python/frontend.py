@@ -152,8 +152,9 @@ class Frontend:
     def __init__(self, pygame, rom: Path, machine: str, *, scale: int, audio: bool,
                  fullscreen: bool, fm: bool = True, skip: int = 0, pad: str = "3button",
                  pad2: str = "3button", save: Path | None = None,
-                 tmss_rom: Path | None = None) -> None:  # fmt: skip
+                 tmss_rom: Path | None = None, lock_on: Path | None = None) -> None:  # fmt: skip
         self.pg = pygame
+        self.lock_on = lock_on
         self.rom, self.machine_name = rom, machine
         self.fm, self.skip = fm, max(0, skip)
         self.pad_types = (pad, pad2)
@@ -229,7 +230,9 @@ class Frontend:
     # -- console ------------------------------------------------------------------
 
     def _power_on(self) -> System:
-        cartridge = Cartridge.from_image(load_image(self.rom))
+        cartridge = Cartridge.lock_on(
+            load_image(self.rom), load_image(self.lock_on) if self.lock_on else None
+        )
         if self.save_path is not None and self.save_path.exists() and cartridge.battery:
             cartridge.load_bytes(self.save_path.read_bytes())
         self.cartridge = cartridge
@@ -470,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--tmss-rom", type=Path, help="the TMSS boot ROM, run before the cartridge")
     parser.add_argument("--fullscreen", action="store_true")
+    parser.add_argument("--lock-on", type=Path, help="the cartridge on top of S&K or a Game Genie")
     args = parser.parse_args(argv)
     try:
         import pygame
@@ -488,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     frontend = Frontend(
         pygame, args.rom, machine, scale=max(1, args.scale), audio=not args.no_audio,
         fullscreen=args.fullscreen, fm=not args.no_fm, skip=args.skip, pad=args.pad,
-        pad2=args.pad2, save=args.save, tmss_rom=args.tmss_rom,
+        pad2=args.pad2, save=args.save, tmss_rom=args.tmss_rom, lock_on=args.lock_on,
     )  # fmt: skip
     try:
         frontend.run()

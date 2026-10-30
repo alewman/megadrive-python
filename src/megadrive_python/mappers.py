@@ -931,3 +931,206 @@ class PierSolar(Board):
             self.chip.si = value & 1
             self.chip.clock((value >> 1) & 1)
             self.chip.select((value >> 3) & 1)
+
+
+# -- lock-on cartridges ----------------------------------------------------------------------
+
+
+class LockOn(Board):
+    """A cartridge with a second cartridge plugged into its top (``sk.cpp``, ``ggenie.cpp``).
+
+    ``sub`` is the second cartridge as any board object, or None for an empty socket:
+    :meth:`attach` plugs it in. It is a stand-alone :class:`Cartridge` with its own
+    battery, so its saves are the ones this board reports.
+    """
+
+    sub: Cartridge | None = None
+
+    def attach(self, sub: Cartridge) -> None:
+        self.sub = sub
+
+    @property
+    def battery(self) -> str:
+        return self.sub.battery if self.sub is not None else ""
+
+    def save_bytes(self) -> bytes:
+        return self.sub.save_bytes() if self.sub is not None else b""
+
+    def load_bytes(self, data: bytes) -> None:
+        if self.sub is not None:
+            self.sub.load_bytes(data)
+
+    def reset(self) -> None:
+        sub_reset = getattr(self.sub, "reset", None)
+        if sub_reset is not None:
+            sub_reset()
+
+    def sub_time_word(self, address: int) -> int | None:
+        sub = self.sub
+        if sub is None:
+            return None
+        word = getattr(sub, "read_time_word", None)
+        if word is not None:
+            return word(address)
+        value = sub.read_time(address | 1)
+        return None if value is None else 0xFF00 | value
+
+    def sub_time_write(self, address: int, high: int, low: int, word: bool) -> None:
+        sub = self.sub
+        if sub is None:
+            return
+        lanes = getattr(sub, "write_time_lanes", None)
+        if lanes is not None:
+            lanes(address, high, low, word)
+        else:
+            sub.write_time(address | 1, low)
+
+
+@board("rom_sk")
+class SonicAndKnuckles(LockOn):
+    """Sonic & Knuckles: 2 MB of its own, and above it whatever is locked on.
+
+    The second cartridge is at $200000 as its own $000000 (so Sonic 2's 1 MB or Sonic
+    3's 2 MB appear above the S&K ROM). Writing bit 0 of $A130F0 changes that for the
+    cartridges that need their own addresses -- Sonic 3's upper half and its battery
+    RAM -- to unshifted, and $300000-$3FFFFF then shows the S&K ROM's mirror (the
+    "Sonic 2 patch ROM", sk.cpp). $A130xx writes pass through to the second cartridge.
+    An empty socket shows the S&K ROM mirrored over $200000-$3FFFFF.
+    """
+
+    #: The 256 KB patch ROM on the board's second chip (MAME's ``mpr-16911-s.ic2``,
+    #: loaded at $300000), which No-Intro's Sonic & Knuckles does not include: it is
+    #: what Sonic 2 locked on needs at $300000-$33FFFF. Without it that range shows the
+    #: 2 MB ROM's mirror.
+    patch: bytes = b""
+
+    def attach(self, sub: Cartridge, patch: bytes = b"") -> None:
+        super().attach(sub)
+        self.patch = patch
+
+    def start(self) -> None:
+        self.map_upper = False
+
+    def reset(self) -> None:
+        self.map_upper = False
+        super().reset()
+
+    def patched(self, address: int) -> bool:
+        return bool(self.patch) and self.map_upper and 0x300000 <= address < 0x340000
+
+    def window(self, address: int) -> int | None:
+        """The second cartridge's address for ``address``, or None for the S&K ROM."""
+        if self.sub is None or address < 0x200000 or address >= ROM_WINDOW:
+            return None
+        if self.map_upper:
+            return None if address >= 0x300000 else address
+        return address - 0x200000
+
+    def rb(self, address: int) -> int:
+        if self.patched(address):
+            return self.patch[(address - 0x300000) & (len(self.patch) - 1)]
+        where = self.window(address)
+        if where is None:
+            return super().rb(address)
+        assert self.sub is not None
+        return self.sub.read_byte(where)
+
+    def read_word(self, address: int) -> int:
+        if self.patched(address):
+            return (self.rb(address) << 8) | self.rb(address | 1)
+        where = self.window(address)
+        if where is None:
+            return super().read_word(address)
+        assert self.sub is not None
+        return self.sub.read_word(where)
+
+    def wb(self, address: int, value: int) -> None:
+        where = self.window(address)
+        if where is not None:
+            assert self.sub is not None
+            self.sub.write_byte(where, value)
+
+    def write_word(self, address: int, value: int) -> None:
+        where = self.window(address)
+        if where is not None:
+            assert self.sub is not None
+            self.sub.write_word(where, value)
+
+    def read_time_word(self, address: int) -> int | None:
+        return self.sub_time_word(address)
+
+    def write_time_lanes(self, address: int, high: int, low: int, word: bool) -> None:
+        if (address & 0xFF) in (0xF0, 0xF1) and (word or address & 1):
+            self.map_upper = bool(low & 1)
+        self.sub_time_write(address, high, low, word)
+
+
+@board("rom_ggenie")
+class GameGenie(LockOn):
+    """Codemasters' Game Genie: 32 KB of its own ROM and six word patches.
+
+    $000000-$00003F is its ASIC when written; $A130xx is not connected to the cartridge
+    on top. MODE (word 0): bit 10 passes reads to that cartridge, else bit 9 reads the
+    ASIC's registers where the ROM would be; bit 8 latches the six address/data pairs
+    from words 2-19 and bits 0-5 of word 0 enable them (ggenie.cpp).
+    """
+
+    def start(self) -> None:
+        self.bypass = False
+        self.reg_enable = False
+        self.regs = [0] * 0x20
+        self.addr = [0] * 6
+        self.data = [0] * 6
+
+    def reset(self) -> None:
+        self.start()
+        super().reset()
+
+    def rb(self, address: int) -> int:
+        word = self.read_word(address & ~1)
+        return (word & 0xFF) if address & 1 else word >> 8
+
+    def read_word(self, address: int) -> int:
+        if address >= ROM_WINDOW:
+            return 0xFFFF
+        if not self.bypass or self.sub is None:
+            if self.reg_enable:
+                return self.regs[(address >> 1) & 0x1F]
+            return (self.rom[address] << 8) | self.rom[address + 1]
+        for index in range(6):
+            if address >> 1 == self.addr[index] >> 1 and (self.regs[0] >> index) & 1:
+                return self.data[index]
+        return self.sub.read_word(address)
+
+    def read_byte(self, address: int) -> int:
+        return self.rb(address)
+
+    def write_byte(self, address: int, value: int) -> None:
+        if address < 0x40:
+            if address & 1:
+                self.write_lanes(address >> 1, value & 0xFF, 0x00FF)
+            else:
+                self.write_lanes(address >> 1, (value & 0xFF) << 8, 0xFF00)
+
+    def write_word(self, address: int, value: int) -> None:
+        if address < 0x40:
+            self.write_lanes(address >> 1, value, 0xFFFF)
+
+    def wb(self, address: int, value: int) -> None:
+        self.write_byte(address, value)
+
+    def write_lanes(self, offset: int, data: int, mask: int) -> None:
+        regs = self.regs
+        regs[offset] = (regs[offset] & ~mask) | (data & mask)
+        if offset == 0:
+            if data & 0x400:
+                self.bypass = True
+            else:
+                self.bypass = False
+                self.reg_enable = bool(data & 0x200)
+            if data & 0x100:
+                for index in range(6):
+                    self.addr[index] = ((regs[2 + 3 * index] & 0x3F) << 16) | regs[3 + 3 * index]
+                    self.data[index] = regs[4 + 3 * index]
+        elif offset == 1:
+            regs[1] |= 1

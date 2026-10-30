@@ -373,3 +373,63 @@ def test_an_unlisted_watermelon_image_is_pier_solar():
     raw = bytearray(0x800000)
     raw[0x110:0x118] = b"(c)T574 "
     assert Cartridge.from_image(bytes(raw)).slot == "rom_stm95"
+
+
+def test_sonic_and_knuckles_with_nothing_on_top_mirrors_its_own_rom():
+    c = cart("rom_sk", 0x200000, 0x10000)
+    assert c.read_byte(0x000000) == 0 and c.read_byte(0x1F0000) == 0x1F
+    assert c.read_byte(0x200000) == 0 and c.read_byte(0x3F0000) == 0x1F
+    assert c.battery == ""
+
+
+def test_sonic_and_knuckles_shows_the_locked_on_cartridge_above_it():
+    c = cart("rom_sk", 0x200000, 0x10000)
+    sub = Cartridge(image(0x100000, 0x10000))
+    sub.sram = bytearray(b"\xff" * 0x100)
+    c.attach(sub)
+    # the second cartridge starts at its own $000000, shifted up by 2 MB
+    assert c.read_byte(0x200000) == 0 and c.read_byte(0x210000) == 1
+    assert c.read_word(0x2F0000) == 0x0F0F
+    # bit 0 of $A130F0 unshifts it and mirrors the S&K ROM into $300000-$3FFFFF
+    c.write_time_lanes(0xA130F0, 0x00, 0x01, True)
+    assert c.read_byte(0x210000) == 0x21 & 0x0F  # sub's own $210000, mirrored in its 1 MB
+    assert c.read_byte(0x310000) == 0x11  # the S&K ROM's own page
+    c.reset()
+    assert c.read_byte(0x210000) == 1
+    # a battery on the second cartridge is the pair's
+    sub.sram_mapped = True
+    sub.sram_start, sub.sram_end = 0x200000, 0x200200
+    sub2 = Cartridge(image(0x100000, 0x10000), sram_size=0x100)
+    c.attach(sub2)
+    assert c.battery == "sram" and len(c.save_bytes()) == 0x100
+    c.load_bytes(b"\x01\x02")
+    assert sub2.sram[:2] == b"\x01\x02"
+
+
+def test_game_genie_patches_the_cartridge_on_top():
+    c = cart("rom_ggenie", 0x8000, 0x1000)
+    assert c.read_byte(0x0000) == 0 and c.read_byte(0x7000) == 7
+    sub = Cartridge(image(0x100000, 0x10000))
+    c.attach(sub)
+    # patch 0 at $010000 with $BEEF, latched, then the pass-through on
+    c.write_word(0x04, 0x0001)  # address high (word 2)
+    c.write_word(0x06, 0x0000)  # address low (word 3)
+    c.write_word(0x08, 0xBEEF)  # data (word 4)
+    c.write_word(0x00, 0x0000 | 0x0400 | 0x0100 | 0x0001)
+    assert c.read_word(0x10000) == 0xBEEF
+    assert c.read_word(0x10002) == 0x0101  # everything else from the second cartridge
+    assert c.read_byte(0x10001) == 0xEF
+    # without the pass-through the registers can be read where the ROM would be
+    c.write_word(0x00, 0x0200)
+    assert c.read_word(0x08) == 0xBEEF
+    c.write_word(0x00, 0x0000)
+    assert c.read_byte(0x7000) == 7
+    c.reset()
+    assert c.read_byte(0x0000) == 0
+
+
+def test_lock_on_names_the_cartridge_without_a_socket():
+    import pytest
+
+    with pytest.raises(ValueError):
+        Cartridge.lock_on(image(0x100000), image(0x100000))

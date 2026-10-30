@@ -553,6 +553,31 @@ source, the way sms-python does.
    pointing at `$A00000` (CMD 2.3, MoD). On a console the Z80's RAM is garbage and
    the outcome is undefined; MAME has no such lockup. Left as the board's existing
    policy.
+9. **Pier Solar's protection is a hack in MAME, and the board takes the newer one.**
+   The T-5740 board's own text (`cart/t5740.cpp`): "at startup each bank is 32K
+   mirrored, and an unspecified condition unlocks the full bank". MAME 0.285
+   (`stm95.cpp`) answers reads of `$0015E6`/`$0015E8` with counted values; the newer
+   file mirrors the first 32 KB over `$018100`-`$0181FF` for *byte* reads, which is
+   what the header read at the "not endorsed by Sega" screen needs. The board takes the
+   newer and the four listed images match MAME 0.285 over 20 s (`phase` only, a cursor
+   blink), so the two hacks are equivalent for this software. `$A13001`'s mode bits
+   (SPI enable, bank enable) are written and ignored in both. The EEPROM is MAME's
+   state machine for an M95320 with block protection and write time left out; no
+   ST datasheet is pinned.
+10. **The lock-on cartridges are MAME's and one chip is missing.** `rom_sk` and
+    `rom_ggenie` (0.285 `sk.cpp`, `ggenie.cpp`) are transcribed as written. Sonic &
+    Knuckles with Sonic 3 locked on is *identical* to No-Intro's Lock-on Combination
+    dump after 10 s, and with Sonic 2 it is identical only with S&K's 256 KB second chip
+    (`mpr-16911-s.ic2`, MAME's `$300000` patch ROM), which No-Intro's 2 MB S&K does not
+    include. That chip is in the S&K + S2 Lock-on Combination dump at `$300000`
+    (SHA-1 `70429f1d...`), so `Cartridge.lock_on(..., patch=)` takes it; without it Sonic
+    2 locks up at `$268` with a black screen. The Game Genie reaches its code screen
+    and starts Sonic 2 with no code entered; a code's patch is tested against synthetic
+    data only (no MAME run: its software list has no way to mount the pair from the
+    command line that was tried). Not modelled: the Action Replay and Pro Action Replay
+    (MAME lists them `supported="no"` and its newer device is a stub with no cheat
+    interface) and the Sega Channel adapter (a cable-modem; its games run as plain
+    ROM).
 
 ## Known-wrong or superseded sources
 
