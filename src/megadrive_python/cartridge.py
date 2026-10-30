@@ -763,4 +763,4 @@ class BootROM:
         """Nothing to load."""
 
 
-from . import mappers  # noqa: E402,F401  (registers its boards in BOARDS)
+from . import mappers, svp  # noqa: E402,F401  (register their boards in BOARDS)

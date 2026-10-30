@@ -121,11 +121,11 @@ def test_a_mapper_board_may_be_larger_than_the_window():
 
 
 def test_an_unmodelled_board_keeps_its_own_reason_when_it_is_also_oversize():
-    # An 8 MB image on ``rom_svp``, which the board does not model at all.
+    # An 8 MB image on ``segach_us`` (the Sega Channel adapter), which the board does not model.
     # The more specific reason wins; "oversize" would say less.
     from megadrive_python.cartridge import Cartridge
 
-    assert Cartridge(_image(0x800000), slot="rom_svp").unsupported == "rom_svp"
+    assert Cartridge(_image(0x800000), slot="segach_us").unsupported == "segach_us"
 
 
 def test_a_zip_with_two_images_yields_the_cartridge_not_the_lock_on(tmp_path):

@@ -1124,6 +1124,10 @@ class Board:
                 granted = t >= self.busack_at
             busy = 0 if granted else 0x100
             return (self.open_bus() & 0xFE00) | busy
+        if offset & 0xFF00 == 0x5000:
+            word = getattr(self.cartridge, "read_a15_word", None)
+            if word is not None:
+                return word(address)
         if offset & 0xFF00 == 0x3000:
             word = getattr(self.cartridge, "read_time_word", None)
             if word is not None:
@@ -1180,6 +1184,10 @@ class Board:
                 lanes(address, high, low, word)
             else:
                 self.cartridge.write_time(address | 1, low)
+        elif offset & 0xFF00 == 0x5000:
+            write = getattr(self.cartridge, "write_a15", None)
+            if write is not None:
+                write(address, high, low, word)
         elif offset & 0xFF00 == 0x4100:
             # $A14101 bit 0: the cartridge (1) or the TMSS boot ROM (0). The boot
             # program reaches it with BSET and BCLR, so only bit 0 of the byte

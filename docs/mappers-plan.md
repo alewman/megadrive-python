@@ -8,6 +8,18 @@ sources (Plutiedev, CMD, Eke, Krikzz, Notaz for the SVP) win where they exist.
 Gap measured on the staged romset (`/data/emu/roms/megadrive`): ~100 entries load as
 plain ROM with `Cartridge.unsupported` set (Virtua Racing is `rom_svp`, 3 entries).
 
+## Status (2026-10-30, later)
+
+Task 5 built: **new repo `/data/emu/ssp1601-python`** (core: MAME 0.285's instruction set and
+cycle counts, disassembler, 21 tests; `docs/claims.md`) and the board side
+`src/megadrive_python/svp.py` (`rom_svp`: MAME's memory controller, `$A15000` status words,
+DRAM, and an **exact idle-loop skip**: a DSP whose whole state recurs with nothing outside
+changed is only counted, and woken to the cycle -- `tests/test_svp.py`). Optional dependency:
+without `ssp1601-python` the image loads as plain ROM, `unsupported` as before. Three
+additive hooks: `$A15xxx` reads/writes (`read_a15_word`, `write_a15`) and a cartridge with
+`catch_up` is a clock domain. Against MAME 0.285 (its `md_rom_svp.zip` needs to be on
+`MAME_ROMPATH`): the four Virtua Racing images are `same` at 10 s.
+
 ## Status (2026-10-30)
 
 Tasks 4 and 6 built (same branch): `rom_stm95` Pier Solar matches MAME on all four

@@ -173,6 +173,9 @@ class System:
         #: instructions, after the Z80 -- the sockets' devices, and anything else an
         #: add-on puts here. Empty on a console with nothing plugged in.
         self.clocked: list[Clocked] = list(board.devices)
+        if hasattr(board.game_cartridge, "catch_up"):
+            # A cartridge with a processor of its own (the SVP's DSP) is one more clock domain.
+            self.clocked.append(board.game_cartridge)
         #: Socket 8: the sound sources mixed with the FM and the PSG (:meth:`take_audio`).
         self.audio_sources: list[AudioSource] = []
         self.z80 = Z80CPU(board.z80_read, board.z80_write)
