@@ -80,6 +80,9 @@ class SVP(Board):
         self.target = 0  # where the DSP is owed to be (the cycles an idle DSP has not run)
         self.next_look = IDLE_CHUNK
         self.seen: dict[tuple, tuple[int, int]] = {}
+        #: (write, mode) of every programmable-memory access whose mode the controller
+        #: does not decode (MAME logs "ssp FIXME: PMx unhandled ... mode"), for diagnosis.
+        self.unmatched: set[tuple[bool, int]] = set()
 
     # -- the clock ----------------------------------------------------------------
 
@@ -309,6 +312,8 @@ class SVP(Board):
                     self.iram[address & 0x3FF] = data & 0xFFFF
                     self.version += 1
                 table[reg] = (table[reg] + _increment(mode)) & 0xFFFFFFFF
+            else:
+                self.unmatched.add((True, mode))
             data = 0
         elif (mode & 0xFFF0) == 0x0800:  # ROM, one word on
             table[reg] = (table[reg] + 1) & 0xFFFFFFFF
@@ -318,6 +323,7 @@ class SVP(Board):
             data = self.dram[address]
             table[reg] = (table[reg] + _increment(mode)) & 0xFFFFFFFF
         else:
+            self.unmatched.add((False, mode))
             data = 0
         self.pmc = table[reg]  # "PMC corresponds to the last PMx accessed"
         return data
