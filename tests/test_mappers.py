@@ -319,3 +319,57 @@ def test_the_console_bus_routes_the_upper_window_only_for_boards_that_claim_it()
     smb = Board(machine, cart("rom_smb"))
     assert smb.read_word(0xA13000) == 0x001C
     assert smb.read_byte(0xA13000) == 0x00 and smb.read_byte(0xA13001) == 0x1C
+
+
+def spi(c, byte: int) -> int:
+    """Clock one byte into the M95320 through $A13009 (/CS low) and read back what SO did."""
+    out = 0
+    for bit in range(7, -1, -1):
+        si = (byte >> bit) & 1
+        c.write_time_lanes(0xA13009, 0xFF, si, False)
+        c.write_time_lanes(0xA13009, 0xFF, si | 2, False)
+        out = (out << 1) | (c.read_time_word(0xA1300B) & 1)
+    return out
+
+
+def select(c, level: int) -> None:
+    c.write_time_lanes(0xA13009, 0xFF, level << 3, False)
+
+
+def test_pier_solar_banks_and_spi_eeprom():
+    c = cart("rom_stm95", 0x800000, 0x80000)
+    assert c.read_byte(0x000000) == 0 and c.read_byte(0x27FFFF) == 4
+    assert c.read_byte(0x280000) == 5 and c.read_byte(0x380000) == 7
+    c.write_time_lanes(0xA13003, 0xFF, 0x0C, False)
+    c.write_time_lanes(0xA13007, 0xFF, 0x1F, False)  # four bits: page 15
+    assert c.read_byte(0x280000) == 12 and c.read_byte(0x380000) == 15
+    assert c.read_byte(0x300000) == 6
+    # the byte-read mirror of the first 32 KB over $018100-$0181FF
+    rom = image(0x800000, 0x80000)
+    assert c.read_byte(0x18100) == rom[0x100]
+    # WREN, WRITE $0123 <- $5A, READ it back
+    select(c, 1)
+    select(c, 0)
+    spi(c, 0x06)
+    select(c, 1)
+    select(c, 0)
+    for byte in (0x02, 0x01, 0x23, 0x5A):
+        spi(c, byte)
+    select(c, 1)
+    assert c.sram[0x123] == 0x5A and c.battery == "sram"
+    select(c, 0)
+    for byte in (0x03, 0x01, 0x23):
+        spi(c, byte)
+    assert spi(c, 0) == 0x5A
+    # without WREN a write does nothing
+    select(c, 1)
+    select(c, 0)
+    for byte in (0x02, 0x00, 0x10, 0x77):
+        spi(c, byte)
+    assert c.sram[0x10] == 0xFF
+
+
+def test_an_unlisted_watermelon_image_is_pier_solar():
+    raw = bytearray(0x800000)
+    raw[0x110:0x118] = b"(c)T574 "
+    assert Cartridge.from_image(bytes(raw)).slot == "rom_stm95"

@@ -782,3 +782,152 @@ class StarOdyssey(_SuperFighter):
 
     def read_time_word(self, address: int) -> int | None:
         return 0xFF00 | (self.base << 4)
+
+
+# -- Pier Solar ----------------------------------------------------------------------------
+
+
+class M95320:
+    """ST M95320, the 4 KB SPI EEPROM on Pier Solar, after MAME's ``stm95.cpp``.
+
+    Seven instructions, all of them eight bits clocked in on SCK's rising edge while
+    /CS is low: WRSR ($01), WRITE ($02), READ ($03), WRDI ($04), RDSR ($05) and
+    WREN ($06). A write is not delayed and block protection is ignored, as in MAME.
+    """
+
+    SIZE = 0x1000
+
+    def __init__(self, memory: bytearray) -> None:
+        self.memory = memory
+        self.state = "idle"
+        self.shift = 0
+        self.count = 0
+        self.address = 0
+        self.si = 0
+        self.sck = 0
+        self.cs = 1
+        self.wel = 0
+
+    def select(self, level: int) -> None:
+        self.cs = level
+        if level:
+            self.count = 0
+            self.state = "idle"
+
+    @property
+    def so(self) -> int:
+        if self.state in ("reading", "rdsr"):
+            return (self.shift >> 8) & 1
+        return 0
+
+    def clock(self, level: int) -> None:
+        rising = level and not self.sck
+        self.sck = level
+        if self.cs or not rising:
+            return
+        state = self.state
+        if state == "idle":
+            self.shift = (self.shift << 1) | self.si
+            self.count += 1
+            if self.count == 8:
+                self.count = 0
+                self.command(self.shift & 0xFF)
+        elif state == "wrsr":
+            self.count += 1
+            if self.count == 8:
+                self.state = "idle"
+                self.count = 0
+        elif state == "rdsr":
+            self.shift <<= 1
+            self.count += 1
+            if self.count == 8:
+                self.state = "idle"
+                self.count = 0
+        elif state in ("read", "write"):
+            self.shift = (self.shift << 1) | self.si
+            self.count += 1
+            if self.count == 16:
+                self.address = self.shift & (self.SIZE - 1)
+                if state == "read":
+                    self.shift = self.memory[self.address]
+                self.state = "reading" if state == "read" else "writing"
+                self.count = 0
+        elif state == "reading":
+            self.shift <<= 1
+            self.count += 1
+            if self.count == 8:
+                self.address = (self.address + 1) & (self.SIZE - 1)
+                self.shift |= self.memory[self.address]
+                self.count = 0
+        elif state == "writing":
+            self.shift = (self.shift << 1) | self.si
+            self.count += 1
+            if self.count == 8:
+                self.memory[self.address] = self.shift & 0xFF
+                self.address = (self.address + 1) & (self.SIZE - 1)
+                self.count = 0
+
+    def command(self, opcode: int) -> None:
+        if opcode == 0x01:
+            if self.wel:
+                self.state = "wrsr"
+            self.wel = 0
+        elif opcode == 0x02:
+            if self.wel:
+                self.state = "write"
+            self.shift = 0
+            self.wel = 0
+        elif opcode == 0x03:
+            self.state = "read"
+            self.shift = 0
+        elif opcode == 0x04:
+            self.wel = 0
+        elif opcode == 0x05:
+            self.state = "rdsr"
+            self.shift = self.wel << 1
+        elif opcode == 0x06:
+            self.wel = 1
+
+
+@board("rom_stm95", "rom_psolar")
+class PierSolar(Board):
+    """Pier Solar (WaterMelon T-5740): 8 MB in 512 KB pages and an M95320 on /TIME.
+
+    $000000-$27FFFF is pages 0-4; the three windows above it are $A13003, $A13005 and
+    $A13007 (low four bits) and start on pages 5, 6 and 7. $A13009 drives the EEPROM
+    (bit 0 SI, bit 1 SCK, bit 3 /CS) and $A1300B bit 0 reads SO. $A13001 is a mode
+    byte MAME ignores (t5740.cpp); the one hack is that a byte read of
+    $018100-$0181FF sees the first 32 KB mirrored, which the cartridge header read at
+    the "not endorsed by Sega" screen relies on.
+    """
+
+    def start(self) -> None:
+        self.pages = max(1, -(-len(self.padded) >> 19))
+        self.select = [0, 1, 2, 3, 4, 5, 6, 7]
+        self.sram = bytearray(b"\xff" * M95320.SIZE)
+        self.sram_start = self.sram_end = 0
+        self.chip = M95320(self.sram)
+
+    def rb(self, address: int) -> int:
+        if address < ROM_WINDOW:
+            page = self.select[address >> 19] % self.pages
+            return self.padded[(page << 19) | (address & 0x7FFFF)]
+        return 0xFF
+
+    def read_byte(self, address: int) -> int:
+        if 0x18100 <= address < 0x18200:
+            return self.padded[address & 0x7FFF]
+        return self.rb(address)
+
+    def read_time_word(self, address: int) -> int | None:
+        if address & 0xFE == 0x0A:
+            return 0xFF00 | self.chip.so
+        return None
+
+    def time_byte(self, offset: int, value: int) -> None:
+        if offset in (3, 5, 7):
+            self.select[4 + (offset >> 1)] = value & 0xF
+        elif offset == 9:
+            self.chip.si = value & 1
+            self.chip.clock((value >> 1) & 1)
+            self.chip.select((value >> 3) & 1)

@@ -473,6 +473,11 @@ class Cartridge:
             cart.sram_start = start & 0x3FFFFE
             cart.sram_end = cart.sram_start + 2 * len(cart.sram)
             return cart
+        if len(image) > ROM_WINDOW and image[0x110:0x118] == b"(c)T574 ":
+            # Watermelon's own publisher code on an 8 MB image the list does not hold
+            # (the Collector's Edition and Japanese Pier Solar): the board that code
+            # is the only one that ever shipped on.
+            return BOARDS["rom_stm95"](image, slot="rom_stm95", name="")
         backup = header_backup_ram(image)
         if len(image) > ROM_WINDOW and writes_sega_mapper(image):
             # Larger than the window, listed nowhere, announcing no board in its
