@@ -33,6 +33,8 @@ Issues = "https://github.com/alewman/megadrive-python/issues"
 megadrive-python-play = "megadrive_python.frontend:main"
 
 [project.optional-dependencies]
+# Virtua Racing's DSP (megadrive_python.svp); without it that cartridge loads as plain ROM.
+svp = ["ssp1601-python @ git+https://github.com/alewman/ssp1601-python@c863a2c672ac8baa8e80794d11d28886941ddfe4"]
 # The desktop window (megadrive_python.frontend): SDL through pygame-ce, which ships PyPy
 # wheels. The board itself stays dependency-free.
 frontend = ["pygame-ce>=2.5"]
