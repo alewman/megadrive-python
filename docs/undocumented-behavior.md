@@ -595,23 +595,22 @@ source, the way sms-python does.
     When the DSP's whole state, the controller's, and a counter of outside changes recur,
     the loop is only counted; a 68000 write wakes it by running the cycles over a whole
     number of turns. Tested against the unskipped run to the cycle (`tests/test_svp.py`).
-13. **Virtua Racing (USA) differs from MAME from about 20 s on, and is open.** The other
-    three images are `same` as MAME over every frame of a 28-frame window at 10 s and at
-    60 s (title pieces drawn by the DSP; Japan is NTSC, so it is not the frame rate).
-    The USA ROM's ranking screen draws text with broken column offsets that MAME's
-    does not (no MAME snapshot within three seconds either side, every 3 frames, matches
-    it: 10,448 pixels at best), and its 60 s title is partly drawn. Ruled out: the DSP's
-    speed (doubling its clock gives the same frame and 68000 PC), byte writes to the
-    DRAM (the USA 68000 makes none), unmatched programmable-memory modes, the DSP's code
-    (identical across USA, Europe and Japan in `$800`-`$1FFFF`), and the VDP's column,
-    DMA start-up and sprite-scan features (`compat_sweep` sensitivity knobs: no change).
-    Known: the 68000's work RAM matches MAME's to 16 bytes at 5 s and 10 s, and the
-    nametable, palette and scroll sources it DMAs at 20 s are identical, so the rendering
-    of identical sources differs, or the VRAM they reach does. Its DMAs from the DRAM all
-    start at `src+2` (notaz: "the code always sets the DMA source address larger by 2
-    ... even true for DMAs from ROM" -- a one-word-late bus like the Sega CD's word RAM,
-    which MAME does not model and neither does this board). Not tried: that latency; a
-    VRAM comparison against MAME.
+13. **The SVP's DRAM reaches the VDP's DMA one word late.** Without it Virtua Racing (USA)
+    tears from about 11.5 s (rows of the 3D frame displaced) and no frame of MAME's
+    matches; with it the 12 s frame matches MAME's pixel for pixel and all four images
+    match over 28 frames at 60 s (USA `phase`: its animation is a few frames off
+    inside the window, the others `same`). The USA ROM programs every DMA from the DRAM
+    with its source two bytes above the buffer (`$300002`, and pieces starting at
+    `$3026C2`, `$303942` ...), which notaz noted in `svpdoc.txt` ("the code always sets
+    DMA source address value larger by 2 ... similar to the Sega CD's") and which only
+    makes sense if the bus delivers the word *before* the address asked for. The board
+    returns `read(address - 2)` for DMA from `$300000-$31FFFF` (`SVP.dma_read_word`, an
+    additive `Board.dma_read_word` hook); ROM DMAs are on time. What the first word of a
+    transfer gets is a stale bus value on hardware, taken here to be its predecessor,
+    as the game assumes; no measurement says. MAME has the same effect somewhere in its
+    DMA and its source does not say where. How the other three images avoid DRAM DMAs
+    at 12 s was not looked at. Found by comparing every frame 10-20 s against MAME's
+    (`scratchpad` scripts, first divergence at 11.5-12 s) and testing that note.
 
 ## Known-wrong or superseded sources
 

@@ -63,3 +63,13 @@ def test_dram_and_the_status_words_from_the_68000():
     cart.write_a15(0xA15003, 0, 0x55, False)
     assert cart.read_a15_word(0xA15000) == 0x0055 and cart.xst2 & 2
     assert cart.read_a15_word(0xA15004) & 2  # reading the status clears bit 0 only
+
+
+def test_dma_from_the_dram_arrives_one_word_late_but_rom_is_on_time():
+    cart = svp([0])
+    for index in range(4):
+        cart.write_word(0x300000 + 2 * index, 0x1000 + index)
+    assert cart.read_word(0x300002) == 0x1001  # the 68000 reads on time
+    assert cart.dma_read_word(0x300002) == 0x1000  # the VDP's DMA gets the word before
+    assert cart.dma_read_word(0x300006) == 0x1002
+    assert cart.dma_read_word(0x000000) == cart.read_word(0x000000)

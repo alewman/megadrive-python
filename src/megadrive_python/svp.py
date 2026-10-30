@@ -166,6 +166,18 @@ class SVP(Board):
     def read_byte(self, address: int) -> int:
         return self.rb(address)
 
+    def dma_read_word(self, address: int) -> int:
+        """A word the VDP's DMA reads. From the DRAM it arrives one word late: the DMA gets
+        the word before the address it asks for, which is why *Virtua Racing* (USA) always
+        programs its source two bytes above the buffer's start (notaz's ``svpdoc.txt`` 4:
+        "similar to the Sega CD's"). Without it the USA frame tears from about 11.5 s; with
+        it the frame matches MAME's pixel for pixel. What the *first* word of a transfer
+        gets (the bus's stale value) is taken to be its predecessor, as the game assumes;
+        no measurement says. ROM reads are on time."""
+        if 0x300000 <= address < 0x320000:
+            address -= 2
+        return self.read_word(address)
+
     def write_word(self, address: int, value: int) -> None:
         if 0x300000 <= address < 0x320000:
             index = (address - 0x300000) >> 1

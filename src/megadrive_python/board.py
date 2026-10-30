@@ -1035,7 +1035,8 @@ class Board:
             return device.dma_read_word(address, self.vdp.mclk)
         top = address >> 16
         if top < 0x40:
-            return self.cartridge.read_word(address)
+            read = getattr(self.cartridge, "dma_read_word", None)  # a bus with its own latency
+            return read(address) if read is not None else self.cartridge.read_word(address)
         if top >= 0xE0:
             offset = address & 0xFFFF
             return (self.ram[offset] << 8) | self.ram[offset + 1]

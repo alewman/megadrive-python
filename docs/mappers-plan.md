@@ -18,7 +18,8 @@ changed is only counted, and woken to the cycle -- `tests/test_svp.py`). Optiona
 without `ssp1601-python` the image loads as plain ROM, `unsupported` as before. Three
 additive hooks: `$A15xxx` reads/writes (`read_a15_word`, `write_a15`) and a cartridge with
 `catch_up` is a clock domain. Against MAME 0.285 (its `md_rom_svp.zip` needs to be on
-`MAME_ROMPATH`): the four Virtua Racing images are `same` at 10 s.
+`MAME_ROMPATH`): all four Virtua Racing images match at 60 s (Europe, Japan, Europe Beta `same`;
+USA `phase`) once DMA from the DRAM arrives one word late (undocumented-behavior item 13).
 
 ## Status (2026-10-30)
 
