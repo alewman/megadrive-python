@@ -104,22 +104,24 @@ SPRITE_LIMITS = {256: (64, 16, 32), 320: (80, 20, 40)}
 #:
 #: - ``PLANE_CELLS``: cells across, which is the column number's wrap.
 #: - ``PLANE_ROW_SHIFT``: how far the tile row number is shifted to give the name
-#:   table row's offset in bytes. The invalid width shifts by nothing, so with the
-#:   0x1FC0 mask every line of a screen takes its names from the table's first row --
-#:   "If the HSZ bits are set to 10b (invalid), then the first row of the name table is
-#:   shown for every line of the display" (CMD).
+#:   table row's offset in bytes. The invalid width shifts it clean out of the 0x1FC0
+#:   mask, so every line takes its names from the table's first row, at any vertical
+#:   scroll -- "If the HSZ bits are set to 10b (invalid), then the first row of the name
+#:   table is shown for every line of the display" (CMD). Genesis Plus GX's table has 0
+#:   here, which puts a plane scrolled past row $200 on the second row; BlastEm reads
+#:   the first (``read_map_scroll``), and Overdrive 2's frames 10,143-10,146 and
+#:   15,634 on show it (docs/worklog.md, "The invalid width").
 #: - ``PLANE_ROW_MASK``: the vertical wrap, in pixels and applied as a mask, so that
 #:   the invalid height (0x2FF) wraps as oddly as the hardware does.
 #:
-#: The shift and the masks are Genesis Plus GX's tables (``core/vdp_ctrl.c``
+#: The other shifts and the masks are Genesis Plus GX's tables (``core/vdp_ctrl.c``
 #: ``shift_table``/``col_mask_table``/``row_mask_table``; emulator-derived, read and
-#: rewritten, never copied), which is the only statement of the invalid sizes' shape
-#: beyond CMD's sentence; CMD's sentence and this agree where they overlap.
+#: rewritten, never copied), the only statement of the invalid height's shape.
 #: Decoded tile rows kept before the cache is emptied (bounded memory in a long run).
 TILE_CACHE_LIMIT = 100_000
 
 PLANE_CELLS = (32, 64, 32, 128)
-PLANE_ROW_SHIFT = (6, 7, 0, 8)
+PLANE_ROW_SHIFT = (6, 7, 16, 8)
 PLANE_ROW_MASK = (0x0FF, 0x1FF, 0x2FF, 0x3FF)
 
 
@@ -194,9 +196,15 @@ class Renderer:
         #: written through by VRAM writes that land in the sprite table (Kabuto,
         #: "General"). Moving the table does not fill it, as on the hardware.
         self.sprite_cache = bytearray(80 * 4)
+        #: The cache as phase 1 walks it, taken as the V counter steps
+        #: (:meth:`latch_scan_cache`).
+        self._scan_cache = bytearray(80 * 4)
         #: What the line before scanned for the next line (:meth:`_sprite_scan`), as
         #: ``((row, width, double interlace), latched sprites)``, or None.
         self._scanned: tuple | None = None
+        #: What phase 1 chose for the next line, waiting for phase 2 at the V step, as
+        #: ``((row, width, double interlace), sprites)``, or None.
+        self._chosen: tuple | None = None
         #: Expansion socket 7 (:meth:`attach_picture`): the device each finished line is
         #: handed to, or None on a console with nothing plugged in; the line waiting to be
         #: handed over (row, start, width, mode); its YS, pixel by pixel; and the lines
@@ -216,6 +224,20 @@ class Renderer:
         self._done_composite = [None] * 480
 
     # -- the sprite cache ---------------------------------------------------------
+
+    def latch_scan_cache(self) -> None:
+        """The V counter has stepped. Phase 2 of the line about to start is over ("1 raster
+        line before", Kabuto): its reads are taken now, with what was written through
+        the line before. Phase 1 of the line after runs in the blank from here ("2
+        H-borders before the raster line to be rendered"), so a cache write later in
+        this line does not reach it. Line granularity: where in the blank or the line
+        each entry is read is not modelled."""
+        chosen = self._chosen
+        if chosen is not None:
+            self._chosen = None
+            (row, width, im2), visible = chosen
+            self._scanned = (chosen[0], self._sprite_phase2(width, row, im2, visible))
+        self._scan_cache[:] = self.sprite_cache
 
     def sprite_cache_write(self, address: int, value: int) -> None:
         """A VRAM byte write at ``address`` (17 bits): update the cache if it lands in
@@ -446,15 +468,16 @@ class Renderer:
         ahead of it (Kabuto: phase 1 "2 H-borders before the raster line to be
         rendered", phase 2 "1 raster line before").
 
-        Phase 1 walks the cached linked list and keeps the first 20 (16) sprites whose
-        rows cover the line; phase 2 reads each one's X and pattern from the table at
-        register 5 as it stands, and takes Y and size from the cache again to work out
-        the pattern row. What phase 2 latched is returned for :meth:`_sprite_draw`, so
-        a table moved or rewritten after the scan does not reach this line.
+        Both at once, for a line nothing scanned ahead for: :meth:`_scan_ahead` and
+        :meth:`latch_scan_cache` run them apart.
         """
-        vdp = self.vdp
-        vram = vdp.vram
-        cache = self.sprite_cache
+        return self._sprite_phase2(width, screen_row, im2,
+                                   self._sprite_phase1(width, screen_row, im2))  # fmt: skip
+
+    def _sprite_phase1(self, width: int, screen_row: int, im2: bool) -> list[int]:
+        """Phase 1: walk the cached linked list, as :meth:`latch_scan_cache` took it, and
+        keep the first 20 (16) sprites whose rows cover the line."""
+        scan = self._scan_cache
         max_sprites, max_line, _ = SPRITE_LIMITS[width]
         tile_rows = 16 if im2 else 8
         start_v = 0x100 if im2 else 0x80
@@ -464,20 +487,33 @@ class Renderer:
         index = 0
         for _ in range(max_sprites):
             entry = index * 4
-            y = (((cache[entry] << 8) | cache[entry + 1]) & mask_v) - start_v
-            if y <= screen_row < y + ((cache[entry + 2] & 3) + 1) * tile_rows:
+            y = (((scan[entry] << 8) | scan[entry + 1]) & mask_v) - start_v
+            if y <= screen_row < y + ((scan[entry + 2] & 3) + 1) * tile_rows:
                 if len(visible) < max_line:
                     visible.append(index)
                 else:
                     self.overflow = True  # more sprites on this line than there are slots
-            link = cache[entry + 3] & 0x7F
+            link = scan[entry + 3] & 0x7F
             if link == 0 or link >= max_sprites:
                 # "a link attribute of 0 makes it stop scanning the list further"
                 # (Kabuto); an entry past the per-frame limit "will not be processed and
                 # the sprite list will terminate" (Nemesis, t=541 start=30, test 9).
                 break
             index = link
+        return visible
 
+    def _sprite_phase2(self, width: int, screen_row: int, im2: bool,
+                       visible: list[int]) -> list[tuple]:  # fmt: skip
+        """Phase 2: read each visible sprite's X and pattern from the table at register 5
+        as it stands, and take Y and size from the cache again to work out the pattern
+        row. What it latched goes to :meth:`_sprite_draw`, so a table moved or rewritten
+        after the scan does not reach this line."""
+        vdp = self.vdp
+        vram = vdp.vram
+        cache = self.sprite_cache
+        tile_rows = 16 if im2 else 8
+        start_v = 0x100 if im2 else 0x80
+        mask_v = 0x3FF if im2 else 0x1FF
         base = (vdp.registers[5] << 9) & 0xFFFF
         if width == 320:
             base &= ~0x200
@@ -643,9 +679,10 @@ class Renderer:
         self.pending = True
 
     def _scan_ahead(self, row: int, im2: bool) -> None:
-        """Run phases 1 and 2 for display row ``row``, the next line's, and keep them."""
+        """Run phase 1 for display row ``row``, the next line's; phase 2 follows at the V
+        step (:meth:`latch_scan_cache`)."""
         width = 320 if self.vdp.hmode.name == "H40" else 256
-        self._scanned = ((row, width, im2), self._sprite_scan(width, row, im2))
+        self._chosen = ((row, width, im2), self._sprite_phase1(width, row, im2))
 
     def catch_up(self, offset: int, names: bool = False, limit: int | None = None) -> None:
         """Bring the line under way up to ``offset`` master clocks into it, before

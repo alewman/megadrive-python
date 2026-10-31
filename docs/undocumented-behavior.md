@@ -308,7 +308,9 @@ source, the way sms-python does.
     line's sprites were read. The board now scans (phases 1 and 2) when the line
     before begins and draws (phase 3) when the line begins; a line nothing scanned
     for is scanned as it begins, as before. Line granularity only: phase 2's reads
-    are taken at the start of the line before, not slot by slot. Not measured: a
+    are taken at the V step that ends the line before, not slot by slot, and phase 1
+    walks the cache as it stood at the V step before that (docs/worklog.md, "The invalid
+    width, and phase 1's cache"). Not measured: a
     transparent pixel's priority in shadow/highlight ("sometimes", Kabuto), and what
     a line after a display-off line gets (Kabuto: "No sprites are checked while
     display is disabled").

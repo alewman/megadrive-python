@@ -41,6 +41,7 @@ def _sprite(vdp, table: int, index: int, y: int, x: int, name: int, link: int) -
     vdp.renderer.sprite_cache[index * 4 : index * 4 + 4] = bytes(
         (words[0] >> 8, words[0] & 0xFF, words[1] >> 8, words[1] & 0xFF)
     )
+    vdp.renderer.latch_scan_cache()
 
 
 def test_a_transparent_sprite_pixel_keeps_its_palette_and_the_last_one_wins() -> None:
@@ -69,7 +70,8 @@ def test_a_line_takes_the_sprites_scanned_a_line_ahead() -> None:
         vdp.vram[TABLE_B + k] = 0
     renderer = vdp.renderer
     vdp.registers[5] = TABLE_A >> 9
-    renderer.begin_line(9)  # scans line 10 from table A
+    renderer.begin_line(9)  # phase 1 of line 10
+    renderer.latch_scan_cache()  # the V step: phase 2, from table A
     vdp.registers[5] = TABLE_B >> 9
     renderer.begin_line(10)
     assert renderer._line_s[16:24] == [0x01] * 8
@@ -177,3 +179,20 @@ def test_the_fm_slot_counter_runs_on_under_reset() -> None:
     fm.reset_line(True, start)
     fm.run(start + 30 * MCLK_PER_CYCLE)
     assert fm.cycles == (before + IC_PAUSE_CARRY + 30 - IC_FSM_HOLD) % 24  # the count goes on
+
+
+def test_phase_2_takes_y_written_through_the_line_before() -> None:
+    """Overdrive 2's rotating boxes change sprite 0's link at the end of a line, into a
+    group whose Y they write through the next line, and that line's scan needs them
+    all: phase 2 reads at the V step, not as the line began."""
+    vdp = _vdp()
+    vdp.registers[5] = TABLE_A >> 9
+    for row in range(8):
+        vdp.vram[32 + row * 4 : 32 + row * 4 + 4] = b"\x11\x11\x11\x11"
+    _sprite(vdp, TABLE_A, 0, y=10, x=16, name=0x0001, link=0)
+    renderer = vdp.renderer
+    renderer.begin_line(9)
+    renderer.sprite_cache[0:2] = bytes([0x00, 0x88])  # Y 8, after phase 1, on the line
+    renderer.latch_scan_cache()
+    ((_, _, _, _, _, _, cell_row, pattern_line),) = renderer._scanned[1]
+    assert (cell_row, pattern_line) == (0, 2)  # row 10 of a sprite at Y 8

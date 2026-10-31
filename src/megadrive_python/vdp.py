@@ -1008,6 +1008,7 @@ class VDP:
         elif not self.border and new_v == self._blank_line():
             self.border = self._border_started = True
         self.v = new_v
+        self.renderer.latch_scan_cache()
         if new_v == 0:
             self.frame += 1
             self.renderer.start_frame()

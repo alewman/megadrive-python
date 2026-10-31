@@ -7149,3 +7149,42 @@ on `d7882e1`).
   length; YS ignores the debug register); see expansion-sockets.md.
 - The FM and the PSG stay outside the sources list, to keep their exact merge.
 - Needed outside this board, unchanged: m68000-python's /DTACK wait; sh2-python's FTOA.
+
+### The invalid width, and phase 1's cache
+
+Aubrey compared 20,000 frames of megadrive-rust-fast (lockstep-identical to this board at
+15441fe over 20,001 frames on `nuked-md`) against BlastEm and flagged five spots. VRAM
+was compared through `retro_serialize` at each one.
+
+- **Frames 10,143-10,146 and the vertical lines from 15,634.** VRAM matches BlastEm's
+  (0 bytes differ), and register 16 is $22: both sizes invalid. The board's row shift
+  of 0, from Genesis Plus GX, puts a plane on the name table's second row once the
+  vertical scroll passes $200 (VSRAM $22B here); CMD's sentence says the first row on
+  every line, and BlastEm reads the first. `PLANE_ROW_SHIFT[2]` now clears the row.
+  10,143-10,146: 21,056 and 3,584 pixels from BlastEm's picture to 0. From 15,635:
+  about 10,000 to about 3,500.
+- **The rotating boxes' notches (14,400-14,850).** About 25 pixels missing from the left
+  of one row every 30 or so (rows 42, 73, 106, 131, 160, 180, 205 of frame 14,810). The
+  demo rewrites the Y of sprites 48-55 in the cache through each line, starting at 796
+  MCLK; `begin_line` runs phases 1 and 2 at 868, so phase 1 saw sprite 48's new Y and
+  not its neighbours', and dropped it from that row. Kabuto puts phase 1 "2 H-borders
+  before the raster line to be rendered", and BlastEm runs it in the blank from slot
+  168. `Renderer.latch_scan_cache` takes the cache as the V counter steps, and phase 1
+  walks that copy. Sampled frames 10,100-24,975 against BlastEm: 61 closer, 0 further.
+- **The boxes' streaks.** Aubrey found wrong-colour lines left on rows 56, 84 and 112 of
+  frame 14,810. The tables wrap every 28 lines, and there the demo writes sprite 0's
+  link at 3,356 MCLK into a line, into a second group whose Y it writes through the
+  next line. Phase 2 had read as that line began, at 868, with one Y written, so seven
+  of eight sprites took the wrong pattern line. Phase 2's reads now come at the V step
+  that ends the line before (`latch_scan_cache`). Phase 1 stays as above. Those rows are
+  clean by eye, and 55 sampled frames came closer to BlastEm, 0 further.
+- **Tried and refused:** phase 2 as the next line begins, 868 MCLK past the V step: it
+  takes that line's register 5 and made the notches more frequent (55 sampled frames
+  further). Phase 1's cache taken 100 MCLK before the V step, to miss the link write:
+  the streaks ran the full width of the line (54 further).
+
+Neither rule has been run on Nuked-MD: BlastEm is a detector, and CMD's sentence and
+Kabuto's are what they rest on. Open: from 15,635 the ring of sprites' Y values, which
+the demo computes, differ from BlastEm's at every frame offset tried; and the rotating
+boxes' pictures differ from BlastEm's by tens of thousands of pixels at any offset in
+n-40..n+40, so the two are not at the same point of the animation.

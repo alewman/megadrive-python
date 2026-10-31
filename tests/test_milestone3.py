@@ -177,3 +177,26 @@ def test_window_bug_does_not_touch_plane_b() -> None:
         vdp.renderer._tile_row = inner  # type: ignore[method-assign]
     cells = [cell for _, cell in fetched]
     assert cells == list(range(40)), cells
+
+
+def test_invalid_width_stays_on_the_first_name_row_at_any_scroll() -> None:
+    """HSZ = 10b: "the first row of the name table is shown for every line of the
+    display" (CMD), past row $200 of the invalid height's wrap as well."""
+    from megadrive_python.board import Board
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import MACHINES
+
+    vdp = Board(MACHINES["genesis"], Cartridge(b"")).vdp
+    for row, name in ((0, 1), (1, 2)):
+        vdp.vram[0xC000 + row * 0x40 + 1] = name
+    fetched: list[int] = []
+    renderer = vdp.renderer
+    inner = renderer._tile_row
+
+    def note(address: int, attribute: int, flip: bool):
+        fetched.append(address // 32)
+        return inner(address, attribute, flip)
+
+    renderer._tile_row = note  # type: ignore[method-assign]
+    renderer._plane_columns([0] * 320, 0xC000, 0x22B, 0x22, 0, False, -1, 0, 8)
+    assert fetched == [1]
