@@ -7188,3 +7188,99 @@ Kabuto's are what they rest on. Open: from 15,635 the ring of sprites' Y values,
 the demo computes, differ from BlastEm's at every frame offset tried; and the rotating
 boxes' pictures differ from BlastEm's by tens of thousands of pixels at any offset in
 n-40..n+40, so the two are not at the same point of the animation.
+
+### Overdrive's two hangs
+
+Aubrey asked for the first Overdrive next (`Overdrive (World) (v1.1)`, region E, so
+`nuked-md`). It went black at frame 1,809 on every machine, in both revisions, where
+BlastEm goes on to Titan's logo. The 68000 was in a loop at $31D1B0 with interrupts
+masked: bus request, read Z80 RAM $1200, clear it, release, until the byte is set. Two
+faults stood between that loop and the byte.
+
+- **The PSG on the VDP's clock.** The Z80 was waiting for timer A at $0893, and the
+  timer's flag was off from frame 1,574: `Vdp.z80_write` takes `max(mclk, self.mclk)`,
+  right for the VDP's own state, but the PSG goes through it too, so a Z80 write to $7F11
+  ran the sound chips to the VDP's clock, 4,200 MCLK past the Z80's. The eight FM writes
+  the Z80 made next fell in one FM cycle, the last of them a DAC byte, `$59`, which
+  landed on register $27, and the timer's enable went. The PSG now keeps the Z80's
+  clock.
+- **The instruction neither run nor cut.** Then the Z80 stopped at $0549, a CALL, for
+  good. The loop leaves it 209 MCLK a pass. `catch_up_z80` cuts an instruction with an
+  access at or past `mclk + 33`, where the request is sampled, but held one with an
+  access at or past `mclk` for the next catch-up, and there is none once the bus has
+  gone: the CALL's last access lay between the two, so it was restarted every pass. The
+  hold now goes by the same `sampled`. This is the one the die has not seen; the figures
+  in "The bus request, sampled" are unchanged, but the instruction between them is new.
+
+Overdrive runs to its end screen at frame 16,987 with its music, BlastEm's at 16,995. The
+scenes match by eye; the pace does not, by -4 frames to +8 across the demo, and only 262
+of 14,022 changing frames match any BlastEm frame exactly. Which of the two is right
+about the pace is open. Overdrive 2 moved in 1,114 of 25,000 frames, 66 runs, median 68
+pixels, the largest in its TV static: 350 closer to BlastEm, 329 further, the total
+distance unchanged. The rust fork's `board-tour` traces were rewritten from this board.
+Lockstep against the fork on `nuked-md`: Overdrive, 18,000 frames; Overdrive 2, 25,001
+frames.
+
+### The hardware capture, the border scene, and the display at the right edge
+
+Aubrey found Oerg866's upload of Overdrive 2 (`TiTAN - Overdrive 2 (RGB 50fps)`, 720p50),
+a capture from a real console. All 25,178 of its frames were aligned to the demo, median
+correlation 0.993. It repeats a frame every 167 frames from its own 50 Hz clock, so
+anything off that rhythm is a real change of pace. A compressed capture of one console
+and one run: it settles hundreds of frames, not one pixel.
+
+- **Frame 7,052 is not the die's junk.** The capture shows the same black frame with two
+  small marks, about 25 frames later (board 7,077), a frame neither the board nor BlastEm
+  draws. Nudging only the Z80 at frame 7,000 by 26,600-27,300 T-states makes the board
+  take the extra frame and draw a similar one; one nudge held the die's pace through
+  7,140 (139 of 139 frames). The slip is sound phase, as Session 13 said. The nudge is an
+  instrument, not a fit. At 10,228 the capture appears to side with BlastEm against the
+  board and the die; that scene hardly moves, so this is weaker. No nudge moved it.
+- **Whose picture.** Scored on the pixels in dispute, frames where BlastEm alone differs
+  go to the die and the board 475 to 31, and frames where the board alone differs go to
+  the die and BlastEm 288 to 15.
+
+**The display switched off at the right edge.** The plasma (16,465-16,948) writes VSRAM
+through each line, turns the display on near its start and off with `$8114` near its
+end, 3,366-3,433 MCLK in. The board stopped the picture where a colour write would show,
+up to 16 pixels short. `render.DISPLAY_OFF_DELAY` lets the output run to 5 pixels behind
+the H counter in H40. Any delay from 16 pixels past `OUTPUT_DELAY` gives the same
+frames, because the line ends first, so 5 is a bound, not a measured figure. H32 is not
+measured. 452 frames of 19,997 moved, all in this scene; exact against the die, 0 to 274
+of 451, and 212 of 216 from 16,700. 16,465-16,699 keeps about 50 pixels a frame, slivers
+16-32 wide on single lines, not explained.
+
+**The whole raster.** The arcade (die frames 12,455-13,021) draws into every border, which
+no picture here had shown: our PNGs, the die's included, were cropped to 320x240. Kabuto
+describes all of it. V30 at line $DD and V28 at $E1 keep the border from starting, and the
+display goes off from $101 to $1CE, which gives about 294 lines. The debug register is
+$1C0, "B only", so plane B shows everywhere, and in the side borders the plane renders
+the VRAM bus: sprite tile fetches 4 and 5 on the right, 36 and 37 on the left, in the
+palettes of plane B's last two tiles ("Horizontal border for plane A/B"). The top reads
+like "NO BORDERS ALLOWED" in the die's raw frames. `Renderer.enable_raster` keeps it all
+for `frame_raster`, off by default; sprites above line 0 needed the 9-bit line counter.
+
+Against the die's raw frames, 980 frames: main picture 0 of 73,907,200 wrong; lower
+lines 4,791 of 3,660,800; top lines 97,348 of 10,997,760; left border 5,379 of 3,597,984;
+right border 10,863 of 3,874,752. Raster on changed 0 of 100 frames and the end state.
+Not explained: seven lines near $1D0 the die leaves black late in the scene, line 255's
+last 13 pixels, line 511's right border. Plane A's left border is not done.
+
+The method (`D:\dev\od2-20k\seedlab`, not in this repository): board snapshots every 250
+frames and each disputed window run from its own, 24 sound phases each. Most disputed
+frames never matched in any phase, so they are not sound phase: 456 at 16,465-16,948 and
+982 at 8,042-9,761.
+
+**The repeat at 10,227.** The board and the die repeat one frame at 10,227 where the
+capture and BlastEm move seven frames straight: a frame's deadline missed. It is not
+sound phase (8 nudges from 9,500), the reset (the run with no press has it), the refresh's
+phase, or the die's DMA figures. One constant at a time from the frame-10,000 snapshot, 33
+tried: setting the cartridge or work-RAM refresh stall to 0 removes it, and so do
+`RAM_REFRESH_AFTER_MCLK` 1,600, `Z80_VDP_ARBITRATED` off, and zeroing any of the arbiter's
+`RELEASE`, `RESUME`, `GRANT_GAP`, `OWN_CYCLE`, `CUTOFF` or `REFRESH` times. Halving a
+refresh stall does not, so the overrun is a real slice of a frame, not a few clocks.
+No constant changed: one capture of one console does not justify it.
+
+**8,042-9,761** differs from the die by 16-170 pixels a frame. Frames 9,250-9,262, 107
+wrong pixels a frame at `OUTPUT_DELAY` 21, 140 or more at any other value tried, 122 with
+a CRAM dot showing the previous colour, 101 with no dots. Left alone.

@@ -71,6 +71,13 @@ if TYPE_CHECKING:
 #: measurement the die model agrees with. docs/worklog.md, "Where a mid-line write
 #: shows". Changes that act where tiles are fetched are not delayed: not measured.
 OUTPUT_DELAY = {"H40": 21, "H32": 24}
+#: The same for a write that turns the display off, which acts later than a colour:
+#: 5 pixels behind the H counter or less in H40. Overdrive 2's plasma (frames
+#: 16,465-16,948) turns it off at the end of every line, up to 16 pixels before the
+#: picture's right edge by :data:`OUTPUT_DELAY`, and Nuked-MD and the hardware capture
+#: draw those pixels. The line ends first, so this is a bound, not a measured figure;
+#: H32 is not measured. docs/worklog.md, "The display switched off at the right edge".
+DISPLAY_OFF_DELAY = {"H40": 5, "H32": 24}
 
 #: When each plane's tiles are fetched, in the board's pixel time (its H counter, the
 #: display starting at 0), relative to the start 16g of the 2-cell group g being
@@ -124,9 +131,16 @@ PLANE_CELLS = (32, 64, 32, 128)
 PLANE_ROW_SHIFT = (6, 7, 16, 8)
 PLANE_ROW_MASK = (0x0FF, 0x1FF, 0x2FF, 0x3FF)
 
+#: "13 additional left border pixels + 14 additional right border pixels" (Kabuto).
+LEFT_BORDER = 13
+RIGHT_BORDER = 14
+
 
 class Renderer:
     """The picture of one :class:`~megadrive_python.vdp.VDP`."""
+
+    #: Whether the whole raster is kept, borders included (:meth:`enable_raster`).
+    raster = False
 
     def __init__(self, vdp: VDP) -> None:
         self.vdp = vdp
@@ -214,6 +228,26 @@ class Renderer:
         self._ys = bytearray(320)
         self._composite: list[list[int] | None] = []
         self._done_composite: list[list[int] | None] = []
+
+    def enable_raster(self) -> None:
+        """Keep the whole raster, for :meth:`frame_raster`: every line the display is on,
+        whatever its V counter, and the side borders beside it. A line the border was
+        opened over is drawn as any other, and its sprites are scanned, which sets the
+        status bits a game may read; nothing else about the machine changes."""
+        self.raster = True
+        for rows in (self.pixels, self._done_pixels):
+            rows.extend(bytearray(320) for _ in range(512 - len(rows)))
+        for values in (self.widths, self._done_widths):
+            values.extend([0] * (512 - len(values)))
+        for dots in (self._palettes, self._done_palettes, self._dots, self._done_dots):
+            dots.extend([] for _ in range(512 - len(dots)))
+        self._blanked.extend(bytes(512 - len(self._blanked)))
+        self._done_blanked.extend(bytes(512 - len(self._done_blanked)))
+        self._sides: dict[int, tuple[list[int], list[int]]] = {}
+        self._done_sides: dict[int, tuple[list[int], list[int]]] = {}
+        self._slots = [0] * 40
+        self._right: tuple | None = None
+        self._last_attributes = (0, 0)
 
     def attach_picture(self, device: Picture) -> None:
         """Plug in expansion socket 7: from the next line on, each finished line goes to
@@ -483,6 +517,8 @@ class Renderer:
         start_v = 0x100 if im2 else 0x80
         mask_v = 0x3FF if im2 else 0x1FF
 
+        if self.raster and screen_row >= 0x180:
+            screen_row -= 0x200  # the line counter is 9 bits: above line 0 it is negative
         visible: list[int] = []
         index = 0
         for _ in range(max_sprites):
@@ -562,11 +598,13 @@ class Renderer:
                     out_of_tiles = True  # the sprite is cut off partway: the dots ran out
                     break
                 tiles_left -= 1
-                if not rendering:
-                    continue
                 column = (cells_x - 1 - cell) if flip_x else cell
                 tile = pattern + column * cells_y + cell_row
                 address = (tile * pattern_bytes + pattern_line * 4) & 0xFFFF
+                if self.raster:
+                    self._slots[SPRITE_LIMITS[width][2] - 1 - tiles_left] = address
+                if not rendering:
+                    continue
                 left = x + cell * 8
                 if left <= -8 or left >= width:
                     continue
@@ -617,7 +655,7 @@ class Renderer:
         scanned, self._scanned = self._scanned, None
         after = (v + 1) & 0x1FF
         after_row = ((after << 1) | (1 if vdp.odd else 0)) if im2 else after
-        if row >= 480:
+        if row >= (512 if self.raster else 480):
             # The line before the first (V = 511) is not shown, but its sprite scan is
             # the first line's (Kabuto, "Topmost and bottommost raster line").
             if vdp.display_enabled and after_row < 480:
@@ -631,11 +669,13 @@ class Renderer:
         if self._dots[row]:
             self._dots[row] = []
         self.width = width
-        if row + 1 > self.rows:
+        if row + 1 > self.rows and (row < 240 or not self.raster):
             self.rows = row + 1
         backdrop = vdp.registers[7] & 0x3F
         self.widths[row] = width
         self._blanked[row] = vdp.registers[0] & 0x01
+        if self.raster:
+            self._sides[row] = ([backdrop] * LEFT_BORDER, [backdrop] * RIGHT_BORDER)
         if self.picture is not None:
             self._handing = (row, vdp.line_start, width, vdp.hmode)
             self._composite[row] = None
@@ -670,6 +710,8 @@ class Renderer:
         #: places its 2-cell groups on the screen (``FETCH_AT``).
         self._fetched = [0, 0]
         self._fine = (self._spans[0] & 15, self._spans[1] & 15)
+        if self.raster:
+            self._raster_sides(row, width, backdrop)
         self._out = out
         self._row = row
         self._width = width
@@ -678,13 +720,78 @@ class Renderer:
         self._line_start = vdp.line_start
         self.pending = True
 
+    def _slot_pixels(self, slot: int, attribute: int) -> list[int]:
+        """What a plane's tile generator makes of sprite tile fetch ``slot``'s four bytes,
+        in the palette ``attribute``."""
+        vram, address = self.vdp.vram, self._slots[slot]
+        pixels = []
+        for i in range(4):
+            byte = vram[(address + i) & 0xFFFF]
+            pixels += [attribute | (byte >> 4), attribute | (byte & 15)]
+        return pixels
+
+    def _raster_sides(self, row: int, width: int, backdrop: int) -> None:
+        """The side borders. With debug bit 8 set a plane is forced on over the whole
+        raster, and "the VDP keeps on rendering whatever data is on the address bus as if
+        it was plane data": column -1's remaining pixels, then in the right border sprite
+        tile fetches 0 and 1 (plane A) or 4 and 5 (plane B), in the left 36 and 37 (plane
+        B), "always coloured with the palettes of the last 2 tiles of the raster line
+        just rendered of plane B" (Kabuto, "Horizontal border for plane A/B"). The sprite
+        fetches come in the blank after a line, so a line's right border is finished as
+        the next begins. Plane A's left border (idle data and scroll bytes) is not done."""
+        vdp = self.vdp
+        registers = vdp.registers
+        pending = self._right
+        self._right = None
+        if pending is not None:
+            start, plane, attributes, right = pending
+            first, second = (4, 5) if plane else (0, 1)
+            tiles = (self._slot_pixels(first, attributes[0])
+                     + self._slot_pixels(second, attributes[1]))  # fmt: skip
+            for x in range(start, min(start + 16, RIGHT_BORDER)):
+                right[x] = tiles[x - start]
+        debug = vdp.debug_register
+        if not debug & 0x100 or width != 320:
+            self._last_attributes = (backdrop & 0x30, backdrop & 0x30)
+            return
+        plane = 1 if debug & 0x80 else 0
+        base = (registers[4] << 13 if plane else registers[2] << 10) & 0xE000
+        scroll = self._spans[plane]
+        fine = scroll & 15
+        wide = [0] * (width + 32)
+        self._plane_columns(wide, base, row + vdp.vscroll_latch[plane], registers[16],
+                            scroll + 16, False, -1, 0, width + 32)  # fmt: skip
+        left, right = self._sides[row]
+        attributes = self._last_attributes
+        tiles = (self._slot_pixels(36, attributes[0])
+                 + self._slot_pixels(37, attributes[1]))  # fmt: skip
+        for i in range(LEFT_BORDER):
+            x = i - LEFT_BORDER
+            if x >= fine - 16:
+                left[i] = wide[x + 16] & 0x3F
+            elif 0 <= x - (fine - 32) < 16 and plane:
+                left[i] = tiles[x - (fine - 32)]
+        for i in range(min(fine, RIGHT_BORDER)):
+            right[i] = wide[width + i + 16] & 0x3F
+        if not plane:
+            fine = self._fine[1]
+            wide = [0] * (width + 32)
+            self._plane_columns(wide, (registers[4] << 13) & 0xE000,
+                                row + vdp.vscroll_latch[1], registers[16], self._spans[1] + 16,
+                                False, -1, 0, width + 32)  # fmt: skip
+        last = (wide[width + fine] & 0x30, wide[width + fine + 8] & 0x30)
+        self._last_attributes = last
+        fine = scroll & 15
+        self._right = (fine, plane, last, right)
+
     def _scan_ahead(self, row: int, im2: bool) -> None:
         """Run phase 1 for display row ``row``, the next line's; phase 2 follows at the V
         step (:meth:`latch_scan_cache`)."""
         width = 320 if self.vdp.hmode.name == "H40" else 256
         self._chosen = ((row, width, im2), self._sprite_phase1(width, row, im2))
 
-    def catch_up(self, offset: int, names: bool = False, limit: int | None = None) -> None:
+    def catch_up(self, offset: int, names: bool = False, limit: int | None = None,
+                 delays: dict[str, int] = OUTPUT_DELAY) -> None:  # fmt: skip
         """Bring the line under way up to ``offset`` master clocks into it, before
         something it is drawn from changes (:mod:`megadrive_python.vdp`, ``_slot`` and
         ``_write_register``).
@@ -695,14 +802,15 @@ class Renderer:
         been fetched, since its pattern is then read through the old name. Then the
         output is mixed up to the pixel the H counter names less ``OUTPUT_DELAY``,
         where the colour output has got to. ``limit``: a pixel not to fetch past yet
-        (a 2-cell column still to be latched).
+        (a 2-cell column still to be latched). ``delays``: how far the output runs
+        behind the H counter for this change.
         """
         if not self.pending or self.vdp.line_start != self._line_start:
             return
         mode = self.vdp.hmode
         t = mode.position(offset) - mode.display_at
         self._fetch_until(t, names, limit)
-        self._draw_to(t - OUTPUT_DELAY[mode.name])
+        self._draw_to(t - delays[mode.name])
 
     def shows_window(self) -> bool:
         """Whether the line under way shows the window plane anywhere."""
@@ -946,6 +1054,9 @@ class Renderer:
             self._blanked, self._done_blanked = self._done_blanked, self._blanked
             self._palettes, self._done_palettes = self._done_palettes, self._palettes
             self._dots, self._done_dots = self._done_dots, self._dots
+            if self.raster:
+                self._sides, self._done_sides = self._done_sides, self._sides
+                self._sides.clear()
         self.rows = 0
 
     def frame(self) -> tuple[int, int, list[bytearray]]:
@@ -976,6 +1087,20 @@ class Renderer:
         if self.vdp.interlace_double:
             height = (height + 1) & ~1  # both fields make up the picture
         return width, height, *arrays
+
+    def frame_raster(self) -> dict[int, list[int]]:
+        """The finished frame's every line, by V counter, as RGB888 with its side borders
+        (:meth:`enable_raster`). Lines above line 0 by V counter come before it on the
+        screen, so they lead the next frame."""
+        rows = {}
+        for row, (left, right) in self._done_sides.items():
+            palettes = self._done_palettes[row]
+            palette = palettes[-1][1][0] if palettes else (0,) * 64
+            middle = self._row_rgb(self._done_pixels[row], self._done_widths[row] or 320,
+                                   self._done_blanked[row], palettes or [(0, (palette,) * 3)],
+                                   self._done_dots[row])  # fmt: skip
+            rows[row] = [palette[i] for i in left] + middle + [palette[i] for i in right]
+        return rows
 
     def _make_palette(self) -> tuple:
         """CRAM as RGB888: normal, shadowed and highlighted."""

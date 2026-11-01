@@ -322,11 +322,13 @@ class System:
                     z80.clear_maskable_interrupt()
                     board.z80_offsets = self._z80_offsets()
                 offsets = board.z80_offsets
-                if offsets and self.z80_mclk + offsets[-1] >= mclk and not board.z80_hold:
+                if offsets and self.z80_mclk + offsets[-1] >= sampled and not board.z80_hold:
                     # An access of this instruction would fall past the 68000's clock,
                     # where the arbiter cannot yet see the 68000's bus: it runs at the
                     # next catch-up, which reaches past it (``Board._bank_delay``). Its
                     # accesses over the 68000's bus that come before are settled now.
+                    # With the bus going at ``sampled`` there is no next catch-up for an
+                    # instruction whose accesses all start before then.
                     if Z80_ARBITRATE_PER_ACCESS and board.arbiter_enabled:
                         self._prearbitrate(mclk)
                     break
