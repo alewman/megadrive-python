@@ -140,9 +140,10 @@ def test_a_dma_transfer_pays_kabutos_start_up() -> None:
     board charges his own 5.6-cycle start-up (:data:`~megadrive_python.vdp.
     DMA_STARTUP_MCLK`, 39 MCLK) and, since option A, the die's 3-clock hold on the
     write that starts it (:data:`~megadrive_python.vdp.DMA_TRIGGER_HOLD_MCLK`).
-    Fitted over 4 to 128 words as his formula is a fit, the board's slope is his within
-    2 % and its start-up lies between his and the referee's (docs/worklog.md, "The DMA
-    trigger"). One word is not checked alone: one and two words fall on the same slot
+    Fitted over 4 to 128 words as his formula is a fit, the board's slope is the die's
+    since the read pace became every machine's, 3 % above his (docs/worklog.md, "The read
+    pace"), and its fitted start-up is at least his (docs/worklog.md, "The DMA trigger").
+    One word is not checked alone: one and two words fall on the same slot
     and cost the board 12.0 cycles, above both."""
     import run_dma_cost as harness
 
@@ -156,20 +157,23 @@ def test_a_dma_transfer_pays_kabutos_start_up() -> None:
         costs[words] = harness.transfer_cost(system, 0x23, words, 0x00, False, 0x81) / M68K_DIVIDER
     slope = (costs[128] - costs[4]) / 124
     start_up = costs[4] - 4 * slope
-    assert abs(slope - 2.4) <= 0.02 * 2.4
-    assert 5.6 <= start_up <= 8.0
+    assert abs(slope - 2.4) <= 0.03 * 2.4
+    # 9.0 where the read pace put it, a cycle above the die's 8.0: a fit's intercept, the
+    # constant itself being his 5.6.
+    assert 5.6 <= start_up <= 9.0
 
 
 def test_the_die_figures_are_a_machine_option() -> None:
-    """Kabuto's DMA figures are the default (the tier rule); the ``nuked-md`` machine
-    takes Nuked-MD's where the two disagree, for comparisons against the die
-    (``Machine.dma_figures``; Aubrey's option 3): its fast pace is the die's 2.47
-    cycles a word, the default's Kabuto's 2.4."""
+    """Kabuto's start-up is the default (the tier rule); the ``nuked-md`` machine takes
+    Nuked-MD's where the two disagree, for comparisons against the die
+    (``Machine.dma_figures``; Aubrey's option 3). The fast pace is no longer one of
+    those: every machine reads on the die's ticks, 2.47 cycles a word, because Overdrive
+    2's plasma on real hardware needs them (docs/worklog.md, "The read pace")."""
     import run_dma_cost as harness
 
     assert MACHINES["megadrive-tmss"].dma_figures == "kabuto"
     assert MACHINES["nuked-md"].dma_figures == "die"
-    for name, pace in (("megadrive-tmss", 2.4), ("nuked-md", 2.47)):
+    for name, pace in (("megadrive-tmss", 2.47), ("nuked-md", 2.47)):
         costs = {}
         for words in (64, 512):
             system = System(MACHINES[name], Cartridge(bytes(0x10000)))

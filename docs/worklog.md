@@ -7284,3 +7284,32 @@ No constant changed: one capture of one console does not justify it.
 **8,042-9,761** differs from the die by 16-170 pixels a frame. Frames 9,250-9,262, 107
 wrong pixels a frame at `OUTPUT_DELAY` 21, 140 or more at any other value tried, 122 with
 a CRAM dot showing the previous colour, 101 with no dots. Left alone.
+
+### The read pace
+
+Overdrive 2's plasma, and the classroom just before it, drew black lines on every
+machine but `nuked-md`: frames 16,438-16,902, 464 of 700 frames on `megadrive`, 4,161
+lines. Everything fixed there had been checked on `nuked-md`, which is why it went
+unseen; the browser's `megadrive` showed it. The capture and the die have no lines: the
+capture scores 3.2 on a row-against-its-neighbours measure, `nuked-md` 5.0, `megadrive`
+16.6. The die's figures one at a time on `megadrive`, lines left: read pace 0, resume 0,
+first read 24, DMA into FIFO room 4,178, dot clock 4,172, VBlank flag 4,161, FM control
+delay 4,186, FM lags 4,161. So the writes sit on an edge, and more than one figure tips
+them.
+
+This was the tier decision the section on DMA with the display on left open. Every
+machine now reads on the DMA ticks: the fast pace is 2.47 cycles a word, 3 % above
+Kabuto's 2.4, and his 5.6-cycle start-up stays the default. The two are nearer than the
+numbers look: his own account of the limit is one word per internal cycle less the ticks
+around each refresh, which is the die's rule, and a flat pace gives a 64-word transfer
+166.4 cycles wherever it starts, where the die takes 161 to 173. `dma_figures` keeps the
+start-up, resume, FIFO room, dot clock and FM figures.
+
+Against the die's 23,849 frames, the comparison ROM on `megadrive`: 21,804 pictures
+reached before, 22,305 after; 16,438-16,915 went from 451 missing to 177, 7,052-10,227
+from 1,000 to 1,002. `nuked-md` is unchanged at 22,439. Frames where the two defaults
+really differ, against the capture: 1,613 video frames, nearer the new pace on 685, the
+old on 357, 571 too close to call; 16,438-16,915 alone 312 to 156. A 512-word CRAM transfer
+is now 1,274 cycles (die 1,270, flat pace 1,225, Kabuto's formula 1,234). The gate's 80
+cases stay identical across the three boards; 57 traces moved, the rest being `nuked-md`,
+the VDP FIFO ROMs, the FM ROMs and a few boards, with no new lock-up.

@@ -511,7 +511,8 @@ WRITE_VRAM, WRITE_CRAM, WRITE_VSRAM = 0x01, 0x03, 0x05
 READ_VRAM, READ_VSRAM, READ_CRAM, READ_VRAM8 = 0x00, 0x04, 0x08, 0x0C
 
 #: MCLK a DMA transfer takes to read one word from the 68000's bus (Exodus
-#: ``dmaTransferReadTimeInMclkCycles``, ``S315_5313.h`` line 919).
+#: ``dmaTransferReadTimeInMclkCycles``, ``S315_5313.h`` line 919): a transfer's first
+#: read; the rest fall on the line's DMA ticks (``_next_read``).
 DMA_READ_MCLK = 16
 
 #: The data port's read-ahead, as the die model times it. A read that waits for the
@@ -1245,11 +1246,12 @@ class VDP:
         return None
 
     def _next_read(self) -> None:
-        """The transfer's read pace: every :data:`DMA_READ_MCLK`, or with the die's
-        figures at the line's next DMA tick (``_dma_ticks``)."""
+        """The transfer's read pace: at the line's next DMA tick (``_dma_ticks``), on every
+        machine. Overdrive 2's plasma needs where the reads land along the line, not only
+        their average: at a flat pace its display writes draw black lines the hardware
+        capture and the die do not have (docs/worklog.md, "The read pace")."""
         self.transfer_next_read += self._read_inc
-        if self._dma_die:
-            self._read_inc = self._dma_tick_after(self.transfer_next_read) - self.transfer_next_read
+        self._read_inc = self._dma_tick_after(self.transfer_next_read) - self.transfer_next_read
 
     def _dma_tick_after(self, t: int) -> int:
         """The first DMA tick after ``t`` (the current line's, else the next's)."""
@@ -1425,8 +1427,7 @@ class VDP:
                 self.fill_running = True
             if self.code & 0x20 and dmd < 2 and self.transfer_cached:
                 self.transfer_next_read = self.mclk
-                if self._dma_die:
-                    self._read_inc = self._dma_tick_after(self.mclk) - self.mclk
+                self._read_inc = self._dma_tick_after(self.mclk) - self.mclk
             elif (
                 DMA_READS_INTO_ROOM and self._dma_die and self.code & 0x20 and dmd < 2
                 and self.transfer_active and self.transfer_next_read + self._read_inc <= self.mclk

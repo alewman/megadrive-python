@@ -229,6 +229,10 @@ Kabuto ("DMA speed"), in 68000 cycles beyond the instructions' own:
 - **Slow** (to VRAM in 64 KB mode): max(words × 2.4 + 5.6, words × 4.7 − 6).
   Limited by VRAM writes once the FIFO is full.
 
+The board reads on the die's ticks, every slot tick but each refresh's and the one after
+it: the mechanism Kabuto describes, at 2.47 cycles a word in H40, 3 % above his 2.4
+(worklog, "The read pace").
+
 During a 68000-memory DMA the 68000 is off the bus (Nemesis's
 `TestDMATransferBusLock` in VDPFIFOTesting). Fill and copy run inside the VDP
 and do not stop the 68000. The Manual's "DMA transfer capacity" table (PDF
