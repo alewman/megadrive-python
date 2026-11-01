@@ -205,6 +205,41 @@ def test_an_interrupted_z80_instruction_resumes_as_a_whole():
     assert system.board.z80_hold == (let_go, edge - Z80_DIVIDER - let_go)
 
 
+def test_a_z80_instruction_all_started_before_the_request_is_sampled_runs():
+    """Overdrive holds the bus but for 209 MCLK a pass, waiting on a byte the Z80 writes.
+    A CALL's last access fell past the 68000's clock and before the request was sampled:
+    neither left for the next catch-up, which the taken bus never gave it, nor cut, so
+    it restarted every pass and never ran (docs/worklog.md, "Overdrive's two hangs")."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    board, z80 = system.board, system.z80
+    board.z80_reset = board.z80_bus_requested = False
+    board.z80_ram[0:3] = bytes((0xCD, 0x00, 0x01))  # CALL $0100
+    z80.pc, z80.sp = 0, 0x1FF0
+    system.z80_mclk = 1_000_000
+    last = system._z80_offsets()[-1]
+    system.catch_up_z80(1_000_000 + last, stopping=True)
+    assert z80.pc == 0x100
+
+
+def test_the_z80s_psg_write_keeps_the_z80s_clock():
+    """Through the VDP's ports, not on its clock: the VDP is ahead of the Z80, and sound
+    run up to it took the FM writes the Z80 had yet to make in one cycle, so a DAC byte
+    reached register $27 and Overdrive lost its timer (docs/worklog.md, "Overdrive's two
+    hangs")."""
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.system import System
+
+    system = System(MACHINES["genesis"], Cartridge(bytes(0x10000)))
+    synced = []
+    system.board.sound_sync = synced.append
+    system.vdp.mclk = 5_000
+    system.vdp.z80_write(0x11, 0x9F, 1_000)  # $7F11
+    assert synced == [1_000]
+
+
 def test_the_work_ram_refresh_is_hidden_when_the_ram_is_idle():
     """Nuked-MD (docs/worklog.md "The work-RAM refresh"): a work-RAM access within 98
     MCLK of the refresh falling due takes it and waits 21; otherwise it runs by itself

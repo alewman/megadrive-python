@@ -71,3 +71,21 @@ def test_the_increment_carries_into_bit_16_and_wraps_at_128_kb() -> None:
     settle()
     assert bytes(vdp.vram[0xFFFE:0x10000]) == b"\x56\x78"
     assert bytes(vdp.vram[0:2]) == bytes(cache[0:2]) == b"\x00\xaa"
+
+
+def test_phase_1_keeps_the_cache_from_the_line_change() -> None:
+    """A cache write after the V counter steps misses that line's phase 1 (Kabuto: "2
+    H-borders before the raster line to be rendered"): Overdrive 2's rotating boxes
+    rewrite Y from 796 MCLK into a line, and one sprite dropped out of a row when the
+    scan saw only the first of the writes."""
+    from megadrive_python.board import Board
+    from megadrive_python.cartridge import Cartridge
+    from megadrive_python.machine import MACHINES
+
+    renderer = Board(MACHINES["genesis"], Cartridge(b"")).vdp.renderer
+    renderer.sprite_cache[0:4] = bytes([0x00, 0x90, 0x05, 0x00])  # 16 rows from row 16
+    renderer.latch_scan_cache()
+    renderer.sprite_cache[0:2] = bytes([0x00, 0xB0])  # moved away, after the V step
+    assert len(renderer._sprite_scan(320, 20, False)) == 1
+    renderer.latch_scan_cache()
+    assert renderer._sprite_scan(320, 20, False) == []

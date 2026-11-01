@@ -52,7 +52,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .machine import MCLK_PER_LINE, Machine
-from .render import Renderer
+from .render import DISPLAY_OFF_DELAY, OUTPUT_DELAY, Renderer
 from .sockets import VideoLine
 
 if TYPE_CHECKING:
@@ -833,7 +833,9 @@ class VDP:
         if self.renderer.pending:
             # Tiles already fetched keep the old state; the output, behind the H counter
             # (``render.OUTPUT_DELAY``), takes the new one from where it has got to.
-            self.renderer.catch_up(self.mclk - self.line_start, names=number in PLANE_REGISTERS)
+            display_off = number == 1 and self.registers[1] & ~value & 0x40
+            self.renderer.catch_up(self.mclk - self.line_start, names=number in PLANE_REGISTERS,
+                                   delays=DISPLAY_OFF_DELAY if display_off else OUTPUT_DELAY)
         old = self.registers[number]
         self.registers[number] = value
         if number == 0 and (value ^ old) & 0x02 and value & 0x02:
@@ -876,7 +878,7 @@ class VDP:
         # the horizontal blank that precedes the same line -- are already in place.
         self.render_at = (
             start + mode.offset_of[mode.hblank_clear]
-            if self.rendering and not self.border and self.v < 0x0F0
+            if self.rendering and not self.border and (self.v < 0x0F0 or self.renderer.raster)
             else -1
         )
         self._choose_slots()
@@ -1008,6 +1010,7 @@ class VDP:
         elif not self.border and new_v == self._blank_line():
             self.border = self._border_started = True
         self.v = new_v
+        self.renderer.latch_scan_cache()
         if new_v == 0:
             self.frame += 1
             self.renderer.start_frame()
@@ -1784,7 +1787,10 @@ class VDP:
         return self.read_byte(offset, max(mclk, self.mclk))
 
     def z80_write(self, offset: int, value: int, mclk: int) -> None:
-        self.write_byte(offset, value, max(mclk, self.mclk))
+        # The PSG is the Z80's own clock: the VDP's, ahead of it, would run the sound
+        # chips past FM writes the Z80 has yet to make.
+        psg = (offset >> 2) & 7 in (4, 5)
+        self.write_byte(offset, value, mclk if psg else max(mclk, self.mclk))
 
     def z80_bank_read(self, offset: int, mclk: int) -> int:
         """Through the bank undriven bits read 1: the unused addresses $FF and the
