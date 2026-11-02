@@ -877,9 +877,11 @@ class VDP:
         # The picture of a line is drawn where its active display begins (the HBlank
         # flag clearing), so that an H interrupt handler's register writes -- made in
         # the horizontal blank that precedes the same line -- are already in place.
+        # Line $1FF draws nothing but scans the first line's sprites (``begin_line``).
         self.render_at = (
             start + mode.offset_of[mode.hblank_clear]
-            if self.rendering and not self.border and (self.v < 0x0F0 or self.renderer.raster)
+            if self.rendering
+            and ((not self.border and (self.v < 0x0F0 or self.renderer.raster)) or self.v == 0x1FF)
             else -1
         )
         self._choose_slots()

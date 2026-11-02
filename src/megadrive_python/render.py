@@ -655,7 +655,7 @@ class Renderer:
         scanned, self._scanned = self._scanned, None
         after = (v + 1) & 0x1FF
         after_row = ((after << 1) | (1 if vdp.odd else 0)) if im2 else after
-        if row >= (512 if self.raster else 480):
+        if row >= (512 if self.raster else 480) or vdp.border:
             # The line before the first (V = 511) is not shown, but its sprite scan is
             # the first line's (Kabuto, "Topmost and bottommost raster line").
             if vdp.display_enabled and after_row < 480:

@@ -7313,3 +7313,78 @@ old on 357, 571 too close to call; 16,438-16,915 alone 312 to 156. A 512-word CR
 is now 1,274 cycles (die 1,270, flat pace 1,225, Kabuto's formula 1,234). The gate's 80
 cases stay identical across the three boards; 57 traces moved, the rest being `nuked-md`,
 the VDP FIFO ROMs, the FM ROMs and a few boards, with no new lock-up.
+
+### The capture as a fourth witness
+
+`flaws/make_tri.py` lines the board, BlastEm and the die up on the die's frame, and
+`seedlab/video/pxvote.py` asks Oerg866's 720p capture to settle each patch where they differ.
+Each machine's frame goes through the capture's own damage: scale 2.7375 by 2.502, origin
+170.375, -13, nearest then a blur of 0.6 by 0.5 (`px-geo.json`, correlation 0.98 on quiet
+frames). The vote is a matched filter in units of the noise around the patch. Flaws planted
+in quiet frames were called right 94% of the time at 1-3 pixels, 99% at z >= 4.
+
+Three rules keep it honest. The video frame is chosen on undisputed pixels only. When several
+video frames tie, each machine takes its best, because a picture that updates every third
+frame cannot pin the moment. And the winner must fit by itself (fit under 17.7), which gives
+a third answer, none fits. Without those, 8,086 was a clear win for the board, and wrong.
+
+Of 61,286 patches, 49% got a verdict, 48% can't tell, 3% none fits. A machine alone against
+the other two lost 77% (board), 72% (BlastEm) and 66% (die). The die is not the top of the
+ladder: on patches only it disputes, the capture sides against it two times in three.
+
+2:42 is two clocks, not a drawing fault. The grid moves on the vertical beat, one pixel a
+frame, on every machine and on the capture. The console is 3D and flips every 3-5 frames.
+With the grid as a clock (`flip242.py`), BlastEm's flips drift up to 4 frames ahead of the
+die, the capture's run from 1 ahead to 2 behind, and the board's match the die except for
+eight flips, 8,082-8,104, a frame behind. Those eight were the board's largest repeating flaw
+and they lean toward the capture, so they are not to be tuned to the die. Thin moving lines
+count double on a flaw map, which is why this looks large and nobody sees it. Likely cause:
+3D code that finishes when it finishes, on slightly different CPU time per frame. Not proven.
+
+The families left, from `off.py`. The first two are ours to chase.
+- Cube, top row (73 frames, 14,348-14,840): row 0 mostly holds what the die draws on row 1,
+  so a per-line change lands a line early at the top. The capture agrees with the die: 108
+  patches at row 0. Rows 222-223 may be the same thing. Unconfirmed.
+- Plasma slivers, 16,465-16,948: runs of about 25 pixels on single lines where a colour
+  change lands at a different place. Verdicts split among all three, so no machine has this
+  timing right yet.
+- CRAM writes in the picture, 9,177-9,761: bursts about 9 pixels apart near the left edge,
+  every 32-36 lines, displaced 1-3 pixels between machines. Most too small to judge.
+- Left 16 or 32 pixels, 8,152-9,152: lines where the first tiles keep the previous colour,
+  a write landing just after the line starts. Mostly BlastEm.
+- BlastEm draws the line above the picture where the board and die are black, 9,178-11,108.
+- 19,206-19,396, single pixels on a star field: BlastEm disagrees, the capture is mixed. The
+  comparison ROM removes the random source and the capture does not, so don't read this as
+  a verdict on anyone.
+
+Disagreement frames are twice as likely within 60 frames after a scene start (30% against
+17%), but most are mid-scene.
+
+### Line $1FF never scanned the first line's sprites
+
+The fix for the cube's top row. `begin_line` has always said line $1FF's sprite scan is the
+first line's (Kabuto, "Topmost and bottommost raster line"), but line $1FF is a border line
+and `render_at` skipped border lines, so that branch never ran and line 0 always fell through
+to "scanned as it begins". That took phase 1 from the cache one line late. Most software can't
+tell. The cube can: it moves register 5 and rewrites sprite Y on every line, on line 511 too.
+
+`render_at` now also fires on $1FF, and `begin_line` stops there without drawing on a border
+line. Against the die, comparison ROM on `megadrive`: 80 frames from 208,642 wrong picture
+pixels to 199,085 in total (1,551 wrong frames to 1,471), 80 better, 0 worse, nothing else
+moved; 14,348 went from 212 pixels to 0. Border score unchanged.
+
+The gate, Windows, with the fix in all three boards: `cargo test` passes on both Rust boards;
+new against old `md-trace` identical on all 78 cases that ran, so no game on the list changed;
+fast against plain the same; plain against Python identical on 75, and on Overdrive 2 to frame
+14,900, past the cube. Not run: `soft-checker` (access denied) and `titan-mdniccc` (a hard-coded
+path). The three SVP cases differ from Python on this box, whose PyPy venv shows no `ssp1601`
+package; the Python board with and without the fix gives identical traces there.
+
+Row 223 of the cube scenes is still open: 44 frames, 571 pixels, the largest a full-width line
+at 14,852 and otherwise blocks of 22-32 pixels, one sprite wide. The capture sides with the die.
+At die 14,498 the board draws sprite 7 of the last table at X 230 and the die doesn't. Ruled
+out: reading the sprite list later in the line (`link` 0 is written into sprite 0 at the end
+of line 222). Latching phase 1 at 2,000, 2,600 or 3,420 cycles fixed none of the 44 frames at
+2,000 or 2,600 and 5 at 3,420, and raised the frames wrong elsewhere, so phase 1 at the V step
+stands. The X = 0 mask as coded doesn't explain it either: row 222 uses 32 tiles, so the
+carry is clear, and sprites 3-6 sit at X 383 before sprite 7.
