@@ -764,6 +764,9 @@ class VDP:
         # Interrupts and flags.
         self.vint_pending = False
         self.hint_pending = False
+        #: When VINT and HINT were last raised (``system.IPL_SYNC_MCLK``).
+        self.vint_raised = -(1 << 62)
+        self.hint_raised = -(1 << 62)
         self.exint_pending = False
         self.f_flag = False
         self.odd = False
@@ -962,6 +965,7 @@ class VDP:
             elif kind == 2:
                 self._vint_done = True
                 self.vint_pending = True
+                self.vint_raised = self.mclk
                 self.f_flag = True
                 self.z80_irq_start = self.mclk
                 self.z80_irq_end = self.mclk + MCLK_PER_LINE
@@ -1025,6 +1029,7 @@ class VDP:
         elif self.hint_counter == 0:
             self.hint_counter = self.registers[10]
             self.hint_pending = True
+            self.hint_raised = self.mclk
         else:
             self.hint_counter -= 1
         self.line_start = self.line_end

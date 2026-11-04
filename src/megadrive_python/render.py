@@ -247,6 +247,10 @@ class Renderer:
         self._done_sides: dict[int, tuple[list[int], list[int]]] = {}
         self._slots = [0] * 40
         self._right: tuple | None = None
+        #: A line of the finished frame completed after it was handed over
+        #: (:meth:`_raster_sides`), ``(row, RGB888 line)``, for a caller of
+        #: :meth:`frame_raster` to take.
+        self.late_raster: tuple[int, list[int]] | None = None
         self._last_attributes = (0, 0)
 
     def attach_picture(self, device: Picture) -> None:
@@ -744,12 +748,17 @@ class Renderer:
         pending = self._right
         self._right = None
         if pending is not None:
-            start, plane, attributes, right = pending
+            start, plane, attributes, right, done = pending
             first, second = (4, 5) if plane else (0, 1)
             tiles = (self._slot_pixels(first, attributes[0])
                      + self._slot_pixels(second, attributes[1]))  # fmt: skip
             for x in range(start, min(start + 16, RIGHT_BORDER)):
                 right[x] = tiles[x - start]
+            if done in self._done_sides and self._done_sides[done][1] is right:
+                # The frame was handed over before this line's right border came in
+                # (line 511's, as line 0 begins): the finished line, for whoever has
+                # already read the frame.
+                self.late_raster = (done, self._raster_row(done))
         debug = vdp.debug_register
         if not debug & 0x100 or width != 320:
             self._last_attributes = (backdrop & 0x30, backdrop & 0x30)
@@ -782,7 +791,7 @@ class Renderer:
         last = (wide[width + fine] & 0x30, wide[width + fine + 8] & 0x30)
         self._last_attributes = last
         fine = scroll & 15
-        self._right = (fine, plane, last, right)
+        self._right = (fine, plane, last, right, row)
 
     def _scan_ahead(self, row: int, im2: bool) -> None:
         """Run phase 1 for display row ``row``, the next line's; phase 2 follows at the V
@@ -1092,15 +1101,17 @@ class Renderer:
         """The finished frame's every line, by V counter, as RGB888 with its side borders
         (:meth:`enable_raster`). Lines above line 0 by V counter come before it on the
         screen, so they lead the next frame."""
-        rows = {}
-        for row, (left, right) in self._done_sides.items():
-            palettes = self._done_palettes[row]
-            palette = palettes[-1][1][0] if palettes else (0,) * 64
-            middle = self._row_rgb(self._done_pixels[row], self._done_widths[row] or 320,
-                                   self._done_blanked[row], palettes or [(0, (palette,) * 3)],
-                                   self._done_dots[row])  # fmt: skip
-            rows[row] = [palette[i] for i in left] + middle + [palette[i] for i in right]
-        return rows
+        return {row: self._raster_row(row) for row in self._done_sides}
+
+    def _raster_row(self, row: int) -> list[int]:
+        """One line of the finished frame for :meth:`frame_raster`."""
+        left, right = self._done_sides[row]
+        palettes = self._done_palettes[row]
+        palette = palettes[-1][1][0] if palettes else (0,) * 64
+        middle = self._row_rgb(self._done_pixels[row], self._done_widths[row] or 320,
+                               self._done_blanked[row], palettes or [(0, (palette,) * 3)],
+                               self._done_dots[row])  # fmt: skip
+        return [palette[i] for i in left] + middle + [palette[i] for i in right]
 
     def _make_palette(self) -> tuple:
         """CRAM as RGB888: normal, shadowed and highlighted."""

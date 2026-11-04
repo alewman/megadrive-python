@@ -145,6 +145,35 @@ Z80_RESET_RESUME_MCLK = 57
 Z80_BUSACK_AFTER_RESET = 1
 
 
+
+#: The 68000 takes an interrupt at the end of an instruction only if the IPL lines changed
+#: this long before that instruction's last bus cycle began, its input synchronizer's lead;
+#: later, it finishes the next instruction first. Die-derived: Nuked-MD 594ca2a with the
+#: harness logging /IPL, alewman-probe's VPOS loop (``cmp.w (a1),d0; beq``): taken when IPL
+#: fell 25-49 MCLK before the final prefetch began, not at 15 or less (docs/worklog.md,
+#: "The 68000's interrupt latency"). It moves the VINT handler from 734 to 781 MCLK after
+#: line $E0 begins, against a real Model 1601's 796.
+IPL_SYNC_MCLK = 21
+
+
+def synced_ipl(vdp, deadline: int) -> int:
+    """The interrupt level the 68000 acts on at this instruction boundary: what the VDP
+    asks for, less a request raised after ``deadline`` (:data:`IPL_SYNC_MCLK`), which waits
+    an instruction. A VINT too late leaves an older HINT in place."""
+    ipl = vdp.ipl
+    if ipl == 6:
+        raised = vdp.vint_raised
+    elif ipl == 4:
+        raised = vdp.hint_raised
+    else:
+        return ipl
+    if raised <= deadline:
+        return ipl
+    if ipl == 6 and vdp.hint_pending and vdp.registers[0] & 0x10 and vdp.hint_raised <= deadline:
+        return 4
+    return 0
+
+
 class System:
     """Machine + cartridge, ready to run."""
 
@@ -653,7 +682,7 @@ class System:
         if board.m68k_accesses:
             board.m68k_accesses.clear()
         vdp.sync(start)
-        cpu.set_ipl(vdp.ipl)
+        cpu.set_ipl(synced_ipl(vdp, board.m68k_last_access - IPL_SYNC_MCLK))
         clocks = cpu.step()
         stall = board.stall
         elapsed = clocks * M68K_DIVIDER + stall

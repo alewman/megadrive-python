@@ -408,6 +408,8 @@ class Board:
         self.m68k: M68000CPU | None = None  # set by the system; read for open bus
         #: The master clock at which the current CPU step started, set by the system.
         self.step_start = 0
+        #: Where the 68000's latest bus access began (``system.IPL_SYNC_MCLK``).
+        self.m68k_last_access = 0
         #: The Z80 instruction under way: its memory accesses' offsets from
         #: :attr:`step_start` in master clocks (z80-python's access-timing table; None
         #: when it does not apply, such as an interrupt acknowledge), and how many of
@@ -919,6 +921,7 @@ class Board:
     # -- the 68000's bus -------------------------------------------------------
 
     def read_word(self, address: int) -> int:
+        self.m68k_last_access = self.m68k_access_clock()
         if self.refresh_enabled:
             self._bus_cycle(address)
         top = address >> 16
@@ -949,6 +952,7 @@ class Board:
         return self.open_bus_msb()
 
     def read_byte(self, address: int) -> int:
+        self.m68k_last_access = self.m68k_access_clock()
         if self.refresh_enabled:
             self._bus_cycle(address)
         top = address >> 16
@@ -979,6 +983,7 @@ class Board:
         return 0 if address & 1 else self.open_bus() >> 8
 
     def write_word(self, address: int, value: int) -> None:
+        self.m68k_last_access = self.m68k_access_clock()
         if self.refresh_enabled:
             self._bus_cycle(address)
         top = address >> 16
@@ -1009,6 +1014,7 @@ class Board:
             self.cartridge.write_word(address, value)
 
     def write_byte(self, address: int, value: int) -> None:
+        self.m68k_last_access = self.m68k_access_clock()
         if self.refresh_enabled:
             self._bus_cycle(address)
         top = address >> 16
