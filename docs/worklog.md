@@ -7266,7 +7266,7 @@ right border 10,863 of 3,874,752. Raster on changed 0 of 100 frames and the end 
 Not explained: seven lines near $1D0 the die leaves black late in the scene, line 255's
 last 13 pixels, line 511's right border. Plane A's left border is not done.
 
-The method (`D:\dev\od2-20k\seedlab`, not in this repository): board snapshots every 250
+The method (a separate seed lab, not in this repository): board snapshots every 250
 frames and each disputed window run from its own, 24 sound phases each. Most disputed
 frames never matched in any phase, so they are not sound phase: 456 at 16,465-16,948 and
 982 at 8,042-9,761.
