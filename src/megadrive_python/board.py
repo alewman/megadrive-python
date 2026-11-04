@@ -171,6 +171,14 @@ Z80_REFRESH_CARTRIDGE_ONLY = 1
 #: with the two FMs half an MCLK apart, taken a cycle late on the die, needs 21, and its
 #: poll at +1,421, the die's BUSY falling at +1,448.5, read busy, needs at most 27
 #: (docs/worklog.md, "The busy flag"). The nuked-md machine only.
+#: A discrete YM2612's ports 1-3 answer with the status last read at port 0, until that
+#: copy fades to 0 (hardware run 1 of alewman-probe on a Model 1601 with TMSS, tests YMPT
+#: and YMP2: a cleared flag still reads 1 there straight after, 0 twenty frames on, and 0
+#: after a quiet second while port 0 reads 1). The cart's YMDK test (runs 4 and 6, the same
+#: both times) finds the copy still there 3-4 NTSC frames on and gone 5-6 frames on; this is
+#: the middle, 4.5 frames of 896,040 MCLK. It varies: frame-synced runs 7 and 8 lost it
+#: after 6-7 and 4-5 frames; runs 9-11 kept it 6, 4, 2, the last two warm: 2-7 frames, shorter warm. Hardware-captured.
+FM_PORT_FADE_MCLK = 4_000_000
 M68K_FM_WRITE_MCLK = 21
 M68K_FM_READ_MCLK = 27
 #: Whatever it goes to, a Z80 cycle over the 68000's bus uses up a cartridge refresh
@@ -381,6 +389,9 @@ class Board:
         #: its port locks up a real console (CMD).  It is not held by the Z80's reset.
         self.psg = SN76489(YM7101_PSG)
         self.psg_mclk = 0
+        #: The status port 0 last gave, and when (:data:`FM_PORT_FADE_MCLK`).
+        self.fm_status_kept = 0
+        self.fm_status_at = -FM_PORT_FADE_MCLK
         #: 68000 address bits 23-15 of the Z80's bank window; power-on 0 (unknown on
         #: hardware; MAME 0.285 ``machine_reset`` clears it).
         self.bank = 0
@@ -875,15 +886,17 @@ class Board:
         The discrete YM2612 answers on port 0 only; the ASIC answers on all four
         (Eke's counting program on a VA4 Model 1 and a VA0 Model 2, forum t=386
         start=810; hardware-captured, and why Hellfire's music runs slow on a Model
-        2).  What a *discrete* chip's other three ports read is not in any pinned
-        source: Genesis Plus GX returns 0 (``core/sound/sound.c`` line 152, "invalid
-        FM status address"), which is what the board does, labelled emulator-derived
-        (docs/undocumented-behavior.md, "The YM2612").
+        2).  A *discrete* chip's other three ports give the status port 0 last gave,
+        until it fades (:data:`FM_PORT_FADE_MCLK`, hardware-captured).
         """
-        self.sound_sync(self.m68k_access_clock() if mclk is None else mclk)
+        t = self.m68k_access_clock() if mclk is None else mclk
+        self.sound_sync(t)
         if port and not self.machine.fm.busy_on_all_ports:
-            return 0x00
-        return self.fm.read(port)
+            return self.fm_status_kept if t - self.fm_status_at < FM_PORT_FADE_MCLK else 0x00
+        value = self.fm.read(port)
+        if not port:
+            self.fm_status_kept, self.fm_status_at = value, t
+        return value
 
     # -- open bus ------------------------------------------------------------
 

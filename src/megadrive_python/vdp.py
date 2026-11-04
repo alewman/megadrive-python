@@ -1345,10 +1345,13 @@ class VDP:
         return start + lines * mode.length + mode.starts[index]
 
     def _no_read_fill(self) -> bool:
-        """This slot fills no data-port read: H40's $142 in an active line
-        (:data:`READ_RELEASE_MCLK`)."""
+        """This slot fills no CRAM or VSRAM read: H40's $142 in an active line
+        (:data:`READ_RELEASE_MCLK`). A VRAM read is filled there: the die's VRAM read
+        loops count 900 reads in 100 lines, as a real Model 1601 does (alewman-probe,
+        RDLN and RDV1), and 851 with the slot shut."""
         return (
             self.slots is self.hmode.slots_active
+            and self.code & 0x0F != 0
             and self.mclk - self.line_start in self.hmode.no_read_fill
         )
 

@@ -7388,3 +7388,54 @@ of line 222). Latching phase 1 at 2,000, 2,600 or 3,420 cycles fixed none of the
 2,000 or 2,600 and 5 at 3,420, and raised the frames wrong elsewhere, so phase 1 at the V step
 stands. The X = 0 mask as coded doesn't explain it either: row 222 uses 32 tiles, so the
 carry is clear, and sprites 3-6 sit at X 383 before sprite 7.
+
+### The first console run: VRAM reads at $142, and the YM2612's ports 1-3
+
+alewman-probe (its own repository) ran on a borrowed NTSC Genesis, Model 1601 with TMSS
+(version register $A1), from an EverDrive-MD V3 clone. Two runs, both saved to the cart.
+Against the die, the board and BlastEm it settles two of the board's open rules.
+
+**$142 fills VRAM reads.** The probe's VRAM read loops count 900 reads in 100 picture lines
+(RDLN) and 40,703 in a frame with the display on (RDV1), on the console and on the die alike.
+The board counted 851 and 38,896: the $142 rule (undocumented-behavior VDP item 28) was shutting
+VRAM reads too. It now holds for CRAM and VSRAM reads only, and the board counts 900 and
+40,696-40,699. The CRAM sweep that found the rule is untouched. Overdrive 2 on `megadrive`, 25,200
+frames, old board against new: every frame identical.
+
+**Ports 1-3 keep port 0's status, then fade.** All 13 YMP2 reads and the YMPT reads: with the
+flag set and a second without a status read, ports 1-3 read 0 while port 0 reads 1; the flag
+cleared straight after port 0 read 1, port 1 still reads 1; 20 and 60 frames on, 0; after port
+0 read busy, ports 1-3 read $80. The board returned 0 (Genesis Plus GX) and the die gives a
+live copy of port 0; neither fits. The board now keeps port 0's last value and gives it on
+ports 1-3 for `FM_PORT_FADE_MCLK`. Run 1 only bounds the fade (0-20 frames), so the figure is
+provisional, and the cart has a new test, YMDK, that reads port 1 from 0 lines to 18 frames
+after. With both changes the board matches the console on RDLN, YMPT and YMP2 exactly.
+
+Checks: both Rust boards' tests pass, with the board-tour example traces rewritten from the
+Python board (the Z80 reads port 2 there and now gets $80); the Python suite passes (208, 20
+skipped for missing references); plain, fast and Python give byte-identical probe saves. The
+lockstep gate did not run: the ROM share was unreachable.
+
+What else the run showed, for later: the WEDG sequence (an ordinary command in two control
+writes straight after DMA registers) hangs the console as it hangs the die, and RESET does not
+free it; the board and BlastEm pass it. Sprite phase edges sit near the die's, the board's
+10-20 steps late; VINT and F land about 2-4 H steps later than the board's; the bus grant read
+straight after a request is there 16-26 times in 32, the board's 9-20. CPU, Z80-in-RAM, DMA pace
+and the idle loops match the board.
+
+**The port fade, timed.** alewman-probe's runs 4 and 6 on the same Model 1601, saved to the
+flash cart's card, read YMDK identically: port 1 still gives port 0's 1 after 3 frames' wait
+and 0 after 5 (the wait is d6+1 frame edges from an unsynced start, so 3-4 and 5-6 frames).
+`FM_PORT_FADE_MCLK` goes from the provisional 1,000,000, which lost it within a frame, to
+4,000,000, about 4.5 NTSC frames, in all three boards. The cart's YMDK now reads port 0 at a
+frame edge and waits 1-7, 9, 13 and 18 whole frames, so the next run narrows it to one frame.
+Both Rust boards' tests pass; the Python suite passes (211, 17 skipped).
+
+The synced YMDK ran twice (runs 7 and 8, both from power-on): port 1 kept the status through
+6 frames and lost it by 7, then kept it through 4 and lost it by 5. The fade varies run to run,
+4-7 frames over the four runs; the board keeps 4,000,000, inside that range.
+
+Runs 9-11 kept the status 6, 4 and 2 frames; the console had been left on a long while before
+runs 10 and 11. Runs 7-9, soon after power-on: 6, 4, 6. So warmth likely shortens the fade,
+from five runs. Every other test agreed across runs 4-11 within a count or two: only the
+fade, a charge held on the bus, moves. The board keeps 4,000,000 MCLK.

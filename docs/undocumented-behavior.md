@@ -379,6 +379,10 @@ source, the way sms-python does.
     Session 14). Die-derived. VDPFIFOTesting's "FIFO Wait States" fails with it every
     time; on the die that test passes once per ~800 iterations, so it cannot judge the
     rule and is counted with Nemesis's intermittent tests.
+    The $142 rule holds for CRAM and VSRAM reads only. A real Model 1601 (alewman-probe run
+    1, tests RDLN and RDV1) and the die both count 900 VRAM reads in 100 picture lines of a
+    read loop and 40,703 in a frame; with $142 shut to VRAM reads the board counted 851 and
+    38,896, and with it open 900 and 40,696-40,699. Hardware-captured for VRAM.
 
 ## The pads and the I/O chip
 
@@ -444,11 +448,20 @@ source, the way sms-python does.
    sample are the same multiset either way, so the sample at the chip's native rate
    is unaffected and nothing audible turns on it; the board follows Nuked-OPN2, and
    the difference is measured and recorded in [worklog.md](worklog.md).
-7. **What a discrete YM2612's ports 1-3 read is not known.** Eke measured that the
-   status answers on port 0 only on the discrete chip and on every port on the ASIC
-   (forum t=386 start=810), but not what the other three ports give. Genesis Plus GX
-   returns 0 (`core/sound/sound.c` line 152), which the board copies, labelled
-   emulator-derived. A hardware read would settle it.
+7. **A discrete YM2612's ports 1-3 give the status port 0 last gave, then fade to 0.**
+   Eke measured that the status answers on port 0 only on the discrete chip and on every
+   port on the ASIC (forum t=386 start=810). alewman-probe's run 1 on a Model 1601 with
+   TMSS (tests YMPT and YMP2) read the rest: with the timer flag set and no status read
+   for a second, ports 1-3 read 0 while port 0 reads 1; with the flag cleared straight
+   after port 0 read 1, port 1 still reads 1 and port 0 reads 0; port 1 read 20 and 60
+   frames later reads 0; after port 0 read busy, ports 1-3 read $80. Nuked-MD shows ports
+   1-3 as a live copy of port 0, and Genesis Plus GX returns 0; both miss this. The board
+   keeps port 0's last value for `board.FM_PORT_FADE_MCLK`, 4,000,000 MCLK: the cart's
+   YMDK test (runs 4 and 6, identical) reads the copy 3-4 NTSC frames on and 0 by 5-6
+   frames on; runs 7 and 8, waits synced to the frame edge, lost it after 6-7 and 4-5
+   frames; runs 9-11 kept it 6, 4 and 2, the last two after the console had been on a long
+   while. So it varies, 2-7 frames, likely shorter when warm; the board takes one figure.
+   Hardware-captured; the chip's revision on that console is not known.
 8. **The ladder effect is a property of the DAC's output stage, not of a filter.**
    The discrete chip adds 1 to every non-negative sample and drives +1/-1 in the gaps
    between channels, so the console's low-pass sees a step at the zero crossing
@@ -763,7 +776,10 @@ source, the way sms-python does.
     or sound, so it is a floor and not a ceiling.
 12. **The analogue path's corner frequency and the PSG/FM mixing ratio** are fitted
     to the MDFourier recordings, not read from a document; no source gives either.
-13. **What a discrete YM2612's ports 1-3 read** (above, "The YM2612" item 7).
+13. **How long a discrete YM2612's ports 1-3 keep a status** (above, "The YM2612" item
+    7): 2-7 NTSC frames on one console. Three runs soon after power-on kept it 6, 4 and
+    6 frames; two after the console had been on a long while kept it 4 and 2. Warmth
+    likely shortens it (five runs, not proven); the board takes one figure.
 14. **Where a Z80 bus access falls inside its instruction.** z80-python reports only
     an instruction's total, so the arbiter places each bank access at the Z80 step's
     start plus the delays already charged. MoD measured that on a `POP` the 68000
