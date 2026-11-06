@@ -259,7 +259,12 @@ class PictureLine(NamedTuple):
     line's start in master clocks (``VDP.line_start``). ``hmode``, ``width`` (256 or
     320) and ``pixel_mclk`` (10 or 8: the active display's dot clock) describe the
     line; ``display_at`` is the master clock the H counter names pixel 0 at, and the
-    output runs ``output_delay`` pixels behind it (``render.OUTPUT_DELAY``). ``rgb``:
+    output runs ``output_delay`` pixels behind it (``render.OUTPUT_DELAY``). That is where
+    a CRAM write shows (the die's CRAM-dot offset), **not** when pixel 0 leaves the RGB
+    pins: against Nuked-MD the pins are 40 master clocks later in H40 and 20 in H32, so a
+    device that times its own picture against the Mega Drive's must not take
+    ``display_at + output_delay * pixel_mclk`` as the pins' time (sega32x-python
+    docs/worklog.md, Session 9: its first composite was 40 MCLK out from this). ``rgb``:
     the finished colour of each pixel, RGB888 -- the DAC's levels, after
     shadow/highlight, CRAM dots and register 0's blanking, as ``Renderer.frame_rgb``
     gives it. ``ys``: 1 where no plane or sprite pixel shows (the backdrop: YS, per
@@ -281,7 +286,13 @@ class PictureLine(NamedTuple):
 class Picture(Protocol):
     """Socket 7: each finished line in, the line that leaves the console out -- RGB888 of
     any width (the 32X draws its own 320 even in H32), or None for the Mega Drive's
-    own."""
+    own.
+
+    The returned list is read only when the frame is (``Renderer.frame_rgb``), not when
+    ``picture_line`` returns, so a device may hand back a list and fill it in place until
+    then -- what a device with its own CPUs to run first needs of a VDP that renders
+    lazily. A device must not reuse a returned list for another line before the frame
+    is read."""
 
     def picture_line(self, line: PictureLine) -> list[int] | None: ...
 
@@ -294,7 +305,11 @@ class AudioSource(Protocol):
     FM's summed-DAC units (full scale about +/-6,100) -- a labelled assumption for
     either add-on, since no recording of either mix exists. ``take_samples``: run up to
     master clock ``mclk`` and return the stereo samples finished since the last call,
-    the device's own filters already applied.
+    the device's own filters already applied. The list covers the whole stretch since
+    the last call: a source that starts within it leads with silence back to that call
+    (the board takes a source's first non-empty list to start where the stretch does).
+    ``rate`` describes the list just returned, one rate per call; a source whose rate
+    changes within a call converts its samples to one rate itself.
     """
 
     rate: float
