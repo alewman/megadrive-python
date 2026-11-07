@@ -9,6 +9,7 @@ and records it is handed.
 from __future__ import annotations
 
 import itertools
+import pickle
 
 import pytest
 from fake_devices import (
@@ -308,6 +309,20 @@ def test_a_further_source_is_mixed_at_its_own_rate() -> None:
     assert all(value > 0 for value in late)  # the level comes through, left positive
     source.rate = 22_050.0  # a rate may change between calls
     assert _audio(source)
+
+
+def test_a_further_source_keeps_its_leftovers_through_a_pickle() -> None:
+    system = System(MACHINES["genesis"], _cartridge(LOOP))
+    system.audio_sources.append(FakeAudio(32_552.08, 1.0, (1000.0, -1000.0)))
+    system.run_frame()
+    system.take_audio()
+    loaded = pickle.loads(pickle.dumps(system))
+    source = loaded.audio_sources[0]
+    (record,) = loaded.audio._sources
+    assert record[0] is source and record[1]  # its own leftovers, found by the new object
+    loaded.run_frame()
+    assert loaded.take_audio()
+    assert len(loaded.audio._sources) == 1  # no second record started from silence
 
 
 # -- socket 6: video timing -----------------------------------------------------------------

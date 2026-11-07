@@ -115,8 +115,11 @@ class AudioPath:
         self._previous = (0.0, 0.0)
         self._have_previous = False
         #: Each further source's samples not yet used and its position among them, in
-        #: its own samples (:meth:`_add_sources`).
-        self._sources: dict[int, tuple[list[tuple[float, float]], float]] = {}
+        #: its own samples (:meth:`_add_sources`), as [source, pending, position], found
+        #: by identity: an ``id()`` key would not survive pickling (a loaded machine's
+        #: sources have new ids) and could pass to a new source on a freed one's address,
+        #: and a dict on the source itself would need every source to be hashable.
+        self._sources: list[list] = []
 
     @property
     def fm_rate(self) -> float:
@@ -175,8 +178,11 @@ class AudioPath:
         when it falls short, its last sample is held (silence before it has given any)."""
         fm_rate = self.fm_rate
         for source, new in sources:
-            key = id(source)
-            pending, position = self._sources.get(key, ([], 0.0))
+            record = next((r for r in self._sources if r[0] is source), None)
+            if record is None:
+                record = [source, [], 0.0]
+                self._sources.append(record)
+            _, pending, position = record
             pending = pending + new
             if not pending:
                 continue  # silent until it gives its first sample
@@ -197,7 +203,7 @@ class AudioPath:
                 samples[index] = (left + level[0] * gain, right + level[1] * gain)
                 position += step
             used = min(int(position), last)
-            self._sources[key] = (pending[used:], position - used)
+            record[1], record[2] = pending[used:], position - used
 
     def _dc_blocked(self, samples: list[tuple[float, float]]) -> list[tuple[float, float]]:
         """The coupling capacitor: a one-pole high-pass at :data:`DC_BLOCK_HZ`."""
